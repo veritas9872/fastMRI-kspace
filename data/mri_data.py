@@ -22,7 +22,7 @@ class SliceData(Dataset):
             root (pathlib.Path): Path to the dataset.
             transform (callable): A callable object that pre-processes the raw data into
                 appropriate form. The transform function should take 'kspace', 'target',
-                'attributes', 'filename', and 'k_slice' as inputs. 'target' may be null
+                'attributes', 'filename', and 'slice_num' as inputs. 'target' may be null
                 for test data.
             challenge (str): "singlecoil" or "multicoil" depending on which challenge to use.
             sample_rate (float, optional): A float between 0 and 1. This controls what fraction
@@ -43,14 +43,14 @@ class SliceData(Dataset):
         for file_name in sorted(files):
             kspace = h5py.File(file_name, 'r')['kspace']
             num_slices = kspace.shape[0]
-            self.examples += [(file_name, k_slice) for k_slice in range(num_slices)]
+            self.examples += [(file_name, slice_num) for slice_num in range(num_slices)]
 
     def __len__(self):
         return len(self.examples)
 
     def __getitem__(self, i):
-        file_name, k_slice = self.examples[i]
-        with h5py.File(file_name, 'r') as data:
-            kspace = data['kspace'][k_slice]
-            target = data[self.recons_key][k_slice] if self.recons_key in data else None
-        return self.transform(kspace, target, data.attrs, file_name.name, k_slice)
+        file_path, slice_num = self.examples[i]
+        with h5py.File(file_path, 'r') as data:
+            kspace = data['kspace'][slice_num]
+            target = data[self.recons_key][slice_num] if self.recons_key in data else None
+        return self.transform(kspace, target, data.attrs, file_path.name, slice_num)
