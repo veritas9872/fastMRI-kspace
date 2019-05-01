@@ -50,7 +50,7 @@ class CheckpointManager:
         print(f'Saved Checkpoint to {save_path}')
         print(f'Checkpoint {self.save_counter:04d}: {save_path}')
         # Save to file.
-        self.record_path.write_text(f'Checkpoint {self.save_counter:04d}: {save_path}\n')
+        self.record_path.write_text(f'Latest Checkpoint: Checkpoint {self.save_counter:04d}: {save_path}')
 
         self.record_dict[self.save_counter] = save_path
 
