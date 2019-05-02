@@ -49,8 +49,9 @@ class CheckpointManager:
         torch.save(save_dict, save_path)
         print(f'Saved Checkpoint to {save_path}')
         print(f'Checkpoint {self.save_counter:04d}: {save_path}')
-        # Save to file.
-        self.record_path.write_text(f'Latest Checkpoint: Checkpoint {self.save_counter:04d}: {save_path}')
+
+        with open(file=self.record_path, mode='a') as file:
+            print(f'Latest Checkpoint: Checkpoint {self.save_counter:04d}: {save_path}', file=file)
 
         self.record_dict[self.save_counter] = save_path
 

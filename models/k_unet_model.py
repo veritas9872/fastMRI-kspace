@@ -1,12 +1,12 @@
 """
-Copyright (c) Facebook, Inc. and its affiliates.
-This source code is licensed under the MIT license found in the
-LICENSE file in the root directory of this source tree.
+UNET model same as that of Facebook's but with processing steps included in the model.
 """
 
 import torch
 from torch import nn
 from torch.nn import functional as F
+
+from data.data_transforms import ifft2
 
 
 class ConvBlock(nn.Module):
@@ -119,4 +119,9 @@ class UnetModel(nn.Module):
             output = F.interpolate(output, scale_factor=2, mode='bilinear', align_corners=False)
             output = torch.cat((output, stack.pop()), dim=1)
             output = layer(output)
-        return self.conv2(output)
+
+        output = self.conv2(output)
+
+        # TODO: Add ifft2d and other processing steps here.
+        # TODO: Consider removing dropout since it is not used in CNNs anyway.
+

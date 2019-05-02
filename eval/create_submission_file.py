@@ -5,29 +5,9 @@ LICENSE file in the root directory of this source tree.
 """
 import json
 
-import h5py
 
-
-def save_reconstructions(reconstructions, out_dir):
-    """
-    Saves the reconstructions from a model into h5 files that is appropriate for submission
-    to the leaderboard.
-    Args:
-        reconstructions (dict[str, np.array]): A dictionary mapping input filenames to
-            corresponding reconstructions (of shape num_slices x height x width).
-        out_dir (pathlib.Path): Path to the output directory where the reconstructions
-            should be saved.
-    """
-    out_dir.mkdir(exist_ok=True)
-    for file_name, recons in reconstructions.items():
-        with h5py.File(out_dir / file_name, 'w') as f:
-            f.create_dataset('reconstruction', data=recons)
-
-
-def create_submission_file(
-  json_out_file, challenge, submission_url, model_name, model_description, nyu_data_only,
-  participants=None, paper_url=None, code_url=None
-):
+def create_submission_file(json_out_file, challenge, submission_url, model_name, model_description,
+                           nyu_data_only, participants=None, paper_url=None, code_url=None):
     """
     Creates a JSON file for submitting to the leaderboard.
     You should first run your model on the test data, save the reconstructions, zip them up,
@@ -64,3 +44,7 @@ def create_submission_file(
 
     with open(json_out_file, 'w') as json_file:
         json.dump(submission_data, json_file, indent=2)
+
+
+if __name__ == '__main__':
+    pass

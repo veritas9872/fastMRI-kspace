@@ -38,16 +38,17 @@ def save_dict_as_json(dict_data, log_dir, save_name):
         json.dump(dict_data, jf, indent=2, sort_keys=True)
 
 
-def get_logger(name, save_file=None):
+def get_logger(name, verbose=True, save_file=None):
 
     logger = logging.getLogger(name)
     logger.setLevel(logging.INFO)
 
-    c_handler = logging.StreamHandler()
-    c_handler.setLevel(logging.INFO)
-    c_format = logging.Formatter('%(name)s - %(levelname)s - %(message)s')
-    c_handler.setFormatter(c_format)
-    logger.addHandler(c_handler)
+    if verbose:
+        c_handler = logging.StreamHandler()
+        c_handler.setLevel(logging.INFO)
+        c_format = logging.Formatter('%(name)s - %(levelname)s - %(message)s')
+        c_handler.setFormatter(c_format)
+        logger.addHandler(c_handler)
 
     if save_file:
         f_handler = logging.FileHandler(str(save_file) + '.log', mode='w')

@@ -17,3 +17,7 @@ def val_step():
 
 def val_epoch():
     pass
+
+
+def train_model():
+    pass

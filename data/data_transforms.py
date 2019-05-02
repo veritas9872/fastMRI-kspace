@@ -235,14 +235,13 @@ def tensor_to_complex_np(data):
 
 class DataTrainTransform:
     """
-    Data Transformer for training U-Net models.
+    Data Transformer for training and validating models.
     """
 
     def __init__(self, mask_func, resolution, which_challenge, use_seed=True):
         """
         Args:
-            mask_func (common.subsample.MaskFunc): A function that can create a mask of
-                appropriate shape.
+            mask_func (MaskFunc): A function that can create a mask of appropriate shape.
             resolution (int): Resolution of the image.
             which_challenge (str): Either "singlecoil" or "multicoil" denoting the dataset.
             use_seed (bool): If true, this class computes a pseudo random number generator seed
@@ -277,29 +276,16 @@ class DataTrainTransform:
         # Apply mask
         seed = None if not self.use_seed else tuple(map(ord, file_name))
         masked_kspace, mask = apply_mask(kspace, self.mask_func, seed)
-        # Inverse Fourier Transform to get zero filled solution
-        image = ifft2(masked_kspace)
-        # Crop input image
-        image = complex_center_crop(image, (self.resolution, self.resolution))
-        # Absolute value
-        image = complex_abs(image)
-        # Apply Root-Sum-of-Squares if multicoil data
-        if self.which_challenge == 'multicoil':
-            image = root_sum_of_squares(image)
-        # Normalize input
-        image, mean, std = normalize_instance(image, eps=1e-11)
-        image = image.clamp(-6, 6)
 
-        target = to_tensor(target)
-        # Normalize target
-        target = normalize(target, mean, std, eps=1e-11)
-        target = target.clamp(-6, 6)
-        return image, target, mean, std, attrs['norm'].astype(np.float32)  # TODO: Change this!
+        # TODO: Redesign transform from here. Include single coil by treating it as multicoil with 1 coil.
+        # Using the data acquisition method (fat suppression) may be useful later on.
+
+        return None
 
 
-class DataValTransform:
+class DataSubmitTransform:
     """
-    Data Transformer for running U-Net models on a validation dataset.
+    Data Transformer for generating submissions on the validation and test datasets.
     """
 
     def __init__(self, resolution, which_challenge, mask_func=None):
@@ -307,8 +293,7 @@ class DataValTransform:
         Args:
             resolution (int): Resolution of the image.
             which_challenge (str): Either "singlecoil" or "multicoil" denoting the dataset.
-            mask_func (common.subsample.MaskFunc): A function that can create a mask of
-                appropriate shape.
+            mask_func (MaskFunc): A function that can create a mask of appropriate shape.
         """
         if which_challenge not in ('singlecoil', 'multicoil'):
             raise ValueError(f'Challenge should either be "singlecoil" or "multicoil"')
@@ -322,33 +307,24 @@ class DataValTransform:
             kspace (numpy.Array): k-space measurements
             target (numpy.Array): Target image
             attrs (dict): Acquisition related information stored in the HDF5 object
-            file_name (pathlib.Path): Path to the input file
+            file_name (str): File name
             slice_num (int): Serial number of the slice
         Returns:
             (tuple): tuple containing:
                 image (torch.Tensor): Normalized zero-filled input image
                 mean (float): Mean of the zero-filled image
                 std (float): Standard deviation of the zero-filled image
-                file_name (pathlib.Path): Path to the input file
+                file_name (str): File name
                 slice_num (int): Serial number of the slice
         """
         kspace = to_tensor(kspace)
-        if self.mask_func is not None:
-            seed = tuple(map(ord, file_name))  # TODO: Check if this is a bug or not.
+        if self.mask_func is not None:  # Validation set
+            seed = tuple(map(ord, file_name))
             masked_kspace, _ = apply_mask(kspace, self.mask_func, seed)
-        else:
+        else:  # Test set
             masked_kspace = kspace
-        # Inverse Fourier Transform to get zero filled solution
-        image = ifft2(masked_kspace)
-        # Crop input image
-        image = complex_center_crop(image, (self.resolution, self.resolution))
-        # Absolute value
-        image = complex_abs(image)
-        # Apply Root-Sum-of-Squares if multicoil data
-        if self.which_challenge == 'multicoil':
-            image = root_sum_of_squares(image)
-        # Normalize input
-        image, mean, std = normalize_instance(image)
-        image = image.clamp(-6, 6)
-        return image, mean, std, file_name, slice_num
+
+        # TODO: Redesign transform from here.
+
+        return None
 
