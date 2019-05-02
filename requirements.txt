@@ -1,3 +1,6 @@
+tqdm
+tensorboardX
+pytest
 scikit-image
 runstats
 numpy

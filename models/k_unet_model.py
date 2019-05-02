@@ -6,6 +6,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
+# This is a normalized ifft2D with ifftshift already included.
 from data.data_transforms import ifft2
 
 

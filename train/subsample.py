@@ -1,9 +1,3 @@
-"""
-Copyright (c) Facebook, Inc. and its affiliates.
-This source code is licensed under the MIT license found in the
-LICENSE file in the root directory of this source tree.
-"""
-
 import numpy as np
 import torch
 
@@ -44,7 +38,7 @@ class MaskFunc:
         self.accelerations = accelerations
         self.rng = np.random.RandomState()
 
-    def __call__(self, shape, seed=None):
+    def __call__(self, shape, seed=None, ds_axis=-2):
         """
         Args:
             shape (iterable[int]): The shape of the mask to be created. The shape should have
@@ -58,7 +52,7 @@ class MaskFunc:
             raise ValueError('Shape should have 3 or more dimensions')
 
         self.rng.seed(seed)
-        num_cols = shape[-2]
+        num_cols = shape[ds_axis]
 
         choice = self.rng.randint(0, len(self.accelerations))
         center_fraction = self.center_fractions[choice]
@@ -73,7 +67,7 @@ class MaskFunc:
 
         # Reshape the mask
         mask_shape = [1 for _ in shape]
-        mask_shape[-2] = num_cols
+        mask_shape[ds_axis] = num_cols
         mask = torch.from_numpy(mask.reshape(*mask_shape).astype(np.float32))
 
         return mask

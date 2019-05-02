@@ -18,9 +18,10 @@ def save_reconstructions(reconstructions, out_dir):
             should be saved.
     """
     out_dir.mkdir(exist_ok=True)
+    gzip = dict(compression='gzip', compression_opts=1, shuffle=True, fletcher32=True)
     for file_name, recons in reconstructions.items():
-        with h5py.File(out_dir / file_name, 'w') as f:
-            f.create_dataset('reconstruction', data=recons)
+        with h5py.File(out_dir / file_name, mode='x', libver='latest') as f:
+            f.create_dataset('reconstruction', data=recons, **gzip)
 
 
 if __name__ == '__main__':

@@ -1,9 +1,3 @@
-"""
-Copyright (c) Facebook, Inc. and its affiliates.
-This source code is licensed under the MIT license found in the
-LICENSE file in the root directory of this source tree.
-"""
-
 import numpy as np
 import torch
 
@@ -279,7 +273,9 @@ class DataTrainTransform:
 
         # TODO: Redesign transform from here. Include single coil by treating it as multicoil with 1 coil.
         # Using the data acquisition method (fat suppression) may be useful later on.
-
+        #
+        # P.S. Don't forget that the UNET requires a multiple of 2^pooling
+        # for the UNET to process the data.
         return None
 
 
@@ -325,6 +321,52 @@ class DataSubmitTransform:
             masked_kspace = kspace
 
         # TODO: Redesign transform from here.
+        # P.S. Don't forget that the UNET requires a multiple of 2^pooling
+        # for the UNET to process the data.
+        # This also means that the UNET outputs have to be cropped after coming out of the UNET.
+        # Otherwise, there will be distortions in the image.
 
         return None
 
+
+def kspace_to_nchw(tensor):
+    """
+    Convert torch tensor in (Slice, Coil, Height, Width, Complex) 5D format to
+    (N, C, H, W) 4D format for processing by 2D CNNs.
+
+    Complex indicates (real, imag) as 2 channels, the complex data format for Pytorch.
+
+    C is the coils interleaved with real and imaginary values as separate channels.
+    C is therefore always 2 * Coil.
+
+    Singlecoil data is assumed to be in the 5D format with Coil = 1
+
+    Args:
+        tensor (torch.Tensor): Input data in 5D kspace tensor format.
+    Returns:
+        tensor (torch.Tensor): tensor in 4D NCHW format to be fed into a CNN.
+    """
+    assert isinstance(tensor, torch.Tensor)
+    assert tensor.dim() == 5
+    s = tensor.shape
+    assert s[-1] == 2
+    tensor = tensor.permute(dims=(0, 4, 1, 2, 3)).view(size=(s[0], 2 * s[1], s[2], s[3]))
+
+    # TODO: This must be verified to check whether it is accurate.
+    return tensor
+
+
+def nchw_to_kspace(tensor):
+    """
+    Convert a torch tensor in (N, C, H, W) format to the (Slice, Coil, Height, Width, Complex) format.
+
+    This function assumes that the real and imaginary values are always adjacent to one another.
+    """
+    assert isinstance(tensor, torch.Tensor)
+    assert tensor.dim() == 4
+    s = tensor.shape
+    assert s[1] % 2 == 0
+    tensor = tensor.view(size=(s[0], 2, s[1] // 2, s[2], s[3])).permute(dims=(0, 2, 3, 4, 1))
+
+    # TODO: This must be verified. I am very unsure as to whether this works or not.
+    return tensor

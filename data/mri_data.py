@@ -1,9 +1,3 @@
-"""
-Copyright (c) Facebook, Inc. and its affiliates.
-This source code is licensed under the MIT license found in the
-LICENSE file in the root directory of this source tree.
-"""
-
 import pathlib
 import random
 
@@ -35,13 +29,21 @@ class SliceData(Dataset):
         self.recons_key = 'reconstruction_esc' if challenge == 'singlecoil' else 'reconstruction_rss'
 
         self.examples = list()
-        files = list(pathlib.Path(root).iterdir())
+        files = list(pathlib.Path(root).glob('*.h5'))
+
+        if not files:  # If the list is empty for any reason
+            raise OSError("Sorry! No files present in this directory. "
+                          "Please check if your disk has been loaded.")
+
+        print(f'Initializing {root}. This might take a minute.')
+
         if sample_rate < 1:
             random.shuffle(files)
             num_files = round(len(files) * sample_rate)
             files = files[:num_files]
+
         for file_name in sorted(files):
-            kspace = h5py.File(file_name, 'r')['kspace']
+            kspace = h5py.File(file_name, mode='r')['kspace']
             num_slices = kspace.shape[0]
             self.examples += [(file_name, slice_num) for slice_num in range(num_slices)]
 
@@ -50,7 +52,7 @@ class SliceData(Dataset):
 
     def __getitem__(self, i):
         file_path, slice_num = self.examples[i]
-        with h5py.File(file_path, 'r') as data:
+        with h5py.File(file_path, mode='r') as data:
             kspace = data['kspace'][slice_num]
             target = data[self.recons_key][slice_num] if self.recons_key in data else None
         return self.transform(kspace, target, data.attrs, file_path.name, slice_num)

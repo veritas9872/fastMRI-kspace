@@ -1,8 +1,3 @@
-"""
-Copyright (c) Facebook, Inc. and its affiliates.
-This source code is licensed under the MIT license found in the
-LICENSE file in the root directory of this source tree.
-"""
 import json
 
 
@@ -42,7 +37,7 @@ def create_submission_file(json_out_file, challenge, submission_url, model_name,
         phase_name: submission_data
     }])
 
-    with open(json_out_file, 'w') as json_file:
+    with open(json_out_file, mode='w') as json_file:
         json.dump(submission_data, json_file, indent=2)
 
 
