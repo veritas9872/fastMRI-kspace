@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 
 def to_tensor(data):
@@ -232,11 +233,10 @@ class DataTrainTransform:
     Data Transformer for training and validating models.
     """
 
-    def __init__(self, mask_func, resolution, which_challenge, use_seed=True):
+    def __init__(self, mask_func, which_challenge, use_seed=True):
         """
         Args:
             mask_func (MaskFunc): A function that can create a mask of appropriate shape.
-            resolution (int): Resolution of the image.
             which_challenge (str): Either "singlecoil" or "multicoil" denoting the dataset.
             use_seed (bool): If true, this class computes a pseudo random number generator seed
                 from the filename. This ensures that the same mask is used for all the slices of
@@ -245,7 +245,6 @@ class DataTrainTransform:
         if which_challenge not in ('singlecoil', 'multicoil'):
             raise ValueError(f'Challenge should either be "singlecoil" or "multicoil"')
         self.mask_func = mask_func
-        self.resolution = resolution
         self.which_challenge = which_challenge
         self.use_seed = use_seed
 
@@ -266,17 +265,52 @@ class DataTrainTransform:
                 std (float): Standard deviation value used for normalization.
                 norm (float): L2 norm of the entire volume.
         """
-        kspace = to_tensor(kspace)
-        # Apply mask
-        seed = None if not self.use_seed else tuple(map(ord, file_name))
-        masked_kspace, mask = apply_mask(kspace, self.mask_func, seed)
+        assert np.iscomplexobj(kspace), 'kspace must be complex.'
+        assert kspace.shape[-1] % 2 == 0, 'k-space data width must be even.'
+        with torch.no_grad():  # Remove unnecessary gradient calculations.
+            if kspace.ndim == 4:  # For singlecoil
+                kspace = np.expand_dims(kspace, axis=1)
 
-        # TODO: Redesign transform from here. Include single coil by treating it as multicoil with 1 coil.
-        # Using the data acquisition method (fat suppression) may be useful later on.
-        #
-        # P.S. Don't forget that the UNET requires a multiple of 2^pooling
-        # for the UNET to process the data.
-        return None
+            kspace = to_tensor(kspace)
+            labels = complex_abs(ifft2(kspace))
+            # Apply mask
+            seed = None if not self.use_seed else tuple(map(ord, file_name))
+            masked_kspace, mask = apply_mask(kspace, self.mask_func, seed)
+
+            data = self.k_slice_to_nchw(masked_kspace)
+            divisor = 2 ** 4  # Because there are 4 pooling layers. Change later for generalizability.
+            pad = (divisor - (data.shape[-1] % divisor)) // 2
+            pad = [pad, pad]
+            data = F.pad(data, pad=pad, value=0)  # This pads at the last dimension of a tensor.
+
+            # Using the data acquisition method (fat suppression) may be useful later on.
+
+        return data, labels
+
+    @staticmethod
+    def k_slice_to_nchw(tensor):
+        """
+        Convert torch tensor in (Coil, Height, Width, Complex) 4D format to
+        (C, H, W) 3D format for processing by 2D CNNs.
+
+        Complex indicates (real, imag) as 2 channels, the complex data format for Pytorch.
+
+        C is the coils interleaved with real and imaginary values as separate channels.
+        C is therefore always 2 * Coil.
+
+        Singlecoil data is assumed to be in the 4D format with Coil = 1
+
+        Args:
+            tensor (torch.Tensor): Input data in 4D k-slice tensor format.
+        Returns:
+            tensor (torch.Tensor): tensor in 4D NCHW format to be fed into a CNN.
+        """
+        assert isinstance(tensor, torch.Tensor)
+        assert tensor.dim() == 4
+        s = tensor.shape
+        assert s[-1] == 2
+        tensor = tensor.permute(dims=(0, 3, 1, 2)).reshape(shape=(2 * s[0], s[1], s[2]))
+        return tensor
 
 
 class DataSubmitTransform:
@@ -350,9 +384,7 @@ def kspace_to_nchw(tensor):
     assert tensor.dim() == 5
     s = tensor.shape
     assert s[-1] == 2
-    tensor = tensor.permute(dims=(0, 4, 1, 2, 3)).view(size=(s[0], 2 * s[1], s[2], s[3]))
-
-    # TODO: This must be verified to check whether it is accurate.
+    tensor = tensor.permute(dims=(0, 1, 4, 2, 3)).reshape(shape=(s[0], 2 * s[1], s[2], s[3]))
     return tensor
 
 
@@ -366,7 +398,5 @@ def nchw_to_kspace(tensor):
     assert tensor.dim() == 4
     s = tensor.shape
     assert s[1] % 2 == 0
-    tensor = tensor.view(size=(s[0], 2, s[1] // 2, s[2], s[3])).permute(dims=(0, 2, 3, 4, 1))
-
-    # TODO: This must be verified. I am very unsure as to whether this works or not.
+    tensor = tensor.view(size=(s[0], s[1] // 2, 2, s[2], s[3])).permute(dims=(0, 1, 3, 4, 2))
     return tensor

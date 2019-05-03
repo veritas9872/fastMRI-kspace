@@ -7,37 +7,33 @@ from torch import nn
 from torch.nn import functional as F
 
 # This is a normalized ifft2D with ifftshift already included.
-from data.data_transforms import ifft2
+from data.data_transforms import ifft2, nchw_to_kspace, complex_abs
 
 
 class ConvBlock(nn.Module):
     """
     A Convolutional Block that consists of two convolution layers each followed by
-    instance normalization, relu activation and dropout.
+    instance normalization and relu activation.
     """
 
-    def __init__(self, in_chans, out_chans, drop_prob):
+    def __init__(self, in_chans, out_chans):
         """
         Args:
             in_chans (int): Number of channels in the input.
             out_chans (int): Number of channels in the output.
-            drop_prob (float): Dropout probability.
         """
         super().__init__()
 
         self.in_chans = in_chans
         self.out_chans = out_chans
-        self.drop_prob = drop_prob
 
         self.layers = nn.Sequential(
             nn.Conv2d(in_chans, out_chans, kernel_size=3, padding=1),
             nn.InstanceNorm2d(out_chans),
             nn.ReLU(),
-            nn.Dropout2d(drop_prob),
             nn.Conv2d(out_chans, out_chans, kernel_size=3, padding=1),
             nn.InstanceNorm2d(out_chans),
             nn.ReLU(),
-            nn.Dropout2d(drop_prob)
         )
 
     def forward(self, tensor):
@@ -50,8 +46,7 @@ class ConvBlock(nn.Module):
         return self.layers(tensor)
 
     def __repr__(self):
-        return f'ConvBlock(in_chans={self.in_chans}, out_chans={self.out_chans}, ' \
-            f'drop_prob={self.drop_prob})'
+        return f'ConvBlock(in_chans={self.in_chans}, out_chans={self.out_chans})'
 
 
 class UnetModel(nn.Module):
@@ -63,14 +58,13 @@ class UnetModel(nn.Module):
         computing and computer-assisted intervention, pages 234–241. Springer, 2015.
     """
 
-    def __init__(self, in_chans, out_chans, chans, num_pool_layers, drop_prob):
+    def __init__(self, in_chans, out_chans, chans, num_pool_layers):
         """
         Args:
             in_chans (int): Number of channels in the input to the U-Net model.
             out_chans (int): Number of channels in the output to the U-Net model.
             chans (int): Number of output channels of the first convolution layer.
             num_pool_layers (int): Number of down-sampling and up-sampling layers.
-            drop_prob (float): Dropout probability.
         """
         super().__init__()
 
@@ -78,30 +72,31 @@ class UnetModel(nn.Module):
         self.out_chans = out_chans
         self.chans = chans
         self.num_pool_layers = num_pool_layers
-        self.drop_prob = drop_prob
 
-        self.down_sample_layers = nn.ModuleList([ConvBlock(in_chans, chans, drop_prob)])
+        self.down_sample_layers = nn.ModuleList([ConvBlock(in_chans, chans)])
         ch = chans
         for i in range(num_pool_layers - 1):
-            self.down_sample_layers += [ConvBlock(ch, ch * 2, drop_prob)]
+            self.down_sample_layers += [ConvBlock(ch, ch * 2)]
             ch *= 2
-        self.conv = ConvBlock(ch, ch, drop_prob)
+        self.conv = ConvBlock(ch, ch)
 
         self.up_sample_layers = nn.ModuleList()
         for i in range(num_pool_layers - 1):
-            self.up_sample_layers += [ConvBlock(ch * 2, ch // 2, drop_prob)]
+            self.up_sample_layers += [ConvBlock(ch * 2, ch // 2)]
             ch //= 2
-        self.up_sample_layers += [ConvBlock(ch * 2, ch, drop_prob)]
+        self.up_sample_layers += [ConvBlock(ch * 2, ch)]
         self.conv2 = nn.Sequential(
             nn.Conv2d(ch, ch // 2, kernel_size=1),
             nn.Conv2d(ch // 2, out_chans, kernel_size=1),
             nn.Conv2d(out_chans, out_chans, kernel_size=1),
         )
 
-    def forward(self, tensor):
+    def forward(self, tensor, out_shape):
         """
         Args:
-            tensor (torch.Tensor): Input tensor of shape [batch_size, self.in_chans, height, width]
+            tensor (torch.Tensor): Input tensor of shape [batch_size, in_chans, height, width]
+            out_shape (tuple): shape [batch_size, num_coils, true_height, true_width].
+            Note that in_chans = 2 * num_coils
         Returns:
             (torch.Tensor): Output tensor of shape [batch_size, self.out_chans, height, width]
         """
@@ -121,8 +116,19 @@ class UnetModel(nn.Module):
             output = torch.cat((output, stack.pop()), dim=1)
             output = layer(output)
 
-        output = self.conv2(output)
+        output = self.conv2(output)  # End of learning.
 
-        # TODO: Add ifft2d and other processing steps here.
-        # TODO: Consider removing dropout since it is not used in CNNs anyway.
+        # Processing to k-space form.
+        output = nchw_to_kspace(output)
 
+        # For removing width dimension padding. Recall that k-space form has 2 as last dim size.
+        pad = (output.size(-2) - out_shape[-1]) // 2
+
+        # Cropping width dimension by pad.
+        output = output[..., pad:-pad, :]
+
+        # Convert to image.
+        output = complex_abs(ifft2(output))
+
+        assert output.size() == out_shape  # Checking just in case.
+        return output
