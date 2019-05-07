@@ -1,5 +1,11 @@
+torchsummary
+torchvision
+tqdm
+tensorboardX
+pytest
 scikit-image
 runstats
 numpy
 torch
 h5py
+pillow
