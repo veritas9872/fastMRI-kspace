@@ -228,12 +228,16 @@ def tensor_to_complex_np(data):
     return data[..., 0] + 1j * data[..., 1]
 
 
+# My transforms for data processing
 class DataTrainTransform:
     """
     Data Transformer for training and validating models.
+
+    Note that this method only works well for mini-batch of 1.
+    Using a larger mini-batch would require processing at the batch level.
     """
 
-    def __init__(self, mask_func, which_challenge, use_seed=True):
+    def __init__(self, mask_func, which_challenge, use_seed=True, divisor=1):
         """
         Args:
             mask_func (MaskFunc): A function that can create a mask of appropriate shape.
@@ -241,12 +245,18 @@ class DataTrainTransform:
             use_seed (bool): If true, this class computes a pseudo random number generator seed
                 from the filename. This ensures that the same mask is used for all the slices of
                 a given volume every time.
+            divisor (int): An integer indicating the lowest common denominator necessary for padding.
+                This parameter is necessary because phase encoding dimensions are different for all blocks
+                and UNETs and other models require inputs to be divisible by some power of 2.
+                Set to 1 if not necessary.
         """
+
         if which_challenge not in ('singlecoil', 'multicoil'):
             raise ValueError(f'Challenge should either be "singlecoil" or "multicoil"')
         self.mask_func = mask_func
         self.which_challenge = which_challenge
         self.use_seed = use_seed
+        self.divisor = divisor
 
     def __call__(self, kspace, target, attrs, file_name, slice_num):
         """
@@ -277,9 +287,9 @@ class DataTrainTransform:
             seed = None if not self.use_seed else tuple(map(ord, file_name))
             masked_kspace, mask = apply_mask(kspace, self.mask_func, seed)
 
-            data = self.k_slice_to_nchw(masked_kspace)
-            divisor = 2 ** 4  # Because there are 4 pooling layers. Change later for generalizability.
-            pad = (divisor - (data.shape[-1] % divisor)) // 2
+            data = k_slice_to_nchw(masked_kspace)
+            # divisor = 2 ** 4  # Because there are 4 pooling layers. Change later for generalizability.
+            pad = (self.divisor - (data.shape[-1] % self.divisor)) // 2
             pad = [pad, pad]
             data = F.pad(data, pad=pad, value=0)  # This pads at the last dimension of a tensor.
 
@@ -287,38 +297,13 @@ class DataTrainTransform:
 
         return data, labels
 
-    @staticmethod
-    def k_slice_to_nchw(tensor):
-        """
-        Convert torch tensor in (Coil, Height, Width, Complex) 4D k-slice format to
-        (C, H, W) 3D format for processing by 2D CNNs.
-
-        `Complex` indicates (real, imag) as 2 channels, the complex data format for Pytorch.
-
-        C is the coils interleaved with real and imaginary values as separate channels.
-        C is therefore always 2 * Coil.
-
-        Singlecoil data is assumed to be in the 4D format with Coil = 1
-
-        Args:
-            tensor (torch.Tensor): Input data in 4D k-slice tensor format.
-        Returns:
-            tensor (torch.Tensor): tensor in 4D NCHW format to be fed into a CNN.
-        """
-        assert isinstance(tensor, torch.Tensor)
-        assert tensor.dim() == 4
-        s = tensor.shape
-        assert s[-1] == 2
-        tensor = tensor.permute(dims=(0, 3, 1, 2)).reshape(shape=(2 * s[0], s[1], s[2]))
-        return tensor
-
 
 class DataSubmitTransform:
     """
     Data Transformer for generating submissions on the validation and test datasets.
     """
 
-    def __init__(self, resolution, which_challenge, mask_func=None):
+    def __init__(self, resolution, which_challenge, mask_func=None, divisor=1):
         """
         Args:
             resolution (int): Resolution of the image.
@@ -330,6 +315,7 @@ class DataSubmitTransform:
         self.resolution = resolution
         self.which_challenge = which_challenge
         self.mask_func = mask_func
+        self.divisor = divisor
 
     def __call__(self, kspace, target, attrs, file_name, slice_num):
         """
@@ -354,13 +340,36 @@ class DataSubmitTransform:
         else:  # Test set
             masked_kspace = kspace
 
-        # TODO: Redesign transform from here.
-        # P.S. Don't forget that the UNET requires a multiple of 2^pooling
-        # for the UNET to process the data.
-        # This also means that the UNET outputs have to be cropped after coming out of the UNET.
-        # Otherwise, there will be distortions in the image.
+        data = k_slice_to_nchw(masked_kspace)
+        pad = (self.divisor - (data.shape[-1] % self.divisor)) // 2
+        pad = [pad, pad]
+        data = F.pad(data, pad=pad, value=0)  # This pads at the last dimension of a tensor.
+        return data
 
-        return None
+
+def k_slice_to_nchw(tensor):
+    """
+    Convert torch tensor in (Coil, Height, Width, Complex) 4D k-slice format to
+    (C, H, W) 3D format for processing by 2D CNNs.
+
+    `Complex` indicates (real, imag) as 2 channels, the complex data format for Pytorch.
+
+    C is the coils interleaved with real and imaginary values as separate channels.
+    C is therefore always 2 * Coil.
+
+    Singlecoil data is assumed to be in the 4D format with Coil = 1
+
+    Args:
+        tensor (torch.Tensor): Input data in 4D k-slice tensor format.
+    Returns:
+        tensor (torch.Tensor): tensor in 4D NCHW format to be fed into a CNN.
+    """
+    assert isinstance(tensor, torch.Tensor)
+    assert tensor.dim() == 4
+    s = tensor.shape
+    assert s[-1] == 2
+    tensor = tensor.permute(dims=(0, 3, 1, 2)).reshape(shape=(2 * s[0], s[1], s[2]))
+    return tensor
 
 
 def kspace_to_nchw(tensor):

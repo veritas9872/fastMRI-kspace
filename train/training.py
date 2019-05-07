@@ -33,14 +33,14 @@ def create_datasets(args):
 
     train_dataset = SliceData(
         root=Path(args.data_root) / f'{args.challenge}_train',
-        transform=DataTrainTransform(train_mask_func, args.challenge, use_seed=False),
+        transform=DataTrainTransform(train_mask_func, args.challenge, use_seed=False, divisor=2 ** args.batch_size),
         challenge=args.challenge,
         sample_rate=args.sample_rate
     )
 
     val_dataset = SliceData(
         root=Path(args.data_root) / f'{args.challenge}_val',
-        transform=DataTrainTransform(val_mask_func, args.challenge, use_seed=True),
+        transform=DataTrainTransform(val_mask_func, args.challenge, use_seed=True, divisor=2 ** args.batch_size),
         challenge=args.challenge,
         sample_rate=args.sample_rate
     )

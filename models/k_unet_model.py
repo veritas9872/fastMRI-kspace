@@ -91,7 +91,7 @@ class UnetModel(nn.Module):
             nn.Conv2d(out_chans, out_chans, kernel_size=1),
         )
 
-    def forward(self, tensor, out_shape):
+    def forward(self, tensor, out_shape):  # Using out_shape only works for batch size of 1.
         """
         Args:
             tensor (torch.Tensor): Input tensor of shape [batch_size, in_chans, height, width]
