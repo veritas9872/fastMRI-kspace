@@ -43,6 +43,9 @@ def get_logger(name, save_file=None):
     logger = logging.getLogger(name)
     logger.setLevel(logging.INFO)
 
+    for handler in logger.handlers:  # Initialize existing logger.
+        logger.removeHandler(handler)
+
     c_handler = logging.StreamHandler()
     c_handler.setLevel(logging.INFO)
     c_format = logging.Formatter('%(name)s - %(levelname)s - %(message)s')
@@ -60,6 +63,6 @@ def get_logger(name, save_file=None):
 
 
 def create_arg_parser(**overrides):
-    parser = argparse.ArgumentParser(description='Arguments for training networks etc.')
+    parser = argparse.ArgumentParser(description='Simple argument parser for placing default arguments as desired.')
     parser.set_defaults(**overrides)
     return parser

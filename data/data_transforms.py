@@ -1,11 +1,6 @@
-"""
-Copyright (c) Facebook, Inc. and its affiliates.
-This source code is licensed under the MIT license found in the
-LICENSE file in the root directory of this source tree.
-"""
-
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 
 def to_tensor(data):
@@ -235,15 +230,13 @@ def tensor_to_complex_np(data):
 
 class DataTrainTransform:
     """
-    Data Transformer for training U-Net models.
+    Data Transformer for training and validating models.
     """
 
-    def __init__(self, mask_func, resolution, which_challenge, use_seed=True):
+    def __init__(self, mask_func, which_challenge, use_seed=True):
         """
         Args:
-            mask_func (common.subsample.MaskFunc): A function that can create a mask of
-                appropriate shape.
-            resolution (int): Resolution of the image.
+            mask_func (MaskFunc): A function that can create a mask of appropriate shape.
             which_challenge (str): Either "singlecoil" or "multicoil" denoting the dataset.
             use_seed (bool): If true, this class computes a pseudo random number generator seed
                 from the filename. This ensures that the same mask is used for all the slices of
@@ -252,7 +245,6 @@ class DataTrainTransform:
         if which_challenge not in ('singlecoil', 'multicoil'):
             raise ValueError(f'Challenge should either be "singlecoil" or "multicoil"')
         self.mask_func = mask_func
-        self.resolution = resolution
         self.which_challenge = which_challenge
         self.use_seed = use_seed
 
@@ -273,33 +265,57 @@ class DataTrainTransform:
                 std (float): Standard deviation value used for normalization.
                 norm (float): L2 norm of the entire volume.
         """
-        kspace = to_tensor(kspace)
-        # Apply mask
-        seed = None if not self.use_seed else tuple(map(ord, file_name))
-        masked_kspace, mask = apply_mask(kspace, self.mask_func, seed)
-        # Inverse Fourier Transform to get zero filled solution
-        image = ifft2(masked_kspace)
-        # Crop input image
-        image = complex_center_crop(image, (self.resolution, self.resolution))
-        # Absolute value
-        image = complex_abs(image)
-        # Apply Root-Sum-of-Squares if multicoil data
-        if self.which_challenge == 'multicoil':
-            image = root_sum_of_squares(image)
-        # Normalize input
-        image, mean, std = normalize_instance(image, eps=1e-11)
-        image = image.clamp(-6, 6)
+        assert np.iscomplexobj(kspace), 'kspace must be complex.'
+        assert kspace.shape[-1] % 2 == 0, 'k-space data width must be even.'
+        with torch.no_grad():  # Remove unnecessary gradient calculations.
+            if kspace.ndim == 4:  # For singlecoil
+                kspace = np.expand_dims(kspace, axis=1)
 
-        target = to_tensor(target)
-        # Normalize target
-        target = normalize(target, mean, std, eps=1e-11)
-        target = target.clamp(-6, 6)
-        return image, target, mean, std, attrs['norm'].astype(np.float32)  # TODO: Change this!
+            kspace = to_tensor(kspace)
+            labels = complex_abs(ifft2(kspace))
+            # Apply mask
+            seed = None if not self.use_seed else tuple(map(ord, file_name))
+            masked_kspace, mask = apply_mask(kspace, self.mask_func, seed)
+
+            data = self.k_slice_to_nchw(masked_kspace)
+            divisor = 2 ** 4  # Because there are 4 pooling layers. Change later for generalizability.
+            pad = (divisor - (data.shape[-1] % divisor)) // 2
+            pad = [pad, pad]
+            data = F.pad(data, pad=pad, value=0)  # This pads at the last dimension of a tensor.
+
+            # Using the data acquisition method (fat suppression) may be useful later on.
+
+        return data, labels
+
+    @staticmethod
+    def k_slice_to_nchw(tensor):
+        """
+        Convert torch tensor in (Coil, Height, Width, Complex) 4D k-slice format to
+        (C, H, W) 3D format for processing by 2D CNNs.
+
+        `Complex` indicates (real, imag) as 2 channels, the complex data format for Pytorch.
+
+        C is the coils interleaved with real and imaginary values as separate channels.
+        C is therefore always 2 * Coil.
+
+        Singlecoil data is assumed to be in the 4D format with Coil = 1
+
+        Args:
+            tensor (torch.Tensor): Input data in 4D k-slice tensor format.
+        Returns:
+            tensor (torch.Tensor): tensor in 4D NCHW format to be fed into a CNN.
+        """
+        assert isinstance(tensor, torch.Tensor)
+        assert tensor.dim() == 4
+        s = tensor.shape
+        assert s[-1] == 2
+        tensor = tensor.permute(dims=(0, 3, 1, 2)).reshape(shape=(2 * s[0], s[1], s[2]))
+        return tensor
 
 
-class DataValTransform:
+class DataSubmitTransform:
     """
-    Data Transformer for running U-Net models on a validation dataset.
+    Data Transformer for generating submissions on the validation and test datasets.
     """
 
     def __init__(self, resolution, which_challenge, mask_func=None):
@@ -307,8 +323,7 @@ class DataValTransform:
         Args:
             resolution (int): Resolution of the image.
             which_challenge (str): Either "singlecoil" or "multicoil" denoting the dataset.
-            mask_func (common.subsample.MaskFunc): A function that can create a mask of
-                appropriate shape.
+            mask_func (MaskFunc): A function that can create a mask of appropriate shape.
         """
         if which_challenge not in ('singlecoil', 'multicoil'):
             raise ValueError(f'Challenge should either be "singlecoil" or "multicoil"')
@@ -322,33 +337,66 @@ class DataValTransform:
             kspace (numpy.Array): k-space measurements
             target (numpy.Array): Target image
             attrs (dict): Acquisition related information stored in the HDF5 object
-            file_name (pathlib.Path): Path to the input file
+            file_name (str): File name
             slice_num (int): Serial number of the slice
         Returns:
             (tuple): tuple containing:
                 image (torch.Tensor): Normalized zero-filled input image
                 mean (float): Mean of the zero-filled image
                 std (float): Standard deviation of the zero-filled image
-                file_name (pathlib.Path): Path to the input file
+                file_name (str): File name
                 slice_num (int): Serial number of the slice
         """
         kspace = to_tensor(kspace)
-        if self.mask_func is not None:
-            seed = tuple(map(ord, file_name))  # TODO: Check if this is a bug or not.
+        if self.mask_func is not None:  # Validation set
+            seed = tuple(map(ord, file_name))
             masked_kspace, _ = apply_mask(kspace, self.mask_func, seed)
-        else:
+        else:  # Test set
             masked_kspace = kspace
-        # Inverse Fourier Transform to get zero filled solution
-        image = ifft2(masked_kspace)
-        # Crop input image
-        image = complex_center_crop(image, (self.resolution, self.resolution))
-        # Absolute value
-        image = complex_abs(image)
-        # Apply Root-Sum-of-Squares if multicoil data
-        if self.which_challenge == 'multicoil':
-            image = root_sum_of_squares(image)
-        # Normalize input
-        image, mean, std = normalize_instance(image)
-        image = image.clamp(-6, 6)
-        return image, mean, std, file_name, slice_num
 
+        # TODO: Redesign transform from here.
+        # P.S. Don't forget that the UNET requires a multiple of 2^pooling
+        # for the UNET to process the data.
+        # This also means that the UNET outputs have to be cropped after coming out of the UNET.
+        # Otherwise, there will be distortions in the image.
+
+        return None
+
+
+def kspace_to_nchw(tensor):
+    """
+    Convert torch tensor in (Slice, Coil, Height, Width, Complex) 5D format to
+    (N, C, H, W) 4D format for processing by 2D CNNs.
+
+    Complex indicates (real, imag) as 2 channels, the complex data format for Pytorch.
+
+    C is the coils interleaved with real and imaginary values as separate channels.
+    C is therefore always 2 * Coil.
+
+    Singlecoil data is assumed to be in the 5D format with Coil = 1
+
+    Args:
+        tensor (torch.Tensor): Input data in 5D kspace tensor format.
+    Returns:
+        tensor (torch.Tensor): tensor in 4D NCHW format to be fed into a CNN.
+    """
+    assert isinstance(tensor, torch.Tensor)
+    assert tensor.dim() == 5
+    s = tensor.shape
+    assert s[-1] == 2
+    tensor = tensor.permute(dims=(0, 1, 4, 2, 3)).reshape(shape=(s[0], 2 * s[1], s[2], s[3]))
+    return tensor
+
+
+def nchw_to_kspace(tensor):
+    """
+    Convert a torch tensor in (N, C, H, W) format to the (Slice, Coil, Height, Width, Complex) format.
+
+    This function assumes that the real and imaginary values of a coil are always adjacent to one another in C.
+    """
+    assert isinstance(tensor, torch.Tensor)
+    assert tensor.dim() == 4
+    s = tensor.shape
+    assert s[1] % 2 == 0
+    tensor = tensor.view(size=(s[0], s[1] // 2, 2, s[2], s[3])).permute(dims=(0, 1, 3, 4, 2))
+    return tensor
