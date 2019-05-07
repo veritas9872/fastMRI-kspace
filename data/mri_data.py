@@ -1,5 +1,6 @@
 import pathlib
 import random
+from math import ceil
 
 import h5py
 from torch.utils.data import Dataset
@@ -42,7 +43,7 @@ class SliceData(Dataset):
 
         if sample_rate < 1:
             random.shuffle(files)
-            num_files = round(len(files) * sample_rate)
+            num_files = ceil(len(files) * sample_rate)
             files = files[:num_files]
 
         for file_name in sorted(files):

@@ -122,7 +122,7 @@ class UnetModel(nn.Module):
         output = nchw_to_kspace(output)
 
         # For removing width dimension padding. Recall that k-space form has 2 as last dim size.
-        pad = (output.size(-2) - out_shape[-1]) // 2
+        pad = (output.size(-2) - out_shape[-1]) // 2  # This depends on mini-batch size being 1 to work.
 
         # Cropping width dimension by pad.
         output = output[..., pad:-pad, :]

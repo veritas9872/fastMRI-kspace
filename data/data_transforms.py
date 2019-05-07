@@ -290,10 +290,10 @@ class DataTrainTransform:
     @staticmethod
     def k_slice_to_nchw(tensor):
         """
-        Convert torch tensor in (Coil, Height, Width, Complex) 4D format to
+        Convert torch tensor in (Coil, Height, Width, Complex) 4D k-slice format to
         (C, H, W) 3D format for processing by 2D CNNs.
 
-        Complex indicates (real, imag) as 2 channels, the complex data format for Pytorch.
+        `Complex` indicates (real, imag) as 2 channels, the complex data format for Pytorch.
 
         C is the coils interleaved with real and imaginary values as separate channels.
         C is therefore always 2 * Coil.
@@ -392,7 +392,7 @@ def nchw_to_kspace(tensor):
     """
     Convert a torch tensor in (N, C, H, W) format to the (Slice, Coil, Height, Width, Complex) format.
 
-    This function assumes that the real and imaginary values are always adjacent to one another.
+    This function assumes that the real and imaginary values of a coil are always adjacent to one another in C.
     """
     assert isinstance(tensor, torch.Tensor)
     assert tensor.dim() == 4
