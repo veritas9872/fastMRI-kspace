@@ -5,44 +5,53 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 
-from tensorboardX import SummaryWriter
-from tqdm import tqdm
 import numpy as np
+from tqdm import tqdm
+from tensorboardX import SummaryWriter
 
-from pathlib import Path
 from time import time
+from pathlib import Path
 
-from utils.run_utils import get_logger, initialize, save_dict_as_json, create_arg_parser
-from utils.train_utils import CheckpointManager
 from train.subsample import MaskFunc
+from utils.train_utils import CheckpointManager
+from utils.run_utils import get_logger, initialize, save_dict_as_json
 from data.mri_data import SliceData
 from data.data_transforms import DataTrainTransform
+
 from models.k_unet_model import UnetModel
 
 
 """
 Please note a bit of terminology. 
-In this file, 'recons' indicate coil-wise reconstructions,
+In this file, 'recons' indicates coil-wise reconstructions,
 not final reconstructions for submissions.
 """
 
 
 def create_datasets(args):
+    if args.batch_size > 1:
+        raise NotImplementedError('Batch size must be greater than 1 for the current implementation to function.')
+
     train_mask_func = MaskFunc(args.center_fractions, args.accelerations)
     val_mask_func = MaskFunc(args.center_fractions, args.accelerations)
 
+    divisor = 2 ** args.num_pool_layers  # UNET architecture requires that all inputs be dividable by some power of 2.
+    # The current implementation only works if the batch size is 1.
+
     train_dataset = SliceData(
         root=Path(args.data_root) / f'{args.challenge}_train',
-        transform=DataTrainTransform(train_mask_func, args.challenge, use_seed=False, divisor=2 ** args.batch_size),
+        transform=DataTrainTransform(train_mask_func, args.challenge, use_seed=False, divisor=divisor),
         challenge=args.challenge,
-        sample_rate=args.sample_rate
+        sample_rate=args.sample_rate,
+        use_gt=False
     )
 
     val_dataset = SliceData(
         root=Path(args.data_root) / f'{args.challenge}_val',
-        transform=DataTrainTransform(val_mask_func, args.challenge, use_seed=True, divisor=2 ** args.batch_size),
+        transform=DataTrainTransform(val_mask_func, args.challenge, use_seed=True, divisor=divisor),
         challenge=args.challenge,
-        sample_rate=args.sample_rate
+        sample_rate=args.sample_rate,
+        use_gt=False
     )
 
     return train_dataset, val_dataset
@@ -56,14 +65,14 @@ def create_data_loaders(args):
         batch_size=args.batch_size,
         shuffle=True,
         num_workers=args.num_workers,
-        pin_memory=True,
+        pin_memory=True
     )
 
     val_loader = DataLoader(
         dataset=val_dataset,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
-        pin_memory=True,
+        pin_memory=True
     )
     return train_loader, val_loader
 
@@ -120,7 +129,7 @@ def make_grid_for_one_image(recons):  # Helper for saving to TensorboardX or as 
         raise NotImplementedError('Mini-batch size greater than 1 has not been implemented yet.')
 
     # Note that each image scales independently of all other images. This may cause weird scaling behavior.
-    grid = torch.squeeze(recons).unsqueeze(dim=1)  # Assumes batch_size=1
+    grid = torch.squeeze(recons, dim=0).unsqueeze(dim=1)  # Assumes batch_size=1
     # Weird bug where nrow parameter seems to decide number of columns instead of rows.
     grid = torchvision.utils.make_grid(grid, nrow=5, normalize=True, scale_each=True, pad_value=1.)
     return np.squeeze(grid.cpu().numpy())  # Since there should only be 1 channel.
@@ -155,9 +164,9 @@ def val_epoch(model, loss_func, data_loader, writer, device, epoch, max_imgs=0, 
                 interval = len(data_loader.dataset) // max_imgs
                 if step % interval == 0:  # Note that all images are scaled independently of all other images.
 
-                    recon_grid = make_grid_for_one_image(recons)
                     assert isinstance(writer, SummaryWriter)
-                    print(recon_grid.shape)
+
+                    recon_grid = make_grid_for_one_image(recons)
                     writer.add_image('Recons', recon_grid, epoch)
 
                     target_grid = make_grid_for_one_image(targets)
@@ -235,7 +244,7 @@ def train_model(args):
             epoch=epoch, verbose=args.verbose, metrics=None)
 
         toc = int(time() - tic)
-        logger.info(f'Epoch {epoch:03d} Training. loss: {train_epoch_loss:.4f}, Time: {toc // 60}min {toc % 60}sec')
+        logger.info(f'Epoch {epoch:03d} Training. loss: {train_epoch_loss:.4e}, Time: {toc // 60}min {toc % 60}sec')
         writer.add_scalar('train_epoch_loss', scalar_value=train_epoch_loss, global_step=epoch)
 
         # Evaluating
@@ -245,7 +254,7 @@ def train_model(args):
             epoch=epoch, max_imgs=args.max_imgs, verbose=args.verbose, metrics=None)
 
         toc = int(time() - tic)
-        logger.info(f'Epoch {epoch:03d} Validation. loss: {val_epoch_loss:.4f}, Time: {toc // 60}min {toc % 60}sec')
+        logger.info(f'Epoch {epoch:03d} Validation. loss: {val_epoch_loss:.4e}, Time: {toc // 60}min {toc % 60}sec')
         writer.add_scalar('val_epoch_loss', scalar_value=val_epoch_loss, global_step=epoch)
 
         for idx, group in enumerate(optimizer.param_groups, start=1):
@@ -255,5 +264,4 @@ def train_model(args):
 
         scheduler.step(metrics=val_epoch_loss)
 
-
-
+    return model
