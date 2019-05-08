@@ -6,7 +6,6 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 
 import numpy as np
-from tqdm import tqdm
 from tensorboardX import SummaryWriter
 
 from time import time
@@ -16,7 +15,7 @@ from train.subsample import MaskFunc
 from utils.train_utils import CheckpointManager
 from utils.run_utils import get_logger, initialize, save_dict_as_json
 from data.mri_data import SliceData
-from data.data_transforms import DataTrainTransform
+from data.slice_transforms import DataTrainTransform
 
 from models.k_unet_model import UnetModel
 
@@ -43,7 +42,8 @@ def create_datasets(args):
         transform=DataTrainTransform(train_mask_func, args.challenge, use_seed=False, divisor=divisor),
         challenge=args.challenge,
         sample_rate=args.sample_rate,
-        use_gt=False
+        use_gt=False,
+        converted=args.converted
     )
 
     val_dataset = SliceData(
@@ -51,7 +51,8 @@ def create_datasets(args):
         transform=DataTrainTransform(val_mask_func, args.challenge, use_seed=True, divisor=divisor),
         challenge=args.challenge,
         sample_rate=args.sample_rate,
-        use_gt=False
+        use_gt=False,
+        converted=args.converted
     )
 
     return train_dataset, val_dataset
@@ -214,7 +215,7 @@ def train_model(args):
     # Define model.
     data_chans = 2 if args.challenge == 'singlecoil' else 30  # Multicoil has 15 coils with 2 for real/imag
     # data_chans indicates the number of channels in the data.
-    # TODO: I must verify whether the output is correct. The image outputs look like k-space right now.
+    # TODO: I must verify whether the output is correct. The image outputs look like k-space in the beginning.
     model = UnetModel(in_chans=data_chans, out_chans=data_chans, chans=args.chans,
                       num_pool_layers=args.num_pool_layers).to(device)
 
