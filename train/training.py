@@ -117,7 +117,7 @@ def train_epoch(model, optimizer, loss_func, data_loader, device, epoch, verbose
                         print(f'Training metric Epoch {epoch:03d} Step {idx:03d}: {step_metric.item():.4e}')
 
     epoch_loss = np.nanmean(epoch_loss_lst)  # Remove nan values just in case.
-    epoch_metrics = [np.nanmean(epoch_metric_lst) for epoch_metric_lst in epoch_metrics_lst]
+    epoch_metrics = [np.nanmean(epoch_metric_lst) for epoch_metric_lst in epoch_metrics_lst] if metrics else None
 
     num_nans = np.isnan(epoch_loss_lst).sum()
     if num_nans > 0:
@@ -184,7 +184,7 @@ def val_epoch(model, loss_func, data_loader, writer, device, epoch, max_imgs=0, 
                     writer.add_image('Delta', delta_grid, epoch)
 
     epoch_loss = np.nanmean(epoch_loss_lst)  # Remove nan values just in case.
-    epoch_metrics = [np.nanmean(epoch_metric_lst) for epoch_metric_lst in epoch_metrics_lst]
+    epoch_metrics = [np.nanmean(epoch_metric_lst) for epoch_metric_lst in epoch_metrics_lst] if metrics else None
 
     num_nans = np.isnan(epoch_loss_lst).sum()
     if num_nans > 0:
@@ -261,6 +261,8 @@ def train_model(args):
         toc = int(time() - tic)
         logger.info(f'Epoch {epoch:03d} Training. loss: {train_epoch_loss:.4e}, Time: {toc // 60}min {toc % 60}sec')
         writer.add_scalar('train_epoch_loss', scalar_value=train_epoch_loss, global_step=epoch)
+        # TODO: Add code for showing and recording metrics later, for both training and validation.
+        # Note that the metrics being returned are either 'None' or a list of values.
 
         # Evaluating
         tic = time()
