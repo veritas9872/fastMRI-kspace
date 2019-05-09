@@ -7,7 +7,7 @@ from data.data_transforms import to_tensor, ifft2, complex_abs, apply_mask, k_sl
 
 
 # My transforms for data processing
-class DataTrainTransform:
+class TrainSliceTransform:
     """
     Data Transformer for training and validating models.
 
@@ -39,27 +39,33 @@ class DataTrainTransform:
     def __call__(self, kspace, target, attrs, file_name, slice_num):
         """
         Args:
-            kspace (numpy.array): Input k-space of shape (num_coils, rows, cols, 2) for multi-coil
-                data or (rows, cols, 2) for single coil data.
-            target (numpy.array): Target image
+            kspace (numpy.array): Input k-space of shape (num_coils, height, width) for multi-coil
+                data or (rows, cols) for single coil data.
+            target (numpy.array): Target (320x320) image. May be None.
             attrs (dict): Acquisition related information stored in the HDF5 object.
             file_name (str): File name
             slice_num (int): Serial number of the slice.
         Returns:
             (tuple): tuple containing:
-                image (torch.Tensor): Zero-filled input image.
-                target (torch.Tensor): Target image converted to a torch Tensor.
-                mean (float): Mean value used for normalization.
-                std (float): Standard deviation value used for normalization.
-                norm (float): L2 norm of the entire volume.
+                data (torch.Tensor): kspace data converted to CHW format for CNNs, where C=(2*num_coils).
+                    Also has padding in the width axis for auto-encoders, which have down-sampling regions.
+                    This requires the data to be divisible by some number (usually 2**num_pooling_layers).
+                    Otherwise, concatenation will not work in the decoder due to different sizes.
+                    Only the width dimension is padded in this case due to the nature of the dataset.
+                    The height is fixed at 640, while the width is variable.
+                labels (torch.Tensor): Coil-wise ground truth images. Shape=(num_coils, H, W)
         """
         assert np.iscomplexobj(kspace), 'kspace must be complex.'
         assert kspace.shape[-1] % 2 == 0, 'k-space data width must be even.'
-        with torch.no_grad():  # Remove unnecessary gradient calculations.
-            if kspace.ndim == 4:  # For singlecoil
-                kspace = np.expand_dims(kspace, axis=1)
 
-            kspace = to_tensor(kspace)
+        if kspace.ndim == 2:  # For singlecoil. Makes data processing later on much easier.
+            kspace = np.expand_dims(kspace, axis=0)
+        elif kspace.ndim != 3:  # Prevents possible errors.
+            raise TypeError('Invalid slice type')
+
+        with torch.no_grad():  # Remove unnecessary gradient calculations.
+
+            kspace = to_tensor(kspace)  # Now a Tensor of (num_coils, height, width, 2), where 2 is (real, imag).
             labels = complex_abs(ifft2(kspace))
             # Apply mask
             seed = None if not self.use_seed else tuple(map(ord, file_name))
@@ -76,21 +82,19 @@ class DataTrainTransform:
         return data, labels
 
 
-class DataSubmitTransform:
+class SubmitSliceTransform:
     """
     Data Transformer for generating submissions on the validation and test datasets.
     """
 
-    def __init__(self, resolution, which_challenge, mask_func=None, divisor=1):
+    def __init__(self, which_challenge, mask_func=None, divisor=1):
         """
         Args:
-            resolution (int): Resolution of the image.
             which_challenge (str): Either "singlecoil" or "multicoil" denoting the dataset.
             mask_func (MaskFunc): A function that can create a mask of appropriate shape.
         """
         if which_challenge not in ('singlecoil', 'multicoil'):
             raise ValueError(f'Challenge should either be "singlecoil" or "multicoil"')
-        self.resolution = resolution
         self.which_challenge = which_challenge
         self.mask_func = mask_func
         self.divisor = divisor

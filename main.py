@@ -19,7 +19,7 @@ I will find out soon.
 if __name__ == '__main__':
     defaults = dict(
         batch_size=1,  # This MUST be 1 for now.
-        sample_rate=1,  # Mostly for debugging purposes.
+        sample_rate=0.1,  # Mostly for debugging purposes.
         num_workers=1,  # Read the note above.
         init_lr=1E-3,
         log_dir='./logs',

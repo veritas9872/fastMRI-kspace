@@ -15,7 +15,7 @@ from train.subsample import MaskFunc
 from utils.train_utils import CheckpointManager
 from utils.run_utils import get_logger, initialize, save_dict_as_json
 from data.mri_data import SliceData
-from data.slice_transforms import DataTrainTransform
+from data.slice_transforms import TrainSliceTransform
 
 from models.k_unet_model import UnetModel
 
@@ -39,7 +39,7 @@ def create_datasets(args):
 
     train_dataset = SliceData(
         root=Path(args.data_root) / f'{args.challenge}_train',
-        transform=DataTrainTransform(train_mask_func, args.challenge, use_seed=False, divisor=divisor),
+        transform=TrainSliceTransform(train_mask_func, args.challenge, use_seed=False, divisor=divisor),
         challenge=args.challenge,
         sample_rate=args.sample_rate,
         use_gt=False,
@@ -48,7 +48,7 @@ def create_datasets(args):
 
     val_dataset = SliceData(
         root=Path(args.data_root) / f'{args.challenge}_val',
-        transform=DataTrainTransform(val_mask_func, args.challenge, use_seed=True, divisor=divisor),
+        transform=TrainSliceTransform(val_mask_func, args.challenge, use_seed=True, divisor=divisor),
         challenge=args.challenge,
         sample_rate=args.sample_rate,
         use_gt=False,
@@ -92,9 +92,9 @@ def train_epoch(model, optimizer, loss_func, data_loader, device, epoch, verbose
     torch.autograd.set_grad_enabled(True)
 
     # initialize epoch loss
-    epoch_loss = 0.  # Automatically converts to pytorch tensor.
+    epoch_loss_lst = list()  # Appending values to list due to numerical underflow.
     # initialize multiple epoch metrics
-    epoch_metrics = [0. for _ in metrics] if metrics else None
+    epoch_metrics_lst = [list() for _ in metrics] if metrics else None
 
     # labels are fully sampled coil-wise images, not rss or esc.
     for idx, (images, labels) in enumerate(data_loader, start=1):
@@ -102,19 +102,26 @@ def train_epoch(model, optimizer, loss_func, data_loader, device, epoch, verbose
         labels = labels.to(device, non_blocking=True)
         step_loss, recons = train_step(model, optimizer, loss_func, images, labels)
 
-        # Gradients are not calculated to boost speed and remove weird errors.
+        # Gradients are not calculated so as to boost speed and remove weird errors.
         with torch.no_grad():  # Update epoch loss and metrics
-            epoch_loss += (step_loss.item() - epoch_loss) / idx  # Equation for running average.
+            epoch_loss_lst.append(step_loss.item())  # Perhaps not elegant, but underflow makes this necessary.
             if metrics:
                 step_metrics = [metric(recons, labels) for metric in metrics]
-                for step_metric, epoch_metric in zip(step_metrics, epoch_metrics):
-                    epoch_metric += (step_metric.item() - epoch_metric) / idx
+                for step_metric, epoch_metric_lst in zip(step_metrics, epoch_metrics_lst):
+                    epoch_metric_lst.append(step_metric.item())
 
             if verbose:
                 print(f'Training loss Epoch {epoch:03d} Step {idx:03d}: {step_loss.item():.4e}')
                 if metrics:
                     for step_metric in step_metrics:
                         print(f'Training metric Epoch {epoch:03d} Step {idx:03d}: {step_metric.item():.4e}')
+
+    epoch_loss = np.nanmean(epoch_loss_lst)  # Remove nan values just in case.
+    epoch_metrics = [np.nanmean(epoch_metric_lst) for epoch_metric_lst in epoch_metrics_lst]
+
+    num_nans = np.isnan(epoch_loss_lst).sum()
+    if num_nans > 0:
+        print(f'Epoch {epoch} training: {num_nans} NaN values present in {len(data_loader.dataset)} slices')
 
     return epoch_loss, epoch_metrics
 
@@ -126,7 +133,7 @@ def val_step(model, loss_func, images, labels):
 
 
 def make_grid_for_one_image(recons):  # Helper for saving to TensorboardX or as image
-    if recons.size(0) > 1:  # Singlecoil is not implemented either
+    if recons.size(0) > 1:
         raise NotImplementedError('Mini-batch size greater than 1 has not been implemented yet.')
 
     # Note that each image scales independently of all other images. This may cause weird scaling behavior.
@@ -140,8 +147,8 @@ def val_epoch(model, loss_func, data_loader, writer, device, epoch, max_imgs=0, 
     model.eval()
     torch.autograd.set_grad_enabled(False)
 
-    epoch_loss = 0.
-    epoch_metrics = [0. for _ in metrics] if metrics else None
+    epoch_loss_lst = list()
+    epoch_metrics_lst = [list() for _ in metrics] if metrics else None
 
     for step, (data, targets) in enumerate(data_loader, start=1):
         data = data.to(device)
@@ -149,11 +156,11 @@ def val_epoch(model, loss_func, data_loader, writer, device, epoch, max_imgs=0, 
         step_loss, recons = val_step(model, loss_func, data, targets)
 
         with torch.no_grad():  # Probably not actually necessary...
-            epoch_loss += (step_loss.item() - epoch_loss) / step  # Equation for running average.
+            epoch_loss_lst.append(step_loss.item())
             if metrics:
                 step_metrics = [metric(recons, targets) for metric in metrics]
-                for step_metric, epoch_metric in zip(step_metrics, epoch_metrics):
-                    epoch_metric += (step_metric.item() - epoch_metric) / step
+                for step_metric, epoch_metric_lst in zip(step_metrics, epoch_metrics_lst):
+                    epoch_metric_lst.append(step_metric.item())  # Equation for running average.
 
             if verbose:
                 print(f'Validation loss Epoch {epoch:03d} Step {step:03d}: {step_loss.item():.4e}')
@@ -175,6 +182,13 @@ def val_epoch(model, loss_func, data_loader, writer, device, epoch, max_imgs=0, 
 
                     delta_grid = make_grid_for_one_image(targets - recons)
                     writer.add_image('Delta', delta_grid, epoch)
+
+    epoch_loss = np.nanmean(epoch_loss_lst)  # Remove nan values just in case.
+    epoch_metrics = [np.nanmean(epoch_metric_lst) for epoch_metric_lst in epoch_metrics_lst]
+
+    num_nans = np.isnan(epoch_loss_lst).sum()
+    if num_nans > 0:
+        print(f'Epoch {epoch} validation: {num_nans} NaN values present in {len(data_loader.dataset)} slices')
 
     return epoch_loss, epoch_metrics
 

@@ -62,7 +62,7 @@ class SliceData(Dataset):
         file_path, slice_num = self.examples[idx]
         with h5py.File(file_path, mode='r', swmr=self.converted) as data:  # Not sure if SWMR works or not...
             kspace = data['kspace'][slice_num]
-            if self.recons_key in data and self.use_gt:
+            if (self.recons_key in data) and self.use_gt:
                 target = data[self.recons_key][slice_num]
             else:
                 target = None
