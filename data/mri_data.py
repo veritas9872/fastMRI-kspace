@@ -11,7 +11,7 @@ class SliceData(Dataset):
     A PyTorch Dataset that provides access to MR image slices.
     """
 
-    def __init__(self, root, transform, challenge, use_gt=True, sample_rate=1):
+    def __init__(self, root, transform, challenge, sample_rate=1, use_gt=True, converted=False):
         """
         Args:
             root (pathlib.Path): Path to the dataset.
@@ -20,14 +20,18 @@ class SliceData(Dataset):
                 'attributes', 'filename', and 'slice_num' as inputs. 'target' may be null
                 for test data.
             challenge (str): "singlecoil" or "multicoil" depending on which challenge to use.
-            use_gt (bool): Whether to load the ground truth 320x320 fully-sampled reconstructions or not.
-            Very useful for reducing data I/O in k-space learning.
             sample_rate (float, optional): A float between 0 and 1. This controls what fraction
                 of the volumes should be loaded.
+            use_gt (bool): Whether to load the ground truth 320x320 fully-sampled reconstructions or not.
+                Very useful for reducing data I/O in k-space learning.
+            converted (bool): Whether the converted dataset is being used or not.
         """
-        self.use_gt = use_gt
+
         if challenge not in ('singlecoil', 'multicoil'):
             raise ValueError('challenge should be either "singlecoil" or "multicoil"')
+
+        self.use_gt = use_gt
+        self.converted = converted
 
         self.transform = transform
         self.recons_key = 'reconstruction_esc' if challenge == 'singlecoil' else 'reconstruction_rss'
@@ -56,9 +60,9 @@ class SliceData(Dataset):
 
     def __getitem__(self, idx):
         file_path, slice_num = self.examples[idx]
-        with h5py.File(file_path, mode='r') as data:
+        with h5py.File(file_path, mode='r', swmr=self.converted) as data:  # Not sure if SWMR works or not...
             kspace = data['kspace'][slice_num]
-            if self.recons_key in data and self.use_gt:
+            if (self.recons_key in data) and self.use_gt:
                 target = data[self.recons_key][slice_num]
             else:
                 target = None

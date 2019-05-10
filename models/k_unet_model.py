@@ -91,7 +91,7 @@ class UnetModel(nn.Module):
             nn.Conv2d(out_chans, out_chans, kernel_size=1),
         )
 
-    def forward(self, tensor, out_shape):
+    def forward(self, tensor, out_shape):  # Using out_shape only works for batch size of 1.
         """
         Args:
             tensor (torch.Tensor): Input tensor of shape [batch_size, in_chans, height, width]
@@ -118,14 +118,14 @@ class UnetModel(nn.Module):
 
         output = self.conv2(output)  # End of learning.
 
-        # Processing to k-space form.
-        output = nchw_to_kspace(output)
-
         # For removing width dimension padding. Recall that k-space form has 2 as last dim size.
-        pad = (output.size(-2) - out_shape[-1]) // 2  # This depends on mini-batch size being 1 to work.
+        pad = (output.size(-1) - out_shape[-1]) // 2  # This depends on mini-batch size being 1 to work.
 
         # Cropping width dimension by pad.
-        output = output[..., pad:-pad, :]
+        output = output[..., pad:-pad]
+
+        # Processing to k-space form.
+        output = nchw_to_kspace(output)
 
         # Convert to image.
         output = complex_abs(ifft2(output))
