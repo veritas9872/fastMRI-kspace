@@ -10,12 +10,12 @@ if __name__ == '__main__':
         init_lr=1E-4,
         log_dir='./logs',
         ckpt_dir='./checkpoints',
-        gpu=1,  # Set to None for CPU mode.
+        gpu=0,  # Set to None for CPU mode.
         num_epochs=2,
         max_to_keep=1,
         verbose=True,
         save_best_only=True,
-        data_root='/media/veritas/E/fastMRI',
+        data_root='/media/user/Data2/compFastMRI',
         challenge='multicoil',
         center_fractions=[0.08, 0.04],
         accelerations=[4, 8],

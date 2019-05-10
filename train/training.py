@@ -17,7 +17,7 @@ from utils.train_utils import CheckpointManager
 from train.subsample import MaskFunc
 from data.mri_data import SliceData
 from data.data_transforms import DataTrainTransform
-from models.k_unet_model import UnetModel
+from eda.k_unet_mode_test import UnetModel
 
 
 """

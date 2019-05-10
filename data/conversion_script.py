@@ -70,11 +70,11 @@ def check_same(old_folder, new_folder):
 
 
 if __name__ == '__main__':
-    train_dir = '/media/veritas/E/fastMRI/multicoil_train'
-    val_dir = '/media/veritas/E/fastMRI/multicoil_val'
-    test_dir = '/media/veritas/E/fastMRI/multicoil_test'
+    train_dir = '/media/user/Data2/fastMRI/multicoil_train'
+    val_dir = '/media/user/Data2/fastMRI/multicoil_val'
+    test_dir = '/media/user/Data2/fastMRI/multicoil_test'
 
-    data_root = '/media/veritas/F/compFastMRI'  # Compressed Fast MRI Dataset
+    data_root = '/media/user/Data2/compFastMRI'  # Compressed Fast MRI Dataset
     data_path_ = Path(data_root)
 
     # For floating point values, I have found that gzip level 1 and 9 give almost the same compression.
