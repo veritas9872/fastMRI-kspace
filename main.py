@@ -19,14 +19,14 @@ I will find out soon.
 if __name__ == '__main__':
     defaults = dict(
         batch_size=1,  # This MUST be 1 for now.
-        sample_rate=0.01,  # Mostly for debugging purposes.
-        num_workers=1,  # Read the note above.
+        sample_rate=1,  # Mostly for debugging purposes.
+        num_workers=2,  # Read the note above.
         init_lr=1E-3,
         log_dir='./logs',
         ckpt_dir='./checkpoints',
         gpu=1,  # Set to None for CPU mode.
         num_epochs=10,
-        max_to_keep=4,
+        max_to_keep=2,
         verbose=False,
         save_best_only=True,
         data_root='/media/veritas/F/compFastMRI',  # Using compressed dataset for better I/O performance.
