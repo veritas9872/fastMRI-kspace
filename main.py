@@ -19,7 +19,7 @@ if __name__ == '__main__':
         challenge='multicoil',
         center_fractions=[0.08, 0.04],
         accelerations=[4, 8],
-        max_imgs=4,  # Maximum number of images to save.
+        max_imgs=1,  # Maximum number of images to save.
         chans=32,
         num_pool_layers=4,
         converted=True
