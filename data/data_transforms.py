@@ -228,7 +228,7 @@ def tensor_to_complex_np(data):
 
 
 # My k-space transforms
-def k_slice_to_nchw(tensor):
+def k_slice_to_chw(tensor):
     """
     Convert torch tensor in (Coil, Height, Width, Complex) 4D k-slice format to
     (C, H, W) 3D format for processing by 2D CNNs.
@@ -243,7 +243,7 @@ def k_slice_to_nchw(tensor):
     Args:
         tensor (torch.Tensor): Input data in 4D k-slice tensor format.
     Returns:
-        tensor (torch.Tensor): tensor in 4D NCHW format to be fed into a CNN.
+        tensor (torch.Tensor): tensor in 3D CHW format to be fed into a CNN.
     """
     assert isinstance(tensor, torch.Tensor)
     assert tensor.dim() == 4

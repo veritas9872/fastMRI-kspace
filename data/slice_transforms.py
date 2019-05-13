@@ -3,7 +3,7 @@ import torch.nn.functional as F
 
 import numpy as np
 
-from data.data_transforms import to_tensor, ifft2, complex_abs, apply_mask, k_slice_to_nchw
+from data.data_transforms import to_tensor, ifft2, complex_abs, apply_mask, k_slice_to_chw
 
 
 # My transforms for data processing
@@ -71,7 +71,7 @@ class TrainSliceTransform:
             seed = None if not self.use_seed else tuple(map(ord, file_name))
             masked_kspace, mask = apply_mask(kspace, self.mask_func, seed)
 
-            data = k_slice_to_nchw(masked_kspace)
+            data = k_slice_to_chw(masked_kspace)
             # divisor = 2 ** 4  # Because there are 4 pooling layers. Change later for generalizability.
             pad = (self.divisor - (data.shape[-1] % self.divisor)) // 2
             pad = [pad, pad]
@@ -122,7 +122,7 @@ class SubmitSliceTransform:
         else:  # Test set
             masked_kspace = kspace
 
-        data = k_slice_to_nchw(masked_kspace)
+        data = k_slice_to_chw(masked_kspace)
         pad = (self.divisor - (data.shape[-1] % self.divisor)) // 2
         pad = [pad, pad]
         data = F.pad(data, pad=pad, value=0)  # This pads at the last dimension of a tensor.

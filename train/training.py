@@ -19,7 +19,6 @@ from data.slice_transforms import TrainSliceTransform
 
 from models.k_unet_model import UnetModel
 
-
 """
 Please note a bit of terminology. 
 In this file, 'recons' indicates coil-wise reconstructions,
@@ -78,10 +77,10 @@ def create_data_loaders(args):
     return train_loader, val_loader
 
 
-def train_step(model, optimizer, loss_func, images, labels):
+def train_step(model, optimizer, loss_func, inputs, targets):
     optimizer.zero_grad()
-    recons = model(images, labels.shape)
-    step_loss = loss_func(recons, labels)  # Pytorch uses (input, target) ordering.
+    recons = model(inputs, targets.shape)
+    step_loss = loss_func(recons, targets)  # Pytorch uses (input, target) ordering.
     step_loss.backward()
     optimizer.step()
     return step_loss, recons
@@ -97,16 +96,17 @@ def train_epoch(model, optimizer, loss_func, data_loader, device, epoch, verbose
     epoch_metrics_lst = [list() for _ in metrics] if metrics else None
 
     # labels are fully sampled coil-wise images, not rss or esc.
-    for idx, (images, labels) in enumerate(data_loader, start=1):
-        images = images.to(device)
-        labels = labels.to(device, non_blocking=True)
-        step_loss, recons = train_step(model, optimizer, loss_func, images, labels)
+    for idx, (inputs, targets) in enumerate(data_loader, start=1):
+
+        inputs = inputs.to(device)
+        targets = targets.to(device, non_blocking=True)
+        step_loss, recons = train_step(model, optimizer, loss_func, inputs, targets)
 
         # Gradients are not calculated so as to boost speed and remove weird errors.
         with torch.no_grad():  # Update epoch loss and metrics
             epoch_loss_lst.append(step_loss.item())  # Perhaps not elegant, but underflow makes this necessary.
             if metrics:
-                step_metrics = [metric(recons, labels) for metric in metrics]
+                step_metrics = [metric(recons, targets) for metric in metrics]
                 for step_metric, epoch_metric_lst in zip(step_metrics, epoch_metrics_lst):
                     epoch_metric_lst.append(step_metric.item())
 
@@ -126,21 +126,36 @@ def train_epoch(model, optimizer, loss_func, data_loader, device, epoch, verbose
     return epoch_loss, epoch_metrics
 
 
-def val_step(model, loss_func, images, labels):
-    recons = model(images, labels.shape)
-    step_loss = loss_func(recons, labels)
+def val_step(model, loss_func, inputs, targets):
+    recons = model(inputs, targets.shape)
+    step_loss = loss_func(recons, targets)
     return step_loss, recons
 
 
-def make_grid_for_one_image(recons):  # Helper for saving to TensorboardX or as image
+def make_grid_triplet(recons, targets):
+    assert recons.shape == targets.shape
     if recons.size(0) > 1:
         raise NotImplementedError('Mini-batch size greater than 1 has not been implemented yet.')
 
-    # Note that each image scales independently of all other images. This may cause weird scaling behavior.
-    grid = torch.squeeze(recons, dim=0).unsqueeze(dim=1)  # Assumes batch_size=1
-    # Weird bug where nrow parameter seems to decide number of columns instead of rows.
-    grid = torchvision.utils.make_grid(grid, nrow=5, normalize=True, scale_each=True, pad_value=1.)
-    return np.squeeze(grid.cpu().numpy())  # Since there should only be 1 channel.
+    recons = recons.detach().cpu()
+    targets = targets.detach().cpu()
+
+    large = torch.max(targets)
+    small = torch.min(targets)
+    diff = large - small
+
+    view_recons = (recons.clamp(min=small, max=large) - small) / diff
+    view_targets = (targets - small) / diff
+
+    view_recons = torch.squeeze(view_recons, dim=0).unsqueeze(dim=1)
+    view_targets = torch.squeeze(view_targets, dim=0).unsqueeze(dim=1)
+
+    recons_grid = torchvision.utils.make_grid(view_recons)
+    targets_grid = torchvision.utils.make_grid(view_targets)
+
+    deltas_grid = targets_grid - recons_grid
+
+    return recons_grid, targets_grid, deltas_grid
 
 
 def val_epoch(model, loss_func, data_loader, writer, device, epoch, max_imgs=0, verbose=True, metrics=None):
@@ -150,10 +165,10 @@ def val_epoch(model, loss_func, data_loader, writer, device, epoch, max_imgs=0, 
     epoch_loss_lst = list()
     epoch_metrics_lst = [list() for _ in metrics] if metrics else None
 
-    for step, (data, targets) in enumerate(data_loader, start=1):
-        data = data.to(device)
+    for step, (inputs, targets) in enumerate(data_loader, start=1):
+        inputs = inputs.to(device)
         targets = targets.to(device, non_blocking=True)
-        step_loss, recons = val_step(model, loss_func, data, targets)
+        step_loss, recons = val_step(model, loss_func, inputs, targets)
 
         with torch.no_grad():  # Probably not actually necessary...
             epoch_loss_lst.append(step_loss.item())
@@ -174,14 +189,10 @@ def val_epoch(model, loss_func, data_loader, writer, device, epoch, max_imgs=0, 
 
                     assert isinstance(writer, SummaryWriter)
 
-                    recon_grid = make_grid_for_one_image(recons)
-                    writer.add_image('Recons', recon_grid, epoch)
-
-                    target_grid = make_grid_for_one_image(targets)
-                    writer.add_image('Targets', target_grid, epoch)
-
-                    delta_grid = make_grid_for_one_image(targets - recons)
-                    writer.add_image('Delta', delta_grid, epoch)
+                    recons_grid, targets_grid, deltas_grid = make_grid_triplet(recons, targets)
+                    writer.add_image('Recons', recons_grid, epoch)
+                    writer.add_image('Targets', targets_grid, epoch)
+                    writer.add_image('Deltas', deltas_grid, epoch)
 
     epoch_loss = np.nanmean(epoch_loss_lst)  # Remove nan values just in case.
     epoch_metrics = [np.nanmean(epoch_metric_lst) for epoch_metric_lst in epoch_metrics_lst] if metrics else None
@@ -229,12 +240,12 @@ def train_model(args):
     # Define model.
     data_chans = 2 if args.challenge == 'singlecoil' else 30  # Multicoil has 15 coils with 2 for real/imag
     # data_chans indicates the number of channels in the data.
-    # TODO: I must verify whether the output is correct. The image outputs look like k-space in the beginning.
     model = UnetModel(in_chans=data_chans, out_chans=data_chans, chans=args.chans,
                       num_pool_layers=args.num_pool_layers).to(device)
 
     optimizer = optim.Adam(model.parameters(), lr=args.init_lr)
-    loss_func = nn.L1Loss(reduction='mean').to(device)
+    loss_func = nn.MSELoss(reduction='mean').to(device)
+    metrics = None
 
     checkpointer = CheckpointManager(model=model, optimizer=optimizer, mode='min', save_best_only=args.save_best_only,
                                      ckpt_dir=ckpt_path, max_to_keep=args.max_to_keep)
@@ -256,23 +267,30 @@ def train_model(args):
         tic = time()
         train_epoch_loss, train_epoch_metrics = train_epoch(
             model=model, optimizer=optimizer, loss_func=loss_func, data_loader=train_loader, device=device,
-            epoch=epoch, verbose=args.verbose, metrics=None)
+            epoch=epoch, verbose=args.verbose, metrics=metrics)
 
         toc = int(time() - tic)
         logger.info(f'Epoch {epoch:03d} Training. loss: {train_epoch_loss:.4e}, Time: {toc // 60}min {toc % 60}sec')
         writer.add_scalar('train_epoch_loss', scalar_value=train_epoch_loss, global_step=epoch)
-        # TODO: Add code for showing and recording metrics later, for both training and validation.
-        # Note that the metrics being returned are either 'None' or a list of values.
+
+        if isinstance(train_epoch_metrics, list):  # The metrics being returned are either 'None' or a list of values.
+            for idx, train_epoch_metric in enumerate(train_epoch_metrics, start=1):
+                logger.info(f'Epoch {epoch:03d} Training. Metric {idx}: {train_epoch_metric}')
+                writer.add_scalar(f'train_epoch_metric_{idx}', scalar_value=train_epoch_metric, global_step=epoch)
 
         # Evaluating
         tic = time()
         val_epoch_loss, val_epoch_metrics = val_epoch(
             model=model, loss_func=loss_func, data_loader=val_loader, writer=writer, device=device,
-            epoch=epoch, max_imgs=args.max_imgs, verbose=args.verbose, metrics=None)
+            epoch=epoch, max_imgs=args.max_imgs, verbose=args.verbose, metrics=metrics)
 
         toc = int(time() - tic)
         logger.info(f'Epoch {epoch:03d} Validation. loss: {val_epoch_loss:.4e}, Time: {toc // 60}min {toc % 60}sec')
         writer.add_scalar('val_epoch_loss', scalar_value=val_epoch_loss, global_step=epoch)
+        if isinstance(val_epoch_metrics, list):  # The metrics being returned are either 'None' or a list of values.
+            for idx, val_epoch_metric in enumerate(val_epoch_metrics, start=1):
+                logger.info(f'Epoch {epoch:03d} Validation. Metric {idx}: {val_epoch_metric}')
+                writer.add_scalar(f'val_epoch_metric_{idx}', scalar_value=val_epoch_metric, global_step=epoch)
 
         for idx, group in enumerate(optimizer.param_groups, start=1):
             writer.add_scalar(f'learning_rate_{idx}', group['lr'], epoch)
