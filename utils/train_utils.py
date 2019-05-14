@@ -111,4 +111,10 @@ class CheckpointManager:
             self.optimizer.load_state_dict(save_dict['optimizer_state_dict'])
 
     def load_latest(self, load_root):
-        pass
+        load_root = Path(load_root)
+        load_dir = sorted([x for x in load_root.iterdir() if x.is_dir()])[-1]
+        load_file = sorted([x for x in load_dir.iterdir() if x.is_file()])[-1]
+
+        print('Loading', load_file)
+        self.load(load_file, load_optimizer=False)
+        print('Done')
