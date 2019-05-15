@@ -78,7 +78,7 @@ class TrainInputSliceTransform:
 
             # Using the data acquisition method (fat suppression) may be useful later on.
 
-        return data_slice, target_slice * 10000  # VERY UGLY HACK!! # TODO: Fix this later.
+        return data_slice, target_slice
 
 
 class SubmitInputSliceTransform:
