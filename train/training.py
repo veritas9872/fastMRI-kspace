@@ -80,7 +80,7 @@ def create_data_loaders(args):
 def train_step(model, optimizer, loss_func, inputs, targets):
     optimizer.zero_grad()
     recons = model(inputs, targets.shape) * 10000  # TODO: Fix this later!!
-    step_loss = loss_func(recons, targets)  # Pytorch uses (input, target) ordering.
+    step_loss = loss_func(recons, targets * 10000)  # Very ugly hack...
     step_loss.backward()
     optimizer.step()
     return step_loss, recons
@@ -159,7 +159,7 @@ def make_grid_triplet(recons, targets):
 
 def val_step(model, loss_func, inputs, targets):
     recons = model(inputs, targets.shape) * 10000  # TODO: Fix this later!!
-    step_loss = loss_func(recons, targets)
+    step_loss = loss_func(recons, targets * 10000)  # VERY UGLY HACK!!
     return step_loss, recons
 
 
