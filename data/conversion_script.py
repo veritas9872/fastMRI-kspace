@@ -70,9 +70,9 @@ def check_same(old_folder, new_folder):
 
 
 if __name__ == '__main__':
-    train_dir = '/media/veritas/E/fastMRI/multicoil_train'
-    val_dir = '/media/veritas/E/fastMRI/multicoil_val'
-    test_dir = '/media/veritas/E/fastMRI/multicoil_test'
+    train_dir = '/media/veritas/D/fastMRI/singlecoil_train'
+    val_dir = '/media/veritas/D/fastMRI/singlecoil_val'
+    test_dir = '/media/veritas/D/fastMRI/singlecoil_test'
 
     data_root = '/media/veritas/F/compFastMRI'  # Compressed Fast MRI Dataset
     data_path_ = Path(data_root)
