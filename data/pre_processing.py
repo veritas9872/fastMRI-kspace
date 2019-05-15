@@ -7,12 +7,11 @@ from data.data_transforms import to_tensor, ifft2, complex_abs, apply_mask, k_sl
 
 
 # My transforms for data processing
-class TrainSliceTransform:
+class TrainInputSliceTransform:
     """
     Data Transformer for training and validating models.
 
-    Note that this method only works well for mini-batch of 1.
-    Using a larger mini-batch would require processing at the batch level.
+    This transform is designed for a single slice of k-space input data, termed the 'k-slice'.
     """
 
     def __init__(self, mask_func, which_challenge, use_seed=True, divisor=1):
@@ -36,10 +35,10 @@ class TrainSliceTransform:
         self.use_seed = use_seed
         self.divisor = divisor
 
-    def __call__(self, kspace, target, attrs, file_name, slice_num):
+    def __call__(self, k_slice, target, attrs, file_name, slice_num):
         """
         Args:
-            kspace (numpy.array): Input k-space of shape (num_coils, height, width) for multi-coil
+            k_slice (numpy.array): Input k-space of shape (num_coils, height, width) for multi-coil
                 data or (rows, cols) for single coil data.
             target (numpy.array): Target (320x320) image. May be None.
             attrs (dict): Acquisition related information stored in the HDF5 object.
@@ -55,34 +54,34 @@ class TrainSliceTransform:
                     The height is fixed at 640, while the width is variable.
                 labels (torch.Tensor): Coil-wise ground truth images. Shape=(num_coils, H, W)
         """
-        assert np.iscomplexobj(kspace), 'kspace must be complex.'
-        assert kspace.shape[-1] % 2 == 0, 'k-space data width must be even.'
+        assert np.iscomplexobj(k_slice), 'kspace must be complex.'
+        assert k_slice.shape[-1] % 2 == 0, 'k-space data width must be even.'
 
-        if kspace.ndim == 2:  # For singlecoil. Makes data processing later on much easier.
-            kspace = np.expand_dims(kspace, axis=0)
-        elif kspace.ndim != 3:  # Prevents possible errors.
+        if k_slice.ndim == 2:  # For singlecoil. Makes data processing later on much easier.
+            k_slice = np.expand_dims(k_slice, axis=0)
+        elif k_slice.ndim != 3:  # Prevents possible errors.
             raise TypeError('Invalid slice type')
 
         with torch.no_grad():  # Remove unnecessary gradient calculations.
 
-            kspace = to_tensor(kspace)  # Now a Tensor of (num_coils, height, width, 2), where 2 is (real, imag).
-            labels = complex_abs(ifft2(kspace))
+            k_slice = to_tensor(k_slice)  # Now a Tensor of (num_coils, height, width, 2), where 2 is (real, imag).
+            target_slice = complex_abs(ifft2(k_slice))
             # Apply mask
             seed = None if not self.use_seed else tuple(map(ord, file_name))
-            masked_kspace, mask = apply_mask(kspace, self.mask_func, seed)
+            masked_kspace, mask = apply_mask(k_slice, self.mask_func, seed)
 
-            data = k_slice_to_chw(masked_kspace)
-            # divisor = 2 ** 4  # Because there are 4 pooling layers. Change later for generalizability.
-            pad = (self.divisor - (data.shape[-1] % self.divisor)) // 2
-            pad = [pad, pad]
-            data = F.pad(data, pad=pad, value=0)  # This pads at the last dimension of a tensor.
+            data_slice = k_slice_to_chw(masked_kspace)
+            left_pad = (self.divisor - (data_slice.shape[-1] % self.divisor)) // 2
+            right_pad = (1 + self.divisor - (data_slice.shape[-1] % self.divisor)) // 2
+            pad = [left_pad, right_pad]
+            data_slice = F.pad(data_slice, pad=pad, value=0)  # This pads at the last dimension of a tensor.
 
             # Using the data acquisition method (fat suppression) may be useful later on.
 
-        return data, labels
+        return data_slice, target_slice * 10000  # VERY UGLY HACK!! # TODO: Fix this later.
 
 
-class SubmitSliceTransform:
+class SubmitInputSliceTransform:
     """
     Data Transformer for generating submissions on the validation and test datasets.
     """
