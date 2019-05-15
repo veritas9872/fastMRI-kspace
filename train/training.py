@@ -13,7 +13,7 @@ from train.subsample import MaskFunc
 from utils.train_utils import CheckpointManager
 from utils.run_utils import get_logger, initialize, save_dict_as_json
 from data.mri_data import SliceData
-from data.slice_transforms import TrainSliceTransform
+from data.pre_processing import TrainInputSliceTransform
 
 from models.k_unet_model import UnetModel  # TODO: Create method to specify model in main.py
 
@@ -21,6 +21,8 @@ from models.k_unet_model import UnetModel  # TODO: Create method to specify mode
 Please note a bit of terminology. 
 In this file, 'recons' indicates coil-wise reconstructions,
 not final reconstructions for submissions.
+Also, 'targets' indicates coil-wise targets, not the 320x320 ground-truth labels.
+k-slice means a slice of k-space, i.e. only 1 slice of k-space.
 """
 
 
@@ -36,7 +38,7 @@ def create_datasets(args):
 
     train_dataset = SliceData(
         root=Path(args.data_root) / f'{args.challenge}_train',
-        transform=TrainSliceTransform(train_mask_func, args.challenge, use_seed=False, divisor=divisor),
+        transform=TrainInputSliceTransform(train_mask_func, args.challenge, use_seed=False, divisor=divisor),
         challenge=args.challenge,
         sample_rate=args.sample_rate,
         use_gt=False,
@@ -45,7 +47,7 @@ def create_datasets(args):
 
     val_dataset = SliceData(
         root=Path(args.data_root) / f'{args.challenge}_val',
-        transform=TrainSliceTransform(val_mask_func, args.challenge, use_seed=True, divisor=divisor),
+        transform=TrainInputSliceTransform(val_mask_func, args.challenge, use_seed=True, divisor=divisor),
         challenge=args.challenge,
         sample_rate=args.sample_rate,
         use_gt=False,
@@ -77,7 +79,7 @@ def create_data_loaders(args):
 
 def train_step(model, optimizer, loss_func, inputs, targets):
     optimizer.zero_grad()
-    recons = model(inputs, targets.shape)
+    recons = model(inputs, targets.shape) * 10000  # TODO: Fix this later!!
     step_loss = loss_func(recons, targets)  # Pytorch uses (input, target) ordering.
     step_loss.backward()
     optimizer.step()
@@ -156,7 +158,7 @@ def make_grid_triplet(recons, targets):
 
 
 def val_step(model, loss_func, inputs, targets):
-    recons = model(inputs, targets.shape)
+    recons = model(inputs, targets.shape) * 10000  # TODO: Fix this later!!
     step_loss = loss_func(recons, targets)
     return step_loss, recons
 
@@ -247,7 +249,7 @@ def train_model(args):
     model = UnetModel(in_chans=data_chans, out_chans=data_chans, chans=args.chans,
                       num_pool_layers=args.num_pool_layers).to(device)  # TODO: Move to main.py
 
-    optimizer = optim.Adam(model.parameters(), lr=args.init_lr)
+    optimizer = optim.Adam(model.parameters(), lr=args.init_lr)  # Maybe move to main.py
     loss_func = nn.L1Loss(reduction='mean').to(device)  # TODO: move to main.py
     metrics = None  # TODO: Move to main.py. I wish to specify metrics and loss on main.py.
 
