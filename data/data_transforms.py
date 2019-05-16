@@ -228,7 +228,7 @@ def tensor_to_complex_np(data):
 
 
 # My k-space transforms
-def k_slice_to_nchw(tensor):
+def k_slice_to_chw(tensor):
     """
     Convert torch tensor in (Coil, Height, Width, Complex) 4D k-slice format to
     (C, H, W) 3D format for processing by 2D CNNs.
@@ -243,13 +243,27 @@ def k_slice_to_nchw(tensor):
     Args:
         tensor (torch.Tensor): Input data in 4D k-slice tensor format.
     Returns:
-        tensor (torch.Tensor): tensor in 4D NCHW format to be fed into a CNN.
+        tensor (torch.Tensor): tensor in 3D CHW format to be fed into a CNN.
     """
     assert isinstance(tensor, torch.Tensor)
     assert tensor.dim() == 4
     s = tensor.shape
     assert s[-1] == 2
     tensor = tensor.permute(dims=(0, 3, 1, 2)).reshape(shape=(2 * s[0], s[1], s[2]))
+    return tensor
+
+
+def chw_to_k_slice(tensor):
+    """
+    Convert a torch tensor in (C, H, W) format to the (Coil, Height, Width, Complex) format.
+
+    This assumes that the real and imaginary values of a coil are always adjacent to one another in C.
+    """
+    assert isinstance(tensor, torch.Tensor)
+    assert tensor.dim() == 3
+    s = tensor.shape
+    assert s[0] % 2 == 0
+    tensor = tensor.view(size=(s[0] // 2, 2, s[1], s[2])).permute(dims=(0, 2, 3, 1))
     return tensor
 
 
@@ -290,3 +304,15 @@ def nchw_to_kspace(tensor):
     assert s[1] % 2 == 0
     tensor = tensor.view(size=(s[0], s[1] // 2, 2, s[2], s[3])).permute(dims=(0, 1, 3, 4, 2))
     return tensor
+
+
+def batch_collate_func(batch):
+    """
+    Custom collate function for DataLoader to allow batching of multiple k-slices into a single mini-batch for CNNs.
+    See https://github.com/pytorch/pytorch/blob/master/torch/utils/data/dataloader.py and
+    https://github.com/pytorch/pytorch/blob/master/torch/utils/data/_utils/collate.py for how this works.
+    See https://github.com/pytorch/pytorch/blob/master/torch/utils/data/dataloader.py#L560 in particular
+    for how the inputs to the collate_fn are structured.
+    Though the line is for non-parallel access, the structure should be the same.
+    """
+    pass

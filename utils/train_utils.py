@@ -51,10 +51,10 @@ class CheckpointManager:
         else:
             raise TypeError('Mode must be either `min` or `max`')
 
-    def _save(self, ckpt_name=None, **save_args):
+    def _save(self, ckpt_name=None, **save_kwargs):
         self.save_counter += 1
         save_dict = {'model_state_dict': self.model.state_dict(), 'optimizer_state_dict': self.optimizer.state_dict()}
-        save_dict.update(save_args)
+        save_dict.update(save_kwargs)
         save_path = self.ckpt_path / (f'{ckpt_name}.tar' if ckpt_name else f'ckpt_{self.save_counter:03d}.tar')
 
         torch.save(save_dict, save_path)
@@ -73,7 +73,7 @@ class CheckpointManager:
 
         return save_path
 
-    def save(self, metric, verbose=True, ckpt_name=None, **save_args):  # save_args are extra variables to save
+    def save(self, metric, verbose=True, ckpt_name=None, **save_kwargs):  # save_kwargs are extra variables to save
         if self.mode == 'min':
             is_best = metric < self.prev_best
         elif self.mode == 'max':
@@ -83,7 +83,7 @@ class CheckpointManager:
 
         save_path = None
         if is_best or not self.save_best_only:
-            save_path = self._save(ckpt_name)
+            save_path = self._save(ckpt_name, **save_kwargs)
 
         if verbose:
             if is_best:
@@ -111,4 +111,25 @@ class CheckpointManager:
             self.optimizer.load_state_dict(save_dict['optimizer_state_dict'])
 
     def load_latest(self, load_root):
-        pass
+        load_root = Path(load_root)
+        load_dir = sorted([x for x in load_root.iterdir() if x.is_dir()])[-1]
+        load_file = sorted([x for x in load_dir.iterdir() if x.is_file()])[-1]
+
+        print('Loading', load_file)
+        self.load(load_file, load_optimizer=False)
+        print('Done')
+
+
+def load_model_from_checkpoint(model, load_dir):
+    """
+    A simple function for loading checkpoints without having to use Checkpoint Manager. Very useful for evaluation.
+    Checkpoint manager was designed for loading checkpoints before resuming training.
+
+    model (nn.Module): Model architecture to be used.
+    load_dir (str): File path to the checkpoint file. Can also be a Path instead of a string.
+    """
+    assert isinstance(model, nn.Module), 'Model must be a Pytorch module.'
+    assert Path(load_dir).exists(), 'The specified directory does not exist'
+    save_dict = torch.load(load_dir)
+    model.load_state_dict(save_dict['model_state_dict'])
+    return model  # Not actually necessary to return the model but doing so anyway.
