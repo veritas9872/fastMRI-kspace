@@ -13,7 +13,7 @@ from train.subsample import MaskFunc
 from utils.train_utils import CheckpointManager
 from utils.run_utils import get_logger, initialize, save_dict_as_json
 from data.mri_data import SliceData
-from data.slice_transforms import TrainSliceTransform
+from data.pre_processing import TrainInputSliceTransform, NewTrainInputSliceTransform
 
 from models.k_unet_model import UnetModel  # TODO: Create method to specify model in main.py
 
@@ -21,6 +21,11 @@ from models.k_unet_model import UnetModel  # TODO: Create method to specify mode
 Please note a bit of terminology. 
 In this file, 'recons' indicates coil-wise reconstructions,
 not final reconstructions for submissions.
+Also, 'targets' indicates coil-wise targets, not the 320x320 ground-truth labels.
+k-slice means a slice of k-space, i.e. only 1 slice of k-space.
+
+N.B. The Fourier and Inverse Fourier Transforms are linear transforms. 
+Scalar multiplication in the Fourier domain and image domain are equivalent.
 """
 
 
@@ -36,7 +41,7 @@ def create_datasets(args):
 
     train_dataset = SliceData(
         root=Path(args.data_root) / f'{args.challenge}_train',
-        transform=TrainSliceTransform(train_mask_func, args.challenge, use_seed=False, divisor=divisor),
+        transform=TrainInputSliceTransform(train_mask_func, args.challenge, use_seed=False, divisor=divisor),
         challenge=args.challenge,
         sample_rate=args.sample_rate,
         use_gt=False,
@@ -45,7 +50,7 @@ def create_datasets(args):
 
     val_dataset = SliceData(
         root=Path(args.data_root) / f'{args.challenge}_val',
-        transform=TrainSliceTransform(val_mask_func, args.challenge, use_seed=True, divisor=divisor),
+        transform=TrainInputSliceTransform(val_mask_func, args.challenge, use_seed=True, divisor=divisor),
         challenge=args.challenge,
         sample_rate=args.sample_rate,
         use_gt=False,
@@ -75,10 +80,60 @@ def create_data_loaders(args):
     return train_loader, val_loader
 
 
+def create_new_data_loaders(args, device):
+    if args.batch_size > 1:
+        raise NotImplementedError('Batch size must be greater than 1 for the current implementation to function.')
+
+    train_mask_func = MaskFunc(args.center_fractions, args.accelerations)
+    val_mask_func = MaskFunc(args.center_fractions, args.accelerations)
+
+    divisor = 2 ** args.num_pool_layers  # UNET architecture requires that all inputs be dividable by some power of 2.
+    # The current implementation only works if the batch size is 1.
+
+    # Generating Datasets.
+    train_dataset = SliceData(
+        root=Path(args.data_root) / f'{args.challenge}_train',
+        transform=NewTrainInputSliceTransform(
+            train_mask_func, args.challenge, device, use_seed=False, amp_fac=args.amp_fac, divisor=divisor),
+        challenge=args.challenge,
+        sample_rate=args.sample_rate,
+        use_gt=False,
+        converted=args.converted
+    )
+
+    val_dataset = SliceData(
+        root=Path(args.data_root) / f'{args.challenge}_val',
+        transform=NewTrainInputSliceTransform(
+            val_mask_func, args.challenge, device, use_seed=True, amp_fac=args.amp_fac, divisor=divisor),
+        challenge=args.challenge,
+        sample_rate=args.sample_rate,
+        use_gt=False,
+        converted=args.converted
+    )
+
+    # Generating Data Loaders
+    train_loader = DataLoader(
+        dataset=train_dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=args.num_workers,
+        pin_memory=False  # Since tensors are already on GPU.
+    )
+
+    val_loader = DataLoader(
+        dataset=val_dataset,
+        batch_size=args.batch_size,
+        num_workers=args.num_workers,
+        pin_memory=False  # Since tensors are already on GPU.
+    )
+    return train_loader, val_loader
+
+
+# TODO: Merge train_step into train_epoch when creating a trainer class.
 def train_step(model, optimizer, loss_func, inputs, targets):
     optimizer.zero_grad()
     recons = model(inputs, targets.shape)
-    step_loss = loss_func(recons, targets)  # Pytorch uses (input, target) ordering.
+    step_loss = loss_func(recons, targets)
     step_loss.backward()
     optimizer.step()
     return step_loss, recons
@@ -96,8 +151,10 @@ def train_epoch(model, optimizer, loss_func, data_loader, device, epoch, verbose
     # labels are fully sampled coil-wise images, not rss or esc.
     for idx, (inputs, targets) in enumerate(data_loader, start=1):
 
-        inputs = inputs.to(device)
-        targets = targets.to(device, non_blocking=True)
+        # Data should be in CUDA already, not be sent to GPU here. Otherwise, ifft2d for labels will be slow!!!
+        # inputs = inputs.to(device) * 10000  # TODO: Fix this later!! Very ugly hack...
+        # targets = targets.to(device) * 10000  # TODO: Fix this later.
+        # # NOTE: This x10000 is here because the values themselves need to be amplified.
         step_loss, recons = train_step(model, optimizer, loss_func, inputs, targets)
 
         # Gradients are not calculated so as to boost speed and remove weird errors.
@@ -169,8 +226,9 @@ def val_epoch(model, loss_func, data_loader, writer, device, epoch, max_imgs=0, 
     epoch_metrics_lst = [list() for _ in metrics] if metrics else None
 
     for step, (inputs, targets) in enumerate(data_loader, start=1):
-        inputs = inputs.to(device)
-        targets = targets.to(device, non_blocking=True)
+        # inputs = inputs.to(device) * 10000  # TODO: Fix this later!! VERY UGLY HACK!!
+        # targets = targets.to(device) * 10000  # TODO: Remove later!
+        # # This x10000 is here because I found that permanent value amplification is needed
         step_loss, recons = val_step(model, loss_func, inputs, targets)
 
         with torch.no_grad():  # Probably not actually necessary...
@@ -239,7 +297,8 @@ def train_model(args):
         logger.info(f'Using CPU for {run_name}')
 
     # Create Datasets. Use one slice at a time for now.
-    train_loader, val_loader = create_data_loaders(args)
+    # train_loader, val_loader = create_data_loaders(args)
+    train_loader, val_loader = create_new_data_loaders(args, device)
 
     # Define model.
     data_chans = 2 if args.challenge == 'singlecoil' else 30  # Multicoil has 15 coils with 2 for real/imag
@@ -247,7 +306,7 @@ def train_model(args):
     model = UnetModel(in_chans=data_chans, out_chans=data_chans, chans=args.chans,
                       num_pool_layers=args.num_pool_layers).to(device)  # TODO: Move to main.py
 
-    optimizer = optim.Adam(model.parameters(), lr=args.init_lr)
+    optimizer = optim.Adam(model.parameters(), lr=args.init_lr)  # Maybe move to main.py
     loss_func = nn.L1Loss(reduction='mean').to(device)  # TODO: move to main.py
     metrics = None  # TODO: Move to main.py. I wish to specify metrics and loss on main.py.
 
