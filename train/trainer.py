@@ -18,6 +18,107 @@ from data.pre_processing import TrainInputSliceTransform, NewTrainInputSliceTran
 from models.k_unet_model import UnetModel  # TODO: Create method to specify model in main.py
 
 
+def create_datasets(args):
+    if args.batch_size > 1:
+        raise NotImplementedError('Batch size must be greater than 1 for the current implementation to function.')
+
+    train_mask_func = MaskFunc(args.center_fractions, args.accelerations)
+    val_mask_func = MaskFunc(args.center_fractions, args.accelerations)
+
+    divisor = 2 ** args.num_pool_layers  # UNET architecture requires that all inputs be dividable by some power of 2.
+    # The current implementation only works if the batch size is 1.
+
+    train_dataset = SliceData(
+        root=Path(args.data_root) / f'{args.challenge}_train',
+        transform=TrainInputSliceTransform(train_mask_func, args.challenge, use_seed=False, divisor=divisor),
+        challenge=args.challenge,
+        sample_rate=args.sample_rate,
+        use_gt=False,
+        converted=args.converted
+    )
+
+    val_dataset = SliceData(
+        root=Path(args.data_root) / f'{args.challenge}_val',
+        transform=TrainInputSliceTransform(val_mask_func, args.challenge, use_seed=True, divisor=divisor),
+        challenge=args.challenge,
+        sample_rate=args.sample_rate,
+        use_gt=False,
+        converted=args.converted
+    )
+
+    return train_dataset, val_dataset
+
+
+def create_data_loaders(args):
+    train_dataset, val_dataset = create_datasets()
+
+    train_loader = DataLoader(
+        dataset=train_dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=args.num_workers,
+        pin_memory=True
+    )
+
+    val_loader = DataLoader(
+        dataset=val_dataset,
+        batch_size=args.batch_size,
+        num_workers=args.num_workers,
+        pin_memory=True
+    )
+    return train_loader, val_loader
+
+
+def create_new_data_loaders(args, device):
+    if args.batch_size > 1:
+        raise NotImplementedError('Batch size must be greater than 1 for the current implementation to function.')
+
+    train_mask_func = MaskFunc(args.center_fractions, args.accelerations)
+    val_mask_func = MaskFunc(args.center_fractions, args.accelerations)
+
+    divisor = 2 ** args.num_pool_layers  # UNET architecture requires that all inputs be dividable by some power of 2.
+    # The current implementation only works if the batch size is 1.
+
+    # Generating Datasets.
+    train_dataset = SliceData(
+        root=Path(args.data_root) / f'{args.challenge}_train',
+        transform=NewTrainInputSliceTransform(
+            train_mask_func, args.challenge, device, use_seed=False, amp_fac=args.amp_fac,
+            divisor=divisor),
+        challenge=args.challenge,
+        sample_rate=args.sample_rate,
+        use_gt=False,
+        converted=args.converted
+    )
+
+    val_dataset = SliceData(
+        root=Path(args.data_root) / f'{args.challenge}_val',
+        transform=NewTrainInputSliceTransform(
+            val_mask_func, args.challenge, device, use_seed=True, amp_fac=args.amp_fac, divisor=divisor),
+        challenge=args.challenge,
+        sample_rate=args.sample_rate,
+        use_gt=False,
+        converted=args.converted
+    )
+
+    # Generating Data Loaders
+    train_loader = DataLoader(
+        dataset=train_dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=args.num_workers,
+        pin_memory=False  # Since tensors are already on GPU.
+    )
+
+    val_loader = DataLoader(
+        dataset=val_dataset,
+        batch_size=args.batch_size,
+        num_workers=args.num_workers,
+        pin_memory=False  # Since tensors are already on GPU.
+    )
+    return train_loader, val_loader
+
+
 class Trainer(object):
     def __init__(self, args, model=None, optimizer=None, loss_func=None, metrics=None, scheduler=None):
         # TODO: I found that the loss disappears due to numerical underflow when trained like this.
@@ -56,7 +157,7 @@ class Trainer(object):
             self.logger.info(f'Using CPU for {run_name}')
 
         # Create Datasets. Use one slice at a time for now.
-        self.train_loader, self.val_loader = self.__create_new_data_loaders()
+        self.train_loader, self.val_loader = create_new_data_loaders(self.args, self.device)
 
         if model is None:
             # Define model.
@@ -99,125 +200,29 @@ class Trainer(object):
         for epoch in range(1, self.args.num_epochs + 1):  # 1 based indexing
             # Training
             tic = time()
-            train_epoch_loss, train_epoch_metrics = self.__train_epoch(epoch)
+            train_epoch_loss, train_epoch_metrics = self._train_epoch(epoch)
             toc = int(time() - tic)
 
-            self.__print_state(epoch, train_epoch_loss, toc, train_epoch_metrics, training=True)
+            self._print_state(epoch, train_epoch_loss, toc, train_epoch_metrics, training=True)
 
             # Evaluating
             tic = time()
-            val_epoch_loss, val_epoch_metrics = self.__val_epoch(epoch)
+            val_epoch_loss, val_epoch_metrics = self._val_epoch(epoch)
             toc = int(time() - tic)
 
-            self.__print_state(epoch, val_epoch_loss, toc, val_epoch_metrics, training=False)
+            self._print_state(epoch, val_epoch_loss, toc, val_epoch_metrics, training=False)
 
             for idx, group in enumerate(self.optimizer.param_groups, start=1):
                 self.writer.add_scalar(f'learning_rate_{idx}', group['lr'], epoch)
 
             self.checkpointer.save(metric=val_epoch_loss, verbose=True)
 
-            self.scheduler.step(metrics=val_epoch_loss)
+            if self.scheduler is not None:
+                self.scheduler.step(metrics=val_epoch_loss)
 
         return self.model
 
-    def __create_datasets(self):
-        if self.args.batch_size > 1:
-            raise NotImplementedError('Batch size must be greater than 1 for the current implementation to function.')
-
-        train_mask_func = MaskFunc(self.args.center_fractions, self.args.accelerations)
-        val_mask_func = MaskFunc(self.args.center_fractions, self.args.accelerations)
-
-        divisor = 2 ** self.args.num_pool_layers  # UNET architecture requires that all inputs be dividable by some power of 2.
-        # The current implementation only works if the batch size is 1.
-
-        train_dataset = SliceData(
-            root=Path(self.args.data_root) / f'{self.args.challenge}_train',
-            transform=TrainInputSliceTransform(train_mask_func, self.args.challenge, use_seed=False, divisor=divisor),
-            challenge=self.args.challenge,
-            sample_rate=self.args.sample_rate,
-            use_gt=False,
-            converted=self.args.converted
-        )
-
-        val_dataset = SliceData(
-            root=Path(self.args.data_root) / f'{self.args.challenge}_val',
-            transform=TrainInputSliceTransform(val_mask_func, self.args.challenge, use_seed=True, divisor=divisor),
-            challenge=self.args.challenge,
-            sample_rate=self.args.sample_rate,
-            use_gt=False,
-            converted=self.args.converted
-        )
-
-        return train_dataset, val_dataset
-
-    def __create_data_loaders(self):
-        train_dataset, val_dataset = self.__create_datasets()
-
-        train_loader = DataLoader(
-            dataset=train_dataset,
-            batch_size=self.args.batch_size,
-            shuffle=True,
-            num_workers=self.args.num_workers,
-            pin_memory=True
-        )
-
-        val_loader = DataLoader(
-            dataset=val_dataset,
-            batch_size=self.args.batch_size,
-            num_workers=self.args.num_workers,
-            pin_memory=True
-        )
-        return train_loader, val_loader
-
-    def __create_new_data_loaders(self):
-        if self.args.batch_size > 1:
-            raise NotImplementedError('Batch size must be greater than 1 for the current implementation to function.')
-
-        train_mask_func = MaskFunc(self.args.center_fractions, self.args.accelerations)
-        val_mask_func = MaskFunc(self.args.center_fractions, self.args.accelerations)
-
-        divisor = 2 ** self.args.num_pool_layers  # UNET architecture requires that all inputs be dividable by some power of 2.
-        # The current implementation only works if the batch size is 1.
-
-        # Generating Datasets.
-        train_dataset = SliceData(
-            root=Path(self.args.data_root) / f'{self.args.challenge}_train',
-            transform=NewTrainInputSliceTransform(
-                train_mask_func, self.args.challenge, self.device, use_seed=False, amp_fac=self.args.amp_fac, divisor=divisor),
-            challenge=self.args.challenge,
-            sample_rate=self.args.sample_rate,
-            use_gt=False,
-            converted=self.args.converted
-        )
-
-        val_dataset = SliceData(
-            root=Path(self.args.data_root) / f'{self.args.challenge}_val',
-            transform=NewTrainInputSliceTransform(
-                val_mask_func, self.args.challenge, self.device, use_seed=True, amp_fac=self.args.amp_fac, divisor=divisor),
-            challenge=self.args.challenge,
-            sample_rate=self.args.sample_rate,
-            use_gt=False,
-            converted=self.args.converted
-        )
-
-        # Generating Data Loaders
-        train_loader = DataLoader(
-            dataset=train_dataset,
-            batch_size=self.args.batch_size,
-            shuffle=True,
-            num_workers=self.args.num_workers,
-            pin_memory=False  # Since tensors are already on GPU.
-        )
-
-        val_loader = DataLoader(
-            dataset=val_dataset,
-            batch_size=self.args.batch_size,
-            num_workers=self.args.num_workers,
-            pin_memory=False  # Since tensors are already on GPU.
-        )
-        return train_loader, val_loader
-
-    def __train_epoch(self, epoch):
+    def _train_epoch(self, epoch):
         self.model.train()
         torch.autograd.set_grad_enabled(True)
 
@@ -233,7 +238,7 @@ class Trainer(object):
             # inputs = inputs.to(device) * 10000  # TODO: Fix this later!! Very ugly hack...
             # targets = targets.to(device) * 10000  # TODO: Fix this later.
             # # NOTE: This x10000 is here because the values themselves need to be amplified.
-            step_loss, recons = self.__train_step(inputs, targets)
+            step_loss, recons = self._train_step(inputs, targets)
 
             # Gradients are not calculated so as to boost speed and remove weird errors.
             with torch.no_grad():  # Update epoch loss and metrics
@@ -259,7 +264,7 @@ class Trainer(object):
 
         return epoch_loss, epoch_metrics
 
-    def __train_step(self, inputs, targets):
+    def _train_step(self, inputs, targets):
         self.optimizer.zero_grad()
         recons = self.model(inputs, targets.shape)
         step_loss = self.loss_func(recons, targets)
@@ -267,7 +272,7 @@ class Trainer(object):
         self.optimizer.step()
         return step_loss, recons
 
-    def __val_epoch(self, epoch):
+    def _val_epoch(self, epoch):
         self.model.eval()
         torch.autograd.set_grad_enabled(False)
 
@@ -277,8 +282,7 @@ class Trainer(object):
         for step, (inputs, targets) in enumerate(self.val_loader, start=1):
             # inputs = inputs.to(device) * 10000  # TODO: Fix this later!! VERY UGLY HACK!!
             # targets = targets.to(device) * 10000  # TODO: Remove later!
-            # # This x10000 is here because I found that permanent value amplification is needed
-            step_loss, recons = self.__val_step(inputs, targets)
+            step_loss, recons = self._val_step(inputs, targets)
 
             with torch.no_grad():  # Probably not actually necessary...
                 epoch_loss_lst.append(step_loss.item())
@@ -298,7 +302,7 @@ class Trainer(object):
                     interval = len(self.val_loader.dataset) // self.args.max_imgs
                     if step % interval == 0:  # Note that all images are scaled independently of all other images.
                         assert isinstance(self.writer, SummaryWriter)
-                        recons_grid, targets_grid, deltas_grid = self.__make_grid_triplet(recons, targets)
+                        recons_grid, targets_grid, deltas_grid = self._make_grid_triplet(recons, targets)
                         self.writer.add_image(f'Recons', recons_grid, epoch, dataformats='HW')
                         self.writer.add_image(f'Targets', targets_grid, epoch, dataformats='HW')
                         self.writer.add_image(f'Deltas', deltas_grid, epoch, dataformats='HW')
@@ -312,12 +316,12 @@ class Trainer(object):
 
         return epoch_loss, epoch_metrics
 
-    def __val_step(self, inputs, targets):
+    def _val_step(self, inputs, targets):
         recons = self.model(inputs, targets.shape)
         step_loss = self.loss_func(recons, targets)
         return step_loss, recons
 
-    def __make_grid_triplet(self, recons, targets):
+    def _make_grid_triplet(self, recons, targets):
         assert recons.shape == targets.shape
         if recons.size(0) > 1:
             raise NotImplementedError('Mini-batch size greater than 1 has not been implemented yet.')
@@ -347,10 +351,11 @@ class Trainer(object):
 
         return recons, targets, deltas
 
-    def __print_state(self, epoch, epoch_loss, toc, metric, training=True):
+    def _print_state(self, epoch, epoch_loss, toc, metric, training=True):
         which_state = 'Training' if training else 'Validation'
         which_loss = 'train_epoch_loss' if training else 'val_epoch_loss'
-        which_metric = 'train_epoch_metric_' if training else 'val_epoch_metric'
+        which_metric = 'train_epoch_metric' if training else 'val_epoch_metric'
+
         self.logger.info(
             f'Epoch {epoch:03d} {which_state}. loss: {epoch_loss:.4e}, Time: {toc // 60}min {toc % 60}sec')
         self.writer.add_scalar(which_loss, scalar_value=epoch_loss, global_step=epoch)
