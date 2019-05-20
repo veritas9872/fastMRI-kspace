@@ -196,6 +196,7 @@ class Trainer(object):
         self.writer = SummaryWriter(log_dir=str(log_path))
 
     def train_model(self):
+        torch.multiprocessing.set_start_method("spawn")
         self.logger.info('Beginning Training loop')
         for epoch in range(1, self.args.num_epochs + 1):  # 1 based indexing
             # Training
