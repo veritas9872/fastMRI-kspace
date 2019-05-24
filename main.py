@@ -1,6 +1,8 @@
 from utils.run_utils import create_arg_parser
 from train.training import train_model
 from train.trainer import Trainer
+from eda.pp_unet_model import UnetModel
+from data.post_processing import TrainBatchTransform
 
 # Please try to use logging better. Current logging is rather badly managed.
 
@@ -9,7 +11,7 @@ if __name__ == '__main__':
     defaults = dict(
         batch_size=1,  # This MUST be 1 for now.
         sample_rate=0.01,  # Mostly for debugging purposes. Ratio of datasets to use.
-        num_workers=0,  # Use 1 or 2 when training for the full dataset. Use 0 for sending data to GPU in data loader.
+        num_workers=1,  # Use 1 or 2 when training for the full dataset. Use 0 for sending data to GPU in data loader.
         init_lr=1E-4,
         log_dir='./logs',
         ckpt_dir='./checkpoints',
@@ -32,5 +34,8 @@ if __name__ == '__main__':
 
     parser = create_arg_parser(**defaults).parse_args()
 
-    trainer = Trainer(parser)
+    model = UnetModel(in_chans=30, out_chans=30, chans=parser.chans, num_pool_layers=parser.num_pool_layers,
+                      post_processing=TrainBatchTransform())
+
+    trainer = Trainer(parser, model=model)
     trainer.train_model()

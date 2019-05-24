@@ -12,8 +12,9 @@ from pathlib import Path
 from train.subsample import MaskFunc
 from utils.train_utils import CheckpointManager
 from utils.run_utils import get_logger, initialize, save_dict_as_json
+from utils.modelsummary import summary
 from data.mri_data import SliceData
-from data.pre_processing import TrainInputSliceTransform, NewTrainInputSliceTransform
+from data.pre_processing import TrainInputSliceTransform, NewTrainInputSliceTransform, TrainInputBatchTransform
 
 from models.k_unet_model import UnetModel  # TODO: Create method to specify model in main.py
 
@@ -119,6 +120,56 @@ def create_new_data_loaders(args, device):
     return train_loader, val_loader
 
 
+def create_batch_data_loaders(args, device):
+    if args.batch_size > 1:
+        raise NotImplementedError('Batch size must be greater than 1 for the current implementation to function.')
+
+    train_mask_func = MaskFunc(args.center_fractions, args.accelerations)
+    val_mask_func = MaskFunc(args.center_fractions, args.accelerations)
+
+    divisor = 2 ** args.num_pool_layers  # UNET architecture requires that all inputs be dividable by some power of 2.
+    # The current implementation only works if the batch size is 1.
+
+    # Generating Datasets.
+    train_dataset = SliceData(
+        root=Path(args.data_root) / f'{args.challenge}_train',
+        transform=TrainInputBatchTransform(
+            train_mask_func, args.challenge, device, use_seed=False, amp_fac=args.amp_fac,
+            divisor=divisor),
+        challenge=args.challenge,
+        sample_rate=args.sample_rate,
+        use_gt=False,
+        converted=args.converted
+    )
+
+    val_dataset = SliceData(
+        root=Path(args.data_root) / f'{args.challenge}_val',
+        transform=TrainInputBatchTransform(
+            val_mask_func, args.challenge, device, use_seed=True, amp_fac=args.amp_fac, divisor=divisor),
+        challenge=args.challenge,
+        sample_rate=args.sample_rate,
+        use_gt=False,
+        converted=args.converted
+    )
+
+    # Generating Data Loaders
+    train_loader = DataLoader(
+        dataset=train_dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=args.num_workers,
+        pin_memory=False  # Since tensors are already on GPU.
+    )
+
+    val_loader = DataLoader(
+        dataset=val_dataset,
+        batch_size=args.batch_size,
+        num_workers=args.num_workers,
+        pin_memory=False  # Since tensors are already on GPU.
+    )
+    return train_loader, val_loader
+
+
 class Trainer(object):
     def __init__(self, args, model=None, optimizer=None, loss_func=None, metrics=None, scheduler=None):
         # TODO: I found that the loss disappears due to numerical underflow when trained like this.
@@ -157,7 +208,7 @@ class Trainer(object):
             self.logger.info(f'Using CPU for {run_name}')
 
         # Create Datasets. Use one slice at a time for now.
-        self.train_loader, self.val_loader = create_new_data_loaders(self.args, self.device)
+        self.train_loader, self.val_loader = create_batch_data_loaders(self.args, self.device)
 
         if model is None:
             # Define model.
@@ -166,7 +217,7 @@ class Trainer(object):
             self.model = UnetModel(in_chans=data_chans, out_chans=data_chans, chans=self.args.chans,
                                    num_pool_layers=self.args.num_pool_layers).to(self.device)  # TODO: Move to main.py
         else:
-            self.model = model
+            self.model = model.to(self.device)
 
         if optimizer is None:
             self.optimizer = optim.Adam(self.model.parameters(), lr=self.args.init_lr)  # Maybe move to main.py
@@ -176,7 +227,7 @@ class Trainer(object):
         if loss_func is None:
             self.loss_func = nn.L1Loss(reduction='mean').to(self.device)
         else:
-            self.loss_func = loss_func
+            self.loss_func = loss_func.to(self.device)
 
         self.metrics = metrics
 
@@ -197,6 +248,8 @@ class Trainer(object):
 
     def train_model(self):
         torch.multiprocessing.set_start_method("spawn")
+        summary(model=self.model, input1_size=(30, 640, 384), input2_size=(15, 640, 378),
+                batch_size=self.args.batch_size, device=self.device, disp_func=self.logger.info)
         self.logger.info('Beginning Training loop')
         for epoch in range(1, self.args.num_epochs + 1):  # 1 based indexing
             # Training
@@ -267,7 +320,7 @@ class Trainer(object):
 
     def _train_step(self, inputs, targets):
         self.optimizer.zero_grad()
-        recons = self.model(inputs, targets.shape)
+        recons = self.model(inputs, targets)
         step_loss = self.loss_func(recons, targets)
         step_loss.backward()
         self.optimizer.step()
@@ -318,7 +371,7 @@ class Trainer(object):
         return epoch_loss, epoch_metrics
 
     def _val_step(self, inputs, targets):
-        recons = self.model(inputs, targets.shape)
+        recons = self.model(inputs, targets)
         step_loss = self.loss_func(recons, targets)
         return step_loss, recons
 
