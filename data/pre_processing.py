@@ -221,20 +221,29 @@ class NewTrainInputSliceTransform:
         with torch.no_grad():  # Remove unnecessary gradient calculations.
             # Now a Tensor of (num_coils, height, width, 2), where 2 is (real, imag).
             # The data is in the GPU and has been amplified by the amplification factor.
-            k_slice = to_tensor(k_slice).to(self.device, non_blocking=True) * self.amp_fac
+            k_slice = to_tensor(k_slice).to(device=self.device) * self.amp_fac
+            # k_slice = to_tensor(k_slice).cuda(self.device) * self.amp_fac
             target_slice = complex_abs(ifft2(k_slice))  # I need cuda here!
             # Apply mask
             seed = None if not self.use_seed else tuple(map(ord, file_name))
             masked_kspace, mask = apply_mask(k_slice, self.mask_func, seed)
 
             data_slice = k_slice_to_chw(masked_kspace)
-            left_pad = (self.divisor - (data_slice.shape[-1] % self.divisor)) // 2
-            right_pad = (1 + self.divisor - (data_slice.shape[-1] % self.divisor)) // 2
-            pad = [left_pad, right_pad]
+            # assert data_slice.size(-1) % 2 == 0
+
+            margin = (data_slice.shape[-1] % self.divisor)
+
+            if margin > 0:
+                pad = [(self.divisor - margin) // 2, (1 + self.divisor - margin) // 2]
+            else:  # This is a temporary fix.
+                pad = [0, 0]
+            # right_pad = self.divisor - left_pad
+            # pad = [pad, pad]
             data_slice = F.pad(data_slice, pad=pad, value=0)  # This pads at the last dimension of a tensor.
 
             # Using the data acquisition method (fat suppression) may be useful later on.
-
+        # print(1, data_slice.size())
+        # print(2, target_slice.size())
         return data_slice, target_slice
 
 

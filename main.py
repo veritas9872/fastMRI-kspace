@@ -3,11 +3,20 @@ from train.training import train_model
 from train.trainer import Trainer
 from eda.pp_unet_model import UnetModel
 from data.post_processing import TrainBatchTransform
-
 # Please try to use logging better. Current logging is rather badly managed.
 
+# A hack to go around bug with multi-processing with multiple GPUs.
+# import os
+# os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"  # so the IDs match nvidia-smi
+# os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1"  # This is the true device ID. "0, 1" for multiple
+# cuda.set_device(0)
+
+# Allow multiprocessing on DataLoader.
+# For some reason, multiprocessing causes problems with which GPU is initialized...
+# Also when multiple GPUs are present. Still figuring out why.
 
 if __name__ == '__main__':
+
     defaults = dict(
         batch_size=1,  # This MUST be 1 for now.
         sample_rate=0.01,  # Mostly for debugging purposes. Ratio of datasets to use.
@@ -15,8 +24,8 @@ if __name__ == '__main__':
         init_lr=1E-4,
         log_dir='./logs',
         ckpt_dir='./checkpoints',
-        gpu=0,  # Set to None for CPU mode.
-        num_epochs=40,
+        gpu=1,  # Set to None for CPU mode.  # Not true GPU for now.
+        num_epochs=5,
         max_to_keep=1,
         verbose=False,
         save_best_only=True,
@@ -29,7 +38,7 @@ if __name__ == '__main__':
         chans=32,
         num_pool_layers=4,
         converted=True,
-        amp_fac=10000.0
+        amp_fac=1E8,  # Amplification factor to prevent numerical underflow.
     )
 
     parser = create_arg_parser(**defaults).parse_args()
