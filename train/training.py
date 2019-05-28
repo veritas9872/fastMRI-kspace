@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.multiprocessing as multiprocessing
+import torch.cuda as cuda
 from torch.utils.data import DataLoader
 
 import numpy as np
@@ -32,55 +33,60 @@ However, I have currently moved that to the data pre-processing stage.
 """
 
 
-def create_datasets(args):
-    if args.batch_size > 1:
-        raise NotImplementedError('Batch size must be greater than 1 for the current implementation to function.')
+# def create_datasets(args):
+#     if args.batch_size > 1:
+#         raise NotImplementedError('Batch size must be greater than 1 for the current implementation to function.')
+#
+#     train_mask_func = MaskFunc(args.center_fractions, args.accelerations)
+#     val_mask_func = MaskFunc(args.center_fractions, args.accelerations)
+#
+#     divisor = 2 ** args.num_pool_layers  # UNET architecture requires that all inputs be dividable by some power of 2.
+#     # The current implementation only works if the batch size is 1.
+#
+#     train_dataset = SliceData(
+#         root=Path(args.data_root) / f'{args.challenge}_train',
+#         transform=TrainInputSliceTransform(train_mask_func, args.challenge, use_seed=False, divisor=divisor),
+#         challenge=args.challenge,
+#         sample_rate=args.sample_rate,
+#         use_gt=False,
+#         converted=args.converted
+#     )
+#
+#     val_dataset = SliceData(
+#         root=Path(args.data_root) / f'{args.challenge}_val',
+#         transform=TrainInputSliceTransform(val_mask_func, args.challenge, use_seed=True, divisor=divisor),
+#         challenge=args.challenge,
+#         sample_rate=args.sample_rate,
+#         use_gt=False,
+#         converted=args.converted
+#     )
+#
+#     return train_dataset, val_dataset
+#
+#
+# def create_data_loaders(args):
+#     train_dataset, val_dataset = create_datasets(args)
+#
+#     train_loader = DataLoader(
+#         dataset=train_dataset,
+#         batch_size=args.batch_size,
+#         shuffle=True,
+#         num_workers=args.num_workers,
+#         pin_memory=True
+#     )
+#
+#     val_loader = DataLoader(
+#         dataset=val_dataset,
+#         batch_size=args.batch_size,
+#         num_workers=args.num_workers,
+#         pin_memory=True
+#     )
+#     return train_loader, val_loader
 
-    train_mask_func = MaskFunc(args.center_fractions, args.accelerations)
-    val_mask_func = MaskFunc(args.center_fractions, args.accelerations)
 
-    divisor = 2 ** args.num_pool_layers  # UNET architecture requires that all inputs be dividable by some power of 2.
-    # The current implementation only works if the batch size is 1.
-
-    train_dataset = SliceData(
-        root=Path(args.data_root) / f'{args.challenge}_train',
-        transform=TrainInputSliceTransform(train_mask_func, args.challenge, use_seed=False, divisor=divisor),
-        challenge=args.challenge,
-        sample_rate=args.sample_rate,
-        use_gt=False,
-        converted=args.converted
-    )
-
-    val_dataset = SliceData(
-        root=Path(args.data_root) / f'{args.challenge}_val',
-        transform=TrainInputSliceTransform(val_mask_func, args.challenge, use_seed=True, divisor=divisor),
-        challenge=args.challenge,
-        sample_rate=args.sample_rate,
-        use_gt=False,
-        converted=args.converted
-    )
-
-    return train_dataset, val_dataset
-
-
-def create_data_loaders(args):
-    train_dataset, val_dataset = create_datasets(args)
-
-    train_loader = DataLoader(
-        dataset=train_dataset,
-        batch_size=args.batch_size,
-        shuffle=True,
-        num_workers=args.num_workers,
-        pin_memory=True
-    )
-
-    val_loader = DataLoader(
-        dataset=val_dataset,
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
-        pin_memory=True
-    )
-    return train_loader, val_loader
+def sb_custom_collate_fn(batch):  # Super hacky function for 1 batch, single batch, case
+    only_batch = batch[0]
+    return only_batch[0].unsqueeze(dim=0), only_batch[1].unsqueeze(dim=0)
 
 
 def create_new_data_loaders(args, device):
@@ -122,14 +128,14 @@ def create_new_data_loaders(args, device):
         batch_size=args.batch_size,
         shuffle=True,
         num_workers=args.num_workers,
-        pin_memory=False  # Since tensors are already on GPU.
+        pin_memory=False,  # Since tensors are already on GPU.
     )
 
     val_loader = DataLoader(
         dataset=val_dataset,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
-        pin_memory=False  # Since tensors are already on GPU.
+        pin_memory=False,  # Since tensors are already on GPU.
     )
     return train_loader, val_loader
 
@@ -156,10 +162,17 @@ def train_epoch(model, optimizer, loss_func, data_loader, device, epoch, verbose
     # labels are fully sampled coil-wise images, not rss or esc.
     for idx, (inputs, targets) in enumerate(data_loader, start=1):
 
+        # print(1, inputs.device)
+        # print(2, targets.device)
+
+        # Temporary hack because of weird multi-processing error.
+        targets = targets.to(device, non_blocking=True)
+        inputs = inputs.to(device)
+
         # Data should be in CUDA already, not be sent to GPU here. Otherwise, ifft2d for labels will be slow!!!
-        # inputs = inputs.to(device) * 10000  # TODO: Fix this later!! Very ugly hack...
-        # targets = targets.to(device) * 10000  # TODO: Fix this later.
-        # # NOTE: This x10000 is here because the values themselves need to be amplified.
+        # inputs = inputs.to(device)
+        # targets = targets.to(device)
+
         step_loss, recons = train_step(model, optimizer, loss_func, inputs, targets)
 
         # Gradients are not calculated so as to boost speed and remove weird errors.
@@ -234,6 +247,11 @@ def val_epoch(model, loss_func, data_loader, writer, device, epoch, max_imgs=0, 
         # inputs = inputs.to(device) * 10000  # TODO: Fix this later!! VERY UGLY HACK!!
         # targets = targets.to(device) * 10000  # TODO: Remove later!
         # # This x10000 is here because I found that permanent value amplification is needed
+
+        # Same here. Temporary very inefficient hack to make the thing work while I figure out what is going on.
+        targets = targets.to(device, non_blocking=True)
+        inputs = inputs.to(device)
+
         step_loss, recons = val_step(model, loss_func, inputs, targets)
 
         with torch.no_grad():  # Probably not actually necessary...
@@ -257,9 +275,9 @@ def val_epoch(model, loss_func, data_loader, writer, device, epoch, max_imgs=0, 
                     # TODO: Maybe it is better to use a separate function or class to do image writing?
                     #  The conditional statements and interval counting could be done elsewhere,
                     #  though it seems unnecessary
-                    writer.add_image(f'Recons', recons_grid, epoch, dataformats='HW')
-                    writer.add_image(f'Targets', targets_grid, epoch, dataformats='HW')
-                    writer.add_image(f'Deltas', deltas_grid, epoch, dataformats='HW')
+                    writer.add_image(f'Recons/{step}', recons_grid, epoch, dataformats='HW')
+                    writer.add_image(f'Targets/{step}', targets_grid, epoch, dataformats='HW')
+                    writer.add_image(f'Deltas/{step}', deltas_grid, epoch, dataformats='HW')
 
     epoch_loss = float(np.nanmean(epoch_loss_lst))  # Remove nan values just in case.
     epoch_metrics = [float(np.nanmean(epoch_metric_lst)) for epoch_metric_lst in epoch_metrics_lst] if metrics else None
@@ -272,6 +290,7 @@ def val_epoch(model, loss_func, data_loader, writer, device, epoch, max_imgs=0, 
 
 
 def train_model(args):
+
     # TODO: I found that the loss disappears due to numerical underflow when trained like this.
     #  I need to implement multiplication to make training more stable.
     #  I have verified that training is possible.
@@ -292,9 +311,6 @@ def train_model(args):
     log_path = log_path / run_name
     log_path.mkdir(exist_ok=True)
 
-    multiprocessing.set_start_method(method='spawn')  # Allow multiprocessing on DataLoader.
-    # For some reason, multiprocessing causes problems with which GPU is initialized...
-
     save_dict_as_json(vars(args), log_dir=log_path, save_name=run_name)
 
     logger = get_logger(name=__name__, save_file=log_path / run_name)
@@ -309,7 +325,9 @@ def train_model(args):
 
     # Create Datasets. Use one slice at a time for now.
     # train_loader, val_loader = create_data_loaders(args)
+
     train_loader, val_loader = create_new_data_loaders(args, device=device)
+    torch.multiprocessing.set_start_method(method='spawn')
 
     # Define model.
     data_chans = 2 if args.challenge == 'singlecoil' else 30  # Multicoil has 15 coils with 2 for real/imag
@@ -317,10 +335,11 @@ def train_model(args):
     model = UnetModel(in_chans=data_chans, out_chans=data_chans, chans=args.chans,
                       num_pool_layers=args.num_pool_layers).to(device=device)  # TODO: Move to main.py
 
-    optimizer = optim.Adam(model.parameters(), lr=args.init_lr)  # Maybe move to main.py
+    optimizer = optim.Adam(model.parameters(), lr=args.init_lr)  # Move to main.py
     loss_func = nn.L1Loss(reduction='mean').to(device)  # TODO: move to main.py
     metrics = None  # TODO: Move to main.py. I wish to specify metrics and loss on main.py.
 
+    # Maybe move this to main.py too.
     checkpointer = CheckpointManager(model=model, optimizer=optimizer, mode='min', save_best_only=args.save_best_only,
                                      ckpt_dir=ckpt_path, max_to_keep=args.max_to_keep)
 

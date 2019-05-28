@@ -1,23 +1,30 @@
 from utils.run_utils import create_arg_parser
 from train.training import train_model
+# from torch import multiprocessing, cuda
 
 # Please try to use logging better. Current logging is rather badly managed.
-# A hack to go around bug with multi-processing.
-import os
-os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"  # Set true device here.
 
+# A hack to go around bug with multi-processing with multiple GPUs.
+# import os
+# os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"  # so the IDs match nvidia-smi
+# os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1"  # This is the true device ID. "0, 1" for multiple
+# cuda.set_device(0)
+
+# Allow multiprocessing on DataLoader.
+# For some reason, multiprocessing causes problems with which GPU is initialized...
+# Also when multiple GPUs are present. Still figuring out why.
 
 if __name__ == '__main__':
+
     defaults = dict(
         batch_size=1,  # This MUST be 1 for now.
         sample_rate=1,  # Mostly for debugging purposes. Ratio of datasets to use.
-        num_workers=1,  # Use 1 or 2 when training for the full dataset. Use 0 for sending data to GPU in data loader.
+        num_workers=0,  # Use 1 or 2 when training for the full dataset. Use 0 for sending data to GPU in data loader.
         init_lr=1E-3,
         log_dir='./logs',
         ckpt_dir='./checkpoints',
-        gpu=0,  # Set to None for CPU mode.
-        num_epochs=20,
+        gpu=1,  # Set to None for CPU mode.  # Not true GPU for now.
+        num_epochs=5,
         max_to_keep=1,
         verbose=False,
         save_best_only=True,
