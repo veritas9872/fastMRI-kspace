@@ -119,10 +119,14 @@ class UnetModel(nn.Module):
         output = self.conv2(output)  # End of learning.
 
         # For removing width dimension padding. Recall that k-space form has 2 as last dim size.
-        pad = (output.size(-1) - out_shape[-1]) // 2  # This depends on mini-batch size being 1 to work.
+        left = (output.size(-1) - out_shape[-1]) // 2  # This depends on mini-batch size being 1 to work.
+        right = left + out_shape[-1]
+
+        # Previously, cropping was done by  [pad:-pad]. However, this fails catastrophically when pad=0 as
+        # all values are wiped out in those cases where [0:0] creates an empty tensor.
 
         # Cropping width dimension by pad.
-        output = output[..., pad:-pad]
+        output = output[..., left:right]
 
         # Processing to k-space form.
         output = nchw_to_kspace(output)

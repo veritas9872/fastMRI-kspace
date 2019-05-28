@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.multiprocessing as multiprocessing
 from torch.utils.data import DataLoader
 
 import numpy as np
@@ -16,6 +17,7 @@ from data.mri_data import SliceData
 from data.pre_processing import TrainInputSliceTransform, NewTrainInputSliceTransform
 
 from models.k_unet_model import UnetModel  # TODO: Create method to specify model in main.py
+# from tqdm import tqdm  # TODO: Use tqdm when verbose=False. Or maybe add a separate tqdm option.
 
 """
 Please note a bit of terminology. 
@@ -26,6 +28,7 @@ k-slice means a slice of k-space, i.e. only 1 slice of k-space.
 
 N.B. The Fourier and Inverse Fourier Transforms are linear transforms. 
 Scalar multiplication in the Fourier domain and image domain are equivalent.
+However, I have currently moved that to the data pre-processing stage.
 """
 
 
@@ -109,7 +112,7 @@ def create_new_data_loaders(args, device):
         sample_rate=args.sample_rate,
         use_gt=False,
         converted=args.converted
-    )
+    )  # Maybe I should separate these into two separate functions.
 
     # Generating Data Loaders
     train_loader = DataLoader(
@@ -244,11 +247,14 @@ def val_epoch(model, loss_func, data_loader, writer, device, epoch, max_imgs=0, 
                     for idx, step_metric in enumerate(step_metrics):
                         print(f'Epoch {epoch:03d} Step {step:03d}: Validation metric {idx}: {step_metric.item():.4e}')
 
-            if max_imgs:
+            if max_imgs:  # TODO: Try adding steps to tags to see if multiple images will work.
                 interval = len(data_loader.dataset) // max_imgs
                 if step % interval == 0:  # Note that all images are scaled independently of all other images.
                     assert isinstance(writer, SummaryWriter)
                     recons_grid, targets_grid, deltas_grid = make_grid_triplet(recons, targets)
+                    # TODO: Maybe it is better to use a separate function or class to do image writing?
+                    #  The conditional statements and interval counting could be done elsewhere,
+                    #  though it seems unnecessary
                     writer.add_image(f'Recons', recons_grid, epoch, dataformats='HW')
                     writer.add_image(f'Targets', targets_grid, epoch, dataformats='HW')
                     writer.add_image(f'Deltas', deltas_grid, epoch, dataformats='HW')
@@ -284,6 +290,8 @@ def train_model(args):
     log_path = log_path / run_name
     log_path.mkdir(exist_ok=True)
 
+    multiprocessing.set_start_method(method='spawn')  # Allow multiprocessing on DataLoader.
+
     save_dict_as_json(vars(args), log_dir=log_path, save_name=run_name)
 
     logger = get_logger(name=__name__, save_file=log_path / run_name)
@@ -313,8 +321,8 @@ def train_model(args):
     checkpointer = CheckpointManager(model=model, optimizer=optimizer, mode='min', save_best_only=args.save_best_only,
                                      ckpt_dir=ckpt_path, max_to_keep=args.max_to_keep)
 
-    if hasattr(args, 'previous_model') and args.previous_model:
-        checkpointer.load(load_dir=checkpointer, load_optimizer=False)
+    if hasattr(args, 'previous_model') and args.previous_model:  # For loading previous models. Maybe refactor later.
+        checkpointer.load(load_dir=args.previous_model, load_optimizer=False)  # Variable names are confusing.
 
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(  # TODO: This should also be moved to main.py
         optimizer, mode='min', factor=0.1, patience=5, verbose=True, cooldown=0, min_lr=1E-7)
@@ -362,4 +370,5 @@ def train_model(args):
 
         scheduler.step(metrics=val_epoch_loss)
 
+    writer.close()
     return model
