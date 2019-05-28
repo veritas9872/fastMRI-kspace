@@ -97,7 +97,8 @@ def create_new_data_loaders(args, device):
     train_dataset = SliceData(
         root=Path(args.data_root) / f'{args.challenge}_train',
         transform=NewTrainInputSliceTransform(
-            train_mask_func, args.challenge, device, use_seed=False, amp_fac=args.amp_fac, divisor=divisor),
+            mask_func=train_mask_func, which_challenge=args.challenge,
+            device=device, use_seed=False, amp_fac=args.amp_fac, divisor=divisor),
         challenge=args.challenge,
         sample_rate=args.sample_rate,
         use_gt=False,
@@ -107,7 +108,8 @@ def create_new_data_loaders(args, device):
     val_dataset = SliceData(
         root=Path(args.data_root) / f'{args.challenge}_val',
         transform=NewTrainInputSliceTransform(
-            val_mask_func, args.challenge, device, use_seed=True, amp_fac=args.amp_fac, divisor=divisor),
+            mask_func=val_mask_func, which_challenge=args.challenge,
+            device=device, use_seed=True, amp_fac=args.amp_fac, divisor=divisor),
         challenge=args.challenge,
         sample_rate=args.sample_rate,
         use_gt=False,
@@ -291,6 +293,7 @@ def train_model(args):
     log_path.mkdir(exist_ok=True)
 
     multiprocessing.set_start_method(method='spawn')  # Allow multiprocessing on DataLoader.
+    # For some reason, multiprocessing causes problems with which GPU is initialized...
 
     save_dict_as_json(vars(args), log_dir=log_path, save_name=run_name)
 
@@ -306,13 +309,13 @@ def train_model(args):
 
     # Create Datasets. Use one slice at a time for now.
     # train_loader, val_loader = create_data_loaders(args)
-    train_loader, val_loader = create_new_data_loaders(args, device)
+    train_loader, val_loader = create_new_data_loaders(args, device=device)
 
     # Define model.
     data_chans = 2 if args.challenge == 'singlecoil' else 30  # Multicoil has 15 coils with 2 for real/imag
     # data_chans indicates the number of channels in the data.
     model = UnetModel(in_chans=data_chans, out_chans=data_chans, chans=args.chans,
-                      num_pool_layers=args.num_pool_layers).to(device)  # TODO: Move to main.py
+                      num_pool_layers=args.num_pool_layers).to(device=device)  # TODO: Move to main.py
 
     optimizer = optim.Adam(model.parameters(), lr=args.init_lr)  # Maybe move to main.py
     loss_func = nn.L1Loss(reduction='mean').to(device)  # TODO: move to main.py

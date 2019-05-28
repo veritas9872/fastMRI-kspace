@@ -2,6 +2,10 @@ from utils.run_utils import create_arg_parser
 from train.training import train_model
 
 # Please try to use logging better. Current logging is rather badly managed.
+# A hack to go around bug with multi-processing.
+import os
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"  # Set true device here.
 
 
 if __name__ == '__main__':
@@ -12,7 +16,7 @@ if __name__ == '__main__':
         init_lr=1E-3,
         log_dir='./logs',
         ckpt_dir='./checkpoints',
-        gpu=1,  # Set to None for CPU mode.
+        gpu=0,  # Set to None for CPU mode.
         num_epochs=20,
         max_to_keep=1,
         verbose=False,
@@ -27,7 +31,6 @@ if __name__ == '__main__':
         num_pool_layers=4,
         converted=True,
         amp_fac=1E8,  # Amplification factor to prevent numerical underflow.
-        previous_model='checkpoints/Trial 03  2019-05-16 18-20-55/ckpt_012.tar'
     )
 
     parser = create_arg_parser(**defaults).parse_args()
