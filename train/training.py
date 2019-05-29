@@ -17,8 +17,7 @@ from utils.run_utils import get_logger, initialize, save_dict_as_json
 from data.mri_data import SliceData
 from data.pre_processing import TrainInputSliceTransform, NewTrainInputSliceTransform
 
-from models.k_unet_model import UnetModel  # TODO: Create method to specify model in main.py
-# from tqdm import tqdm  # TODO: Use tqdm when verbose=False. Or maybe add a separate tqdm option.
+from models.k_unet_model import UnetModel
 
 """
 Please note a bit of terminology. 
@@ -62,8 +61,8 @@ However, I have currently moved that to the data pre-processing stage.
 #     )
 #
 #     return train_dataset, val_dataset
-#
-#
+
+
 # def create_data_loaders(args):
 #     train_dataset, val_dataset = create_datasets(args)
 #
@@ -140,7 +139,6 @@ def create_new_data_loaders(args, device):
     return train_loader, val_loader
 
 
-# TODO: Merge train_step into train_epoch when creating a trainer class.
 def train_step(model, optimizer, loss_func, inputs, targets):
     optimizer.zero_grad()
     recons = model(inputs, targets.shape)
@@ -161,18 +159,6 @@ def train_epoch(model, optimizer, loss_func, data_loader, device, epoch, verbose
 
     # labels are fully sampled coil-wise images, not rss or esc.
     for idx, (inputs, targets) in enumerate(data_loader, start=1):
-
-        # print(1, inputs.device)
-        # print(2, targets.device)
-
-        # Temporary hack because of weird multi-processing error.
-        targets = targets.to(device, non_blocking=True)
-        inputs = inputs.to(device)
-
-        # Data should be in CUDA already, not be sent to GPU here. Otherwise, ifft2d for labels will be slow!!!
-        # inputs = inputs.to(device)
-        # targets = targets.to(device)
-
         step_loss, recons = train_step(model, optimizer, loss_func, inputs, targets)
 
         # Gradients are not calculated so as to boost speed and remove weird errors.
@@ -244,14 +230,6 @@ def val_epoch(model, loss_func, data_loader, writer, device, epoch, max_imgs=0, 
     epoch_metrics_lst = [list() for _ in metrics] if metrics else None
 
     for step, (inputs, targets) in enumerate(data_loader, start=1):
-        # inputs = inputs.to(device) * 10000  # TODO: Fix this later!! VERY UGLY HACK!!
-        # targets = targets.to(device) * 10000  # TODO: Remove later!
-        # # This x10000 is here because I found that permanent value amplification is needed
-
-        # Same here. Temporary very inefficient hack to make the thing work while I figure out what is going on.
-        targets = targets.to(device, non_blocking=True)
-        inputs = inputs.to(device)
-
         step_loss, recons = val_step(model, loss_func, inputs, targets)
 
         with torch.no_grad():  # Probably not actually necessary...
@@ -267,14 +245,11 @@ def val_epoch(model, loss_func, data_loader, writer, device, epoch, max_imgs=0, 
                     for idx, step_metric in enumerate(step_metrics):
                         print(f'Epoch {epoch:03d} Step {step:03d}: Validation metric {idx}: {step_metric.item():.4e}')
 
-            if max_imgs:  # TODO: Try adding steps to tags to see if multiple images will work.
+            if max_imgs:
                 interval = len(data_loader.dataset) // max_imgs
                 if step % interval == 0:  # Note that all images are scaled independently of all other images.
                     assert isinstance(writer, SummaryWriter)
                     recons_grid, targets_grid, deltas_grid = make_grid_triplet(recons, targets)
-                    # TODO: Maybe it is better to use a separate function or class to do image writing?
-                    #  The conditional statements and interval counting could be done elsewhere,
-                    #  though it seems unnecessary
                     writer.add_image(f'Recons/{step}', recons_grid, epoch, dataformats='HW')
                     writer.add_image(f'Targets/{step}', targets_grid, epoch, dataformats='HW')
                     writer.add_image(f'Deltas/{step}', deltas_grid, epoch, dataformats='HW')
@@ -290,11 +265,6 @@ def val_epoch(model, loss_func, data_loader, writer, device, epoch, max_imgs=0, 
 
 
 def train_model(args):
-
-    # TODO: I found that the loss disappears due to numerical underflow when trained like this.
-    #  I need to implement multiplication to make training more stable.
-    #  I have verified that training is possible.
-
     if args.batch_size > 1:
         raise NotImplementedError('Only batch size of 1 for now.')
 
@@ -324,8 +294,6 @@ def train_model(args):
         logger.info(f'Using CPU for {run_name}')
 
     # Create Datasets. Use one slice at a time for now.
-    # train_loader, val_loader = create_data_loaders(args)
-
     train_loader, val_loader = create_new_data_loaders(args, device=device)
     torch.multiprocessing.set_start_method(method='spawn')
 
@@ -333,11 +301,11 @@ def train_model(args):
     data_chans = 2 if args.challenge == 'singlecoil' else 30  # Multicoil has 15 coils with 2 for real/imag
     # data_chans indicates the number of channels in the data.
     model = UnetModel(in_chans=data_chans, out_chans=data_chans, chans=args.chans,
-                      num_pool_layers=args.num_pool_layers).to(device=device)  # TODO: Move to main.py
+                      num_pool_layers=args.num_pool_layers).to(device=device)
 
     optimizer = optim.Adam(model.parameters(), lr=args.init_lr)  # Move to main.py
-    loss_func = nn.L1Loss(reduction='mean').to(device)  # TODO: move to main.py
-    metrics = None  # TODO: Move to main.py. I wish to specify metrics and loss on main.py.
+    loss_func = nn.L1Loss(reduction='mean').to(device)
+    metrics = None
 
     # Maybe move this to main.py too.
     checkpointer = CheckpointManager(model=model, optimizer=optimizer, mode='min', save_best_only=args.save_best_only,
@@ -392,5 +360,5 @@ def train_model(args):
 
         scheduler.step(metrics=val_epoch_loss)
 
-    writer.close()
+    writer.close()  # Ensures that writing will not be cut off.
     return model

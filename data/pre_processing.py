@@ -247,6 +247,50 @@ class NewTrainInputSliceTransform:
         return data_slice, target_slice
 
 
+class KInputSliceTransform:
+    def __init__(self, mask_func, challenge, device, use_seed=True, divisor=1):
+        if challenge not in ('singlecoil', 'multicoil'):
+            raise ValueError(f'Challenge should either be "singlecoil" or "multicoil"')
+        self.mask_func = mask_func
+        self.challenge = challenge
+        self.device = device
+        self.use_seed = use_seed
+        self.divisor = divisor
+
+    def __call__(self, k_slice, target, attrs, file_name, slice_num):
+        assert np.iscomplexobj(k_slice), 'kspace must be complex.'
+        assert k_slice.shape[-1] % 2 == 0, 'k-space data width must be even.'
+
+        if k_slice.ndim == 2:  # For singlecoil. Makes data processing later on much easier.
+            k_slice = np.expand_dims(k_slice, axis=0)
+        elif k_slice.ndim != 3:  # Prevents possible errors.
+            raise TypeError('Invalid slice type')
+
+        with torch.no_grad():  # Remove unnecessary gradient calculations.
+            # Now a Tensor of (num_coils, height, width, 2), where 2 is (real, imag).
+            k_slice = to_tensor(k_slice).to(device=self.device)
+            scaling = torch.std(k_slice)  # Pseudo-standard deviation for normalization.
+            target_slice = complex_abs(ifft2(k_slice))  # Labels are not standardized.
+            k_slice /= scaling  # Standardization of CNN inputs.
+
+            # Apply mask
+            seed = None if not self.use_seed else tuple(map(ord, file_name))
+            masked_kspace, mask = apply_mask(k_slice, self.mask_func, seed)
+
+            data_slice = k_slice_to_chw(masked_kspace)
+
+            margin = data_slice.size(-1) % self.divisor
+
+            if margin > 0:
+                pad = [(self.divisor - margin) // 2, (1 + self.divisor - margin) // 2]
+            else:  # This is a temporary fix.
+                pad = [0, 0]
+
+            data_slice = F.pad(data_slice, pad=pad, value=0)  # This pads at the last dimension of a tensor with 0.
+
+        return data_slice, target_slice, scaling  # This has a different output API.
+
+
 class TrainInputBatchTransform:
     """
     Data Transformer for training and validating models.

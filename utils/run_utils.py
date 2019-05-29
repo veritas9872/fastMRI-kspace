@@ -62,6 +62,43 @@ def get_logger(name, save_file=None):
     return logger
 
 
+# def create_logger(name, save_folder=None, save_name='event_log.log'):
+#     """
+#     Modified logger created to save all outputs onto a single file.
+#     The file being saved now has a fixed name, allowing all
+#     :param name:
+#     :param save_folder:
+#     :param save_name:
+#     :return:
+#     """
+#     logger = logging.getLogger(name)
+#     logger.setLevel(logging.INFO)
+#
+#     # Handler for display to stdout.
+#     c_handler = logging.StreamHandler()
+#     c_handler.setLevel(logging.INFO)
+#     c_format = logging.Formatter('%(name)s - %(levelname)s - %(message)s')
+#     c_handler.setFormatter(c_format)
+#     logger.addHandler(c_handler)
+#
+#     if save_folder and save_name:  # Both variables must be present to write a log file to disk.
+#         save_path = Path(save_folder)
+#         assert save_path.exists(), 'Specified path does not exist.'
+#         save_path = save_path / save_name
+#
+#         f_handler = logging.FileHandler(save_path, mode='x')
+#         f_handler.setLevel(logging.INFO)
+#         f_format = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+#         f_handler.setFormatter(f_format)
+#         logger.addHandler(f_handler)
+#
+#     return logger
+
+
+
+
+
+
 def create_arg_parser(**overrides):
     parser = argparse.ArgumentParser(description='Simple argument parser for placing default arguments as desired.')
     parser.set_defaults(**overrides)
