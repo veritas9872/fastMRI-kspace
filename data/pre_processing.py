@@ -271,7 +271,9 @@ class KInputSliceTransform:
             k_slice = to_tensor(k_slice).to(device=self.device)
             scaling = torch.std(k_slice)  # Pseudo-standard deviation for normalization.
             target_slice = complex_abs(ifft2(k_slice))  # Labels are not standardized.
-            k_slice /= scaling  # Standardization of CNN inputs.
+            k_slice *= (torch.ones(()) / scaling)  # Standardization of CNN inputs.
+            # Using weird multiplication because multiplication is much faster than division.
+            # Multiplying the whole tensor by 1/scaling is faster than dividing the whole tensor by scaling.
 
             # Apply mask
             seed = None if not self.use_seed else tuple(map(ord, file_name))
@@ -283,7 +285,7 @@ class KInputSliceTransform:
 
             if margin > 0:
                 pad = [(self.divisor - margin) // 2, (1 + self.divisor - margin) // 2]
-            else:  # This is a temporary fix.
+            else:  # This is a temporary fix to prevent padding by half the divisor when margin=0.
                 pad = [0, 0]
 
             data_slice = F.pad(data_slice, pad=pad, value=0)  # This pads at the last dimension of a tensor with 0.

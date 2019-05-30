@@ -141,7 +141,7 @@ class ModelTrainer:
             for metric in metrics:
                 assert callable(metric), 'All metrics must be callable functions.'
 
-        # This is not a mistake.
+        # This is not a mistake. Pytorch implements loss functions as modules.
         assert isinstance(loss_func, nn.Module), '`loss_func` must be a callable Pytorch Module.'
         # assert callable(loss_func), '`loss_func` must be a callable function.'
 
@@ -168,7 +168,7 @@ class ModelTrainer:
         # Display interval of 0 means no display of validation images on TensorBoard.
         self.display_interval = int(len(self.val_loader.dataset) // args.max_images) if (args.max_images > 0) else 0
 
-        # Writing model graph to TensorBoard.
+        # Writing model graph to TensorBoard. Results might not be very good.
         num_chans = 30 if args.challenge == 'multicoil' else 2
         example_inputs = torch.ones(size=(1, num_chans, 640, 328)).to(args.device)
         self.writer.add_graph(model=model, input_to_model=example_inputs)
@@ -178,6 +178,7 @@ class ModelTrainer:
             model=self.model, optimizer=self.optimizer, mode='min', save_best_only=args.save_best_only,
             ckpt_dir=args.ckpt_path, max_to_keep=args.max_to_keep)
 
+        # loading from checkpoint if specified.
         if hasattr(args, 'prev_model_ckpt') and args.prev_model_ckpt:
             self.checkpointer.load(load_dir=args.prev_model_ckpt, load_optimizer=False)
 
@@ -216,12 +217,11 @@ class ModelTrainer:
         secs = toc_toc % 60
         self.logger.info(f'Finishing Training Loop. Total elapsed time: {hrs:03d}hr {mins:02d}min {secs:02d}sec.')
 
+    # TODO: Using the new system, post-processing will be done in the train/val steps.
+    #  Also, there should be a way to set the input slice transform inside the model trainer as well.
     def _train_step(self, inputs, targets, scales):
         self.optimizer.zero_grad()
-        # rescale = 1 / scales
         image_recons, kspace_recons = self.model(inputs, targets, scales)
-        # image_recons *= rescale  # Doing it twice is inefficient but has a cleaner user interface.
-        # kspace_recons *= rescale  # Recall that multiplication is faster than division.
         step_loss = self.loss_func(image_recons, targets)
         step_loss.backward()
         self.optimizer.step(closure=None)  # close=None is there just to make pylint happy.
@@ -231,9 +231,7 @@ class ModelTrainer:
         self.model.train()
         torch.autograd.set_grad_enabled(True)
 
-        # initialize epoch loss
         epoch_loss_lst = list()  # Appending values to list due to numerical underflow.
-        # initialize multiple epoch metrics
         epoch_metrics_lst = [list() for _ in self.metrics] if self.metrics else None
 
         # labels are fully sampled coil-wise images, not rss or esc.
@@ -243,10 +241,11 @@ class ModelTrainer:
             # Gradients are not calculated so as to boost speed and remove weird errors.
             with torch.no_grad():  # Update epoch loss and metrics
                 epoch_loss_lst.append(step_loss.item())  # Perhaps not elegant, but underflow makes this necessary.
-                step_metrics = self._get_step_metrics(image_recons, targets, epoch_metrics_lst)
 
-                if self.verbose:
-                    self._log_step_outputs(epoch, step, step_loss, step_metrics, training=True)
+                # The step functions here have all necessary conditionals internally.
+                # There is no need to externally specify whether to use them or not.
+                step_metrics = self._get_step_metrics(image_recons, targets, epoch_metrics_lst)
+                self._log_step_outputs(epoch, step, step_loss, step_metrics, training=True)
 
         epoch_loss, epoch_metrics = self._get_epoch_outputs(epoch, epoch_loss_lst, epoch_metrics_lst, training=True)
         return epoch_loss, epoch_metrics
@@ -261,10 +260,9 @@ class ModelTrainer:
         It would be most efficient to multiply the scaling just once inside the model before the IFFT2D.
         However, this would make the code too dirty.  --> Just do it anyway.
         """
-        # rescale = 1 / scales
+
+        # TODO: Implement post-processing here.
         image_recons, kspace_recons = self.model(inputs, targets, scales)
-        # image_recons *= rescale
-        # kspace_recons *= rescale
         step_loss = self.loss_func(image_recons, targets)
         return step_loss, image_recons, kspace_recons
 
@@ -279,10 +277,9 @@ class ModelTrainer:
             step_loss, image_recons, kspace_recons = self._val_step(inputs, targets, scales)
 
             epoch_loss_lst.append(step_loss.item())
+            # Step functions have internalized conditional statements deciding whether to execute or not.
             step_metrics = self._get_step_metrics(image_recons, targets, epoch_metrics_lst)
-
-            if self.verbose:
-                self._log_step_outputs(epoch, step, step_loss, step_metrics, training=False)
+            self._log_step_outputs(epoch, step, step_loss, step_metrics, training=False)
 
             # Save images to TensorBoard. Send this to a separate function later on.
             # Condition ensures that self.display_interval != 0 and that the step is right for display.
@@ -304,7 +301,7 @@ class ModelTrainer:
             for step_metric, epoch_metric_lst in zip(step_metrics, epoch_metrics_lst):
                 epoch_metric_lst.append(step_metric.item())
             return step_metrics
-        return None  # Redundantly returns None if metrics is None.
+        return None  # Explicitly return None for step_metrics when self.metrics is None.
 
     def _get_epoch_outputs(self, epoch, epoch_loss_lst, epoch_metrics_lst, training=True):
         mode = 'training' if training else 'validation'
@@ -322,11 +319,13 @@ class ModelTrainer:
         return epoch_loss, epoch_metrics
 
     def _log_step_outputs(self, epoch, step, step_loss, step_metrics, training=True):
-        mode = 'Training' if training else 'Validation'
-        self.logger.info(f'Epoch {epoch:03d} Step {step:03d} {mode} loss: {step_loss.item():.4e}')
-        if self.metrics:
-            for idx, step_metric in enumerate(step_metrics):
-                self.logger.info(f'Epoch {epoch:03d} Step {step:03d}: {mode} metric {idx}: {step_metric.item():.4e}')
+        if self.verbose:
+            mode = 'Training' if training else 'Validation'
+            self.logger.info(f'Epoch {epoch:03d} Step {step:03d} {mode} loss: {step_loss.item():.4e}')
+            if self.metrics:
+                for idx, step_metric in enumerate(step_metrics):
+                    self.logger.info(
+                        f'Epoch {epoch:03d} Step {step:03d}: {mode} metric {idx}: {step_metric.item():.4e}')
 
     def _log_epoch_outputs(self, epoch, epoch_loss, epoch_metrics, elapsed_secs, training=True):
         mode = 'Training' if training else 'Validation'
