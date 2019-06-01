@@ -6,144 +6,40 @@ import numpy as np
 from tensorboardX import SummaryWriter
 
 from time import time
-from pathlib import Path
 
-from data.data_transforms import complex_abs
-from train.subsample import MaskFunc
-from utils.train_utils import CheckpointManager
+from utils.train_utils import CheckpointManager, make_grid_triplet, make_k_grid
 from utils.run_utils import get_logger
-from data.mri_data import SliceData
-from data.pre_processing import KInputSliceTransform
 
 
-"""
-Please note a bit of terminology. 
-In this file, 'recons' indicates coil-wise reconstructions,
-not final reconstructions for submissions.
-Also, 'targets' indicates coil-wise targets, not the 320x320 ground-truth labels.
-k-slice means a slice of k-space, i.e. only 1 slice of k-space.
-"""
-
-
-# Send all these functions to train utils later.
-def create_loaded_datasets(args, device):
+class ModelTrainerK:
     """
-    A function for creating datasets where the data is sent to the desired device before being given to the model.
-    This is done because data transfer is a serious bottleneck in k-space learning and is best done asynchronously.
-    Also, the Fourier Transform is best done on the GPU instead of on CPU.
-    Finally, Sending k-space data to device beforehand removes the need to also send generated label data to device.
-    This reduces data transfer significantly.
-    The only problem is that sending to GPU cannot be batched with this method.
-    However, this seems to be a small price to pay.
+    Model Trainer for K-space learning.
+    Please note a bit of terminology.
+    In this file, 'recons' indicates coil-wise reconstructions,
+    not final reconstructions for submissions.
+    Also, 'targets' indicates coil-wise targets, not the 320x320 ground-truth labels.
+    k-slice means a slice of k-space, i.e. only 1 slice of k-space.
     """
-
-    train_mask_func = MaskFunc(args.center_fractions, args.accelerations)
-    val_mask_func = MaskFunc(args.center_fractions, args.accelerations)
-
-    divisor = 2 ** args.num_pool_layers  # UNET architecture requires that all inputs be dividable by some power of 2.
-
-    # Generating Datasets.
-    train_dataset = SliceData(
-        root=Path(args.data_root) / f'{args.challenge}_train',
-        transform=KInputSliceTransform(
-            mask_func=train_mask_func, challenge=args.challenge, device=device, use_seed=False, divisor=divisor),
-        challenge=args.challenge,
-        sample_rate=args.sample_rate,
-        use_gt=False,
-        converted=args.converted
-    )
-
-    val_dataset = SliceData(
-        root=Path(args.data_root) / f'{args.challenge}_val',
-        transform=KInputSliceTransform(
-            mask_func=val_mask_func, challenge=args.challenge, device=device, use_seed=True, divisor=divisor),
-        challenge=args.challenge,
-        sample_rate=args.sample_rate,
-        use_gt=False,
-        converted=args.converted
-    )
-
-    # Generating Data Loaders
-    train_loader = DataLoader(
-        dataset=train_dataset,
-        batch_size=args.batch_size,
-        shuffle=True,
-        num_workers=args.num_workers,
-        pin_memory=args.pin_memory,
-    )
-
-    val_loader = DataLoader(
-        dataset=val_dataset,
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
-        pin_memory=args.pin_memory,
-    )
-    return train_loader, val_loader
-
-
-def make_grid_triplet(image_recons, targets):
-    assert image_recons.size() == targets.size()
-    if image_recons.size(0) > 1:
-        raise NotImplementedError('Mini-batch size greater than 1 has not been implemented yet.')
-
-    large = torch.max(targets)
-    small = torch.min(targets)
-    diff = large - small
-
-    # Scaling to 0~1 range.
-    image_recons = (image_recons.clamp(min=small, max=large) - small) / diff
-    targets = (targets - small) / diff
-
-    # Send to CPU if necessary. Assumes batch size of 1.
-    image_recons = image_recons.detach().cpu().squeeze(dim=0)
-    targets = targets.detach().cpu().squeeze(dim=0)
-
-    if image_recons.size(0) == 15:
-        image_recons = torch.cat(torch.chunk(image_recons.view(-1, image_recons.size(-1)), chunks=5, dim=0), dim=1)
-        targets = torch.cat(torch.chunk(targets.view(-1, targets.size(-1)), chunks=5, dim=0), dim=1)
-    elif image_recons.size(0) == 1:
-        image_recons = image_recons.squeeze()
-        targets = targets.squeeze()
-    else:
-        raise ValueError('Invalid dimensions!')
-
-    deltas = targets - image_recons
-
-    return image_recons, targets, deltas
-
-
-def make_k_grid(kspace_recons):
-    """
-    Function for making k-space visualizations for Tensorboard.
-    """
-    if kspace_recons.size(0) > 1:
-        raise NotImplementedError('Mini-batch size greater than 1 has not been implemented yet.')
-
-    kspace_recons = complex_abs(torch.log10(kspace_recons.detach())).cpu().squeeze(dim=0)
-
-    if kspace_recons.size(0) == 15:
-        kspace_recons = torch.cat(torch.chunk(kspace_recons.view(-1, kspace_recons.size(-1)), chunks=5, dim=0), dim=1)
-
-    kspace_recons = kspace_recons.squeeze()
-    return kspace_recons
-
-
-# Only this class should remain in this file.
-class ModelTrainer:
-    def __init__(self, args, model, optimizer, loss_func, metrics=None, scheduler=None):
+    def __init__(self, args, model, optimizer, train_loader, val_loader,
+                 post_processing, loss_func, metrics=None, scheduler=None):
         self.logger = get_logger(name=__name__, save_file=args.log_path / args.run_name)
 
         # Checking whether inputs are correct.
         assert isinstance(model, nn.Module), '`model` must be a Pytorch Module.'
         assert isinstance(optimizer, optim.Optimizer), '`optimizer` must be a Pytorch Optimizer.'
+        assert isinstance(train_loader, DataLoader) and isinstance(val_loader, DataLoader), \
+            '`train_loader` and `val_loader` must be Pytorch DataLoader objects.'
+
+        # I think this would be best practice.
+        assert isinstance(post_processing, nn.Module), '`post_processing_func` must be a Pytorch Module.'
+
+        # This is not a mistake. Pytorch implements loss functions as modules.
+        assert isinstance(loss_func, nn.Module), '`loss_func` must be a callable Pytorch Module.'
+
         if metrics is not None:
             assert isinstance(metrics, (list, tuple)), '`metrics` must be a list or tuple.'
             for metric in metrics:
                 assert callable(metric), 'All metrics must be callable functions.'
-
-        # This is not a mistake. Pytorch implements loss functions as modules.
-        assert isinstance(loss_func, nn.Module), '`loss_func` must be a callable Pytorch Module.'
-        # assert callable(loss_func), '`loss_func` must be a callable function.'
 
         if scheduler is not None:
             if isinstance(scheduler, optim.lr_scheduler.ReduceLROnPlateau):
@@ -153,33 +49,35 @@ class ModelTrainer:
             else:
                 raise TypeError('`scheduler` must be a Pytorch Learning Rate Scheduler.')
 
-        self.model = model.to(args.device, non_blocking=True)
+        self.model = model
         self.optimizer = optimizer
+        self.train_loader = train_loader
+        self.val_loader = val_loader
+        self.post_processing_func = post_processing
         self.loss_func = loss_func  # I don't think it is necessary to send loss_func or metrics to device.
         self.metrics = metrics
         self.scheduler = scheduler
 
         self.verbose = args.verbose
         self.num_epochs = args.num_epochs
-        self.writer = SummaryWriter(log_dir=str(args.log_path))
-
-        self.train_loader, self.val_loader = create_loaded_datasets(args=args, device=args.device)
+        self.writer = SummaryWriter(logdir=str(args.log_path))
 
         # Display interval of 0 means no display of validation images on TensorBoard.
         self.display_interval = int(len(self.val_loader.dataset) // args.max_images) if (args.max_images > 0) else 0
 
-        # Writing model graph to TensorBoard. Results might not be very good.
-        num_chans = 30 if args.challenge == 'multicoil' else 2
-        example_inputs = torch.ones(size=(1, num_chans, 640, 328)).to(args.device)
-        self.writer.add_graph(model=model, input_to_model=example_inputs)
-        del example_inputs  # Remove unnecessary tensor taking up memory.
+        # # Writing model graph to TensorBoard. Results might not be very good.
+        if args.add_graph:
+            num_chans = 30 if args.challenge == 'multicoil' else 2
+            example_inputs = torch.ones(size=(1, num_chans, 640, 328), device=args.device)
+            self.writer.add_graph(model=model, input_to_model=example_inputs)
+            del example_inputs  # Remove unnecessary tensor taking up memory.
 
         self.checkpointer = CheckpointManager(
             model=self.model, optimizer=self.optimizer, mode='min', save_best_only=args.save_best_only,
             ckpt_dir=args.ckpt_path, max_to_keep=args.max_to_keep)
 
         # loading from checkpoint if specified.
-        if hasattr(args, 'prev_model_ckpt') and args.prev_model_ckpt:
+        if vars(args).get('prev_model_ckpt'):
             self.checkpointer.load(load_dir=args.prev_model_ckpt, load_optimizer=False)
 
     def train_model(self):
@@ -203,7 +101,7 @@ class ModelTrainer:
 
             self.checkpointer.save(metric=val_epoch_loss, verbose=True)
 
-            if self.scheduler:
+            if self.scheduler is not None:
                 if self.metric_scheduler:  # If the scheduler is a metric based scheduler, include metrics.
                     self.scheduler.step(metrics=val_epoch_metrics)
                 else:
@@ -212,19 +110,16 @@ class ModelTrainer:
         # Finishing Training Loop
         self.writer.close()  # Flushes remaining data to TensorBoard.
         toc_toc = int(time() - tic_tic)
-        hrs = toc_toc // 3600
-        mins = toc_toc // 60
-        secs = toc_toc % 60
-        self.logger.info(f'Finishing Training Loop. Total elapsed time: {hrs:03d}hr {mins:02d}min {secs:02d}sec.')
+        self.logger.info(f'Finishing Training Loop. Total elapsed time: '
+                         f'{toc_toc // 3600} hr {toc_toc // 60} min {toc_toc % 60} sec.')
 
-    # TODO: Using the new system, post-processing will be done in the train/val steps.
-    #  Also, there should be a way to set the input slice transform inside the model trainer as well.
     def _train_step(self, inputs, targets, scales):
         self.optimizer.zero_grad()
-        image_recons, kspace_recons = self.model(inputs, targets, scales)
+        outputs = self.model(inputs)
+        image_recons, kspace_recons = self.post_processing_func(outputs, targets, scales)
         step_loss = self.loss_func(image_recons, targets)
         step_loss.backward()
-        self.optimizer.step(closure=None)  # close=None is there just to make pylint happy.
+        self.optimizer.step()
         return step_loss, image_recons, kspace_recons
 
     def _train_epoch(self, epoch):
@@ -252,17 +147,13 @@ class ModelTrainer:
 
     def _val_step(self, inputs, targets, scales):
         """
-        This implementation assumes that model outputs are Tensors, not lists.
-        It also assumes that scalar multiplication was the only processing step, allowing for the possibility
-        that each slice had a different scalar multiplied to it (e.g. the pseudo-std normalization).
-        'scales' indicates multiple 'scaling' values from the data pre-processing step.
-        This works because the FFT and IFFT are linear functions.
-        It would be most efficient to multiply the scaling just once inside the model before the IFFT2D.
-        However, this would make the code too dirty.  --> Just do it anyway.
+        I decided to shove all variables other than the inputs and targets into a dictionary called params_dict.
+        There are simply too many different scenarios to prepare for in a single class.
+        Just shove all other variables into that dict for convenience instead of making a new class each time.
+        Deal with the dict in the post-processing function.
         """
-
-        # TODO: Implement post-processing here.
-        image_recons, kspace_recons = self.model(inputs, targets, scales)
+        outputs = self.model(inputs)
+        image_recons, kspace_recons = self.post_processing_func(outputs, targets, scales)
         step_loss = self.loss_func(image_recons, targets)
         return step_loss, image_recons, kspace_recons
 
@@ -301,7 +192,7 @@ class ModelTrainer:
             for step_metric, epoch_metric_lst in zip(step_metrics, epoch_metrics_lst):
                 epoch_metric_lst.append(step_metric.item())
             return step_metrics
-        return None  # Explicitly return None for step_metrics when self.metrics is None.
+        return None  # Explicitly return None for step_metrics if self.metrics is None. Not necessary but more readable.
 
     def _get_epoch_outputs(self, epoch, epoch_loss_lst, epoch_metrics_lst, training=True):
         mode = 'training' if training else 'validation'
@@ -330,7 +221,7 @@ class ModelTrainer:
     def _log_epoch_outputs(self, epoch, epoch_loss, epoch_metrics, elapsed_secs, training=True):
         mode = 'Training' if training else 'Validation'
         self.logger.info(
-            f'Epoch {epoch:03d} {mode}. loss: {epoch_loss:.4e}, Time: {elapsed_secs // 60}min {elapsed_secs % 60}sec')
+            f'Epoch {epoch:03d} {mode}. loss: {epoch_loss:.4e}, Time: {elapsed_secs // 60} min {elapsed_secs % 60} sec')
         self.writer.add_scalar(f'{mode}_epoch_loss', scalar_value=epoch_loss, global_step=epoch)
         if isinstance(epoch_metrics, list):  # The metrics being returned are either 'None' or a list of values.
             for idx, epoch_metric in enumerate(epoch_metrics, start=1):

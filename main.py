@@ -1,18 +1,18 @@
 import torch
+import torch.optim as optim
+import torch.nn as nn
 
 from pathlib import Path
 
-from utils.run_utils import create_arg_parser
-from train.training import train_model
-from utils.run_utils import initialize, save_dict_as_json, get_logger
+from utils.run_utils import initialize, save_dict_as_json, get_logger, create_arg_parser
+from data.pre_processing import KInputSliceTransform
+from utils.train_utils import create_data_loaders
+from train.subsample import MaskFunc
+from train.processing import SingleBatchOutputTransform, OutputBatchTransform
+from train.model_trainer import ModelTrainerK
+from train.metrics import CustomL1Loss
+from models.unet_model import ResidualUnetModel
 
-# Please try to use logging better. Current logging is rather badly managed.
-
-
-# Allow multiprocessing on DataLoader.
-# For some reason, multiprocessing causes problems with which GPU is initialized...
-# Also when multiple GPUs are present. Still figuring out why.
-# Maybe using a class will solve the problem...
 
 # Try out SSIM and MS-SSIM as loss functions. They appear to be effective in getting fine-grained features,
 # unlike L1.
@@ -20,9 +20,9 @@ from utils.run_utils import initialize, save_dict_as_json, get_logger
 
 def main():
     defaults = dict(
-        batch_size=1,  # This MUST be 1 for now.
-        sample_rate=0.1,  # Mostly for debugging purposes.
-        num_workers=1,
+        batch_size=4,  # This MUST be 1 for now.
+        sample_rate=0.025,  # Mostly for debugging purposes.
+        num_workers=2,
         init_lr=1E-3,
         log_dir='./logs',
         ckpt_dir='./checkpoints',
@@ -35,12 +35,12 @@ def main():
         challenge='multicoil',
         center_fractions=[0.08, 0.04],
         accelerations=[4, 8],
-        max_imgs=1,  # Maximum number of images to save.
+        max_images=4,  # Maximum number of images to save.
         chans=32,
         num_pool_layers=4,
         converted=True,
-        # amp_fac=1E4,  # Amplification factor to prevent numerical underflow.
-        pin_memory=False
+        pin_memory=False,
+        add_graph=False
     )
 
     # Replace with a proper argument parsing function later.
@@ -73,12 +73,49 @@ def main():
     # Please note that many objects (such as Path objects) cannot be serialized to json files.
     save_dict_as_json(vars(args), log_dir=log_path, save_name=run_name)
 
-    # Saving peripheral variables in args to reduce clutter.
+    # Saving peripheral variables and objects in args to reduce clutter and make the structure flexible.
     args.run_number = run_number
     args.run_name = run_name
     args.ckpt_path = ckpt_path
     args.log_path = log_path
     args.device = device
+
+    # Input transforms. These are on a slice basis.
+    # UNET architecture requires that all inputs be dividable by some power of 2.
+    divisor = 2 ** args.num_pool_layers
+
+    mask_func = MaskFunc(args.center_fractions, args.accelerations)
+
+    input_slice_train_transform = KInputSliceTransform(
+        mask_func=mask_func, challenge=args.challenge, device=args.device, use_seed=False, divisor=divisor)
+
+    input_slice_val_transform = KInputSliceTransform(
+        mask_func=mask_func, challenge=args.challenge, device=args.device, use_seed=True, divisor=divisor)
+
+    # DataLoaders
+    train_loader, val_loader = create_data_loaders(
+        args=args, train_transform=input_slice_train_transform, val_transform=input_slice_val_transform)
+
+    # Loss Function and output post-processing functions.
+    if args.batch_size == 1:
+        loss_func = nn.L1Loss(reduction='mean')
+        output_batch_transform = SingleBatchOutputTransform()
+    elif args.batch_size > 1:
+        loss_func = CustomL1Loss(reduction='mean')
+        output_batch_transform = OutputBatchTransform()
+    else:
+        raise RuntimeError('Invalid batch size.')
+
+    # Define model.
+    data_chans = 2 if args.challenge == 'singlecoil' else 30  # Multicoil has 15 coils with 2 for real/imag
+    model = ResidualUnetModel(in_chans=data_chans, out_chans=data_chans, chans=args.chans,
+                              num_pool_layers=args.num_pool_layers).to(device)
+    optimizer = optim.Adam(params=model.parameters(), lr=args.init_lr)
+
+    trainer = ModelTrainerK(args, model=model, optimizer=optimizer, train_loader=train_loader, val_loader=val_loader,
+                            post_processing=output_batch_transform, loss_func=loss_func)
+
+    trainer.train_model()
 
 
 if __name__ == '__main__':

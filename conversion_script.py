@@ -1,6 +1,7 @@
 import h5py
 import numpy as np
 from pathlib import Path
+import warnings
 
 
 """
@@ -18,6 +19,8 @@ def make_compressed_dataset(data_folder, save_dir, **save_params):
     save_path.mkdir(exist_ok=True)
     save_path = save_path / data_path.stem
     save_path.mkdir()
+
+    mb = 2 ** 20  # megabyte
 
     for file in sorted(files):
         print(f'Processing {file}')
@@ -38,6 +41,13 @@ def make_compressed_dataset(data_folder, save_dir, **save_params):
 
             test_set = recons_key not in old_hf.keys()
             labels = np.asarray(old_hf[recons_key]) if not test_set else None
+
+        chunk_bytes = np.prod(chunk) * kspace.itemsize
+        if chunk_bytes > mb:
+            warnings.warn(f'kspace chunk size for {file} is greater than 1MB. '
+                          f'Specified chunk size is {chunk_bytes} for chunk configuration of {chunk}'
+                          f'Please reconsider chunk size configurations. '
+                          f'A chunk size greater than 1MB cannot utilize HDF5 caching.')
 
         with h5py.File(save_path / file.name, mode='x', libver='latest') as new_hf:
             new_hf.attrs.update(attrs)

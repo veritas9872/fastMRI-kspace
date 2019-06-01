@@ -40,8 +40,8 @@ class SliceData(Dataset):
         files = list(pathlib.Path(root).glob('*.h5'))
 
         if not files:  # If the list is empty for any reason
-            raise OSError("Sorry! No files present in this directory. "
-                          "Please check if your disk has been loaded.")
+            raise FileNotFoundError('Sorry! No files present in this directory. '
+                                    'Please check if your disk has been loaded.')
 
         print(f'Initializing {root}. This might take a minute.')
 

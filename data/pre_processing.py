@@ -259,12 +259,12 @@ class KInputSliceTransform:
 
     def __call__(self, k_slice, target, attrs, file_name, slice_num):
         assert np.iscomplexobj(k_slice), 'kspace must be complex.'
-        assert k_slice.shape[-1] % 2 == 0, 'k-space data width must be even.'
+        # assert k_slice.shape[-1] % 2 == 0, 'k-space data width must be even.'
 
         if k_slice.ndim == 2:  # For singlecoil. Makes data processing later on much easier.
             k_slice = np.expand_dims(k_slice, axis=0)
         elif k_slice.ndim != 3:  # Prevents possible errors.
-            raise TypeError('Invalid slice type')
+            raise RuntimeError('Invalid slice shape. Please check input shape.')
 
         with torch.no_grad():  # Remove unnecessary gradient calculations.
             # Now a Tensor of (num_coils, height, width, 2), where 2 is (real, imag).
