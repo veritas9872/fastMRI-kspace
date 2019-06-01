@@ -1,6 +1,12 @@
 import torch
 from torch import nn, optim
+from torch.utils.data import DataLoader
+import torch.nn.functional as F
+
 from pathlib import Path
+
+from data.mri_data import SliceData
+from data.data_transforms import complex_abs
 
 
 class CheckpointManager:
@@ -91,11 +97,6 @@ class CheckpointManager:
             else:
                 print(f'Metric did not improve.')
 
-            if save_path:
-                print(f'Saving Checkpoint at {save_path}')
-            else:
-                print('Not saving checkpoint.')
-
         if is_best:  # Update new best metric.
             self.prev_best = metric
 
@@ -133,3 +134,159 @@ def load_model_from_checkpoint(model, load_dir):
     save_dict = torch.load(load_dir)
     model.load_state_dict(save_dict['model_state_dict'])
     return model  # Not actually necessary to return the model but doing so anyway.
+
+
+def create_datasets(args, train_transform, val_transform):
+    assert callable(train_transform) and callable(val_transform), 'Transforms should be callable functions.'
+
+    # Generating Datasets.
+    train_dataset = SliceData(
+        root=Path(args.data_root) / f'{args.challenge}_train',
+        transform=train_transform,
+        challenge=args.challenge,
+        sample_rate=args.sample_rate,
+        use_gt=False,
+        converted=args.converted
+    )
+
+    val_dataset = SliceData(
+        root=Path(args.data_root) / f'{args.challenge}_val',
+        transform=val_transform,
+        challenge=args.challenge,
+        sample_rate=args.sample_rate,
+        use_gt=False,
+        converted=args.converted
+    )
+    return train_dataset, val_dataset
+
+
+def single_collate_fn(batch):  # Returns `targets` as a 4D Tensor.
+    """
+    hack for single batch case.
+    """
+    temp = batch[0]
+    return temp[0].unsqueeze(0), temp[1].unsqueeze(0), temp[2]
+
+
+def multi_collate_fn(batch):
+    tensors = list()
+    targets = list()
+    scales = list()
+
+    with torch.no_grad():
+        for (tensor, target, scaling) in batch:
+            tensors.append(tensor)
+            targets.append(target)  # Note that targets are 3D Tensors in a list, not 4D.
+            scales.append(scaling)
+
+        max_width = max(tensor.size(-1) for tensor in tensors)
+
+        # Assumes that padding for UNET divisor has already been performed for each slice.
+        for idx in range(len(tensors)):
+            pad = (max_width - tensors[idx].size(-1)) // 2
+            tensors[idx] = F.pad(tensors[idx], pad=[pad, pad], value=0)
+
+    return torch.stack(tensors, dim=0), targets, scales
+
+
+def create_data_loaders(args, train_transform, val_transform):
+
+    """
+    A function for creating datasets where the data is sent to the desired device before being given to the model.
+    This is done because data transfer is a serious bottleneck in k-space learning and is best done asynchronously.
+    Also, the Fourier Transform is best done on the GPU instead of on CPU.
+    Finally, Sending k-space data to device beforehand removes the need to also send generated label data to device.
+    This reduces data transfer significantly.
+    The only problem is that sending to GPU cannot be batched with this method.
+    However, this seems to be a small price to pay.
+    """
+    assert callable(train_transform) and callable(val_transform), 'Transforms should be callable functions.'
+
+    train_dataset, val_dataset = create_datasets(args, train_transform, val_transform)
+
+    if args.batch_size == 1:
+        collate_fn = single_collate_fn
+    elif args.batch_size > 1:
+        collate_fn = multi_collate_fn
+    else:
+        raise RuntimeError('Invalid batch size')
+
+    # Generating Data Loaders
+    train_loader = DataLoader(
+        dataset=train_dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=args.num_workers,
+        pin_memory=args.pin_memory,
+        collate_fn=collate_fn
+    )
+
+    val_loader = DataLoader(
+        dataset=val_dataset,
+        batch_size=args.batch_size,
+        num_workers=args.num_workers,
+        pin_memory=args.pin_memory,
+        collate_fn=collate_fn
+    )
+    return train_loader, val_loader
+
+
+def make_grid_triplet(image_recons, targets):
+
+    # Simple hack. Just use the first element if the input is a list for batching implementation.
+    if isinstance(image_recons, list) and isinstance(targets, list):
+        # Recall that in the mini-batched implementation, the outputs are lists of 3D Tensors.
+        image_recons = image_recons[0].unsqueeze(dim=0)
+        targets = targets[0].unsqueeze(dim=0)
+
+    if image_recons.size(0) > 1:
+        raise NotImplementedError('Mini-batch size greater than 1 has not been implemented yet.')
+
+    assert image_recons.size() == targets.size()
+
+    large = torch.max(targets)
+    small = torch.min(targets)
+    diff = large - small
+
+    # Scaling to 0~1 range.
+    image_recons = (image_recons.clamp(min=small, max=large) - small) / diff
+    targets = (targets - small) / diff
+
+    # Send to CPU if necessary. Assumes batch size of 1.
+    image_recons = image_recons.detach().cpu().squeeze(dim=0)
+    targets = targets.detach().cpu().squeeze(dim=0)
+
+    if image_recons.size(0) == 15:
+        image_recons = torch.cat(torch.chunk(image_recons.view(-1, image_recons.size(-1)), chunks=5, dim=0), dim=1)
+        targets = torch.cat(torch.chunk(targets.view(-1, targets.size(-1)), chunks=5, dim=0), dim=1)
+    elif image_recons.size(0) == 1:
+        image_recons = image_recons.squeeze()
+        targets = targets.squeeze()
+    else:
+        raise ValueError('Invalid dimensions!')
+
+    deltas = targets - image_recons
+
+    return image_recons, targets, deltas
+
+
+def make_k_grid(kspace_recons):
+    """
+    Function for making k-space visualizations for Tensorboard.
+    """
+    # Simple hack. Just use the first element if the input is a list --> batching implementation.
+    if isinstance(kspace_recons, list):
+        kspace_recons = kspace_recons[0].unsqueeze(dim=0)
+
+    if kspace_recons.size(0) > 1:
+        raise NotImplementedError('Mini-batch size greater than 1 has not been implemented yet.')
+
+    kspace_recons = torch.log10(complex_abs(kspace_recons)).cpu().squeeze(dim=0)
+
+    if kspace_recons.size(0) == 15:
+        kspace_recons = \
+            torch.cat(torch.chunk(kspace_recons.view(-1, kspace_recons.size(-1)), chunks=5, dim=0), dim=1)
+
+    kspace_recons = kspace_recons.squeeze()
+    return kspace_recons
+

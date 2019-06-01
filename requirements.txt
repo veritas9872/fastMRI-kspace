@@ -1,6 +1,5 @@
 torchsummary
 torchvision
-tqdm
 tensorboardX
 pytest
 scikit-image
