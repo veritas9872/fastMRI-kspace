@@ -20,14 +20,14 @@ from models.unet_model import ResidualUnetModel
 
 def main():
     defaults = dict(
-        batch_size=4,  # This MUST be 1 for now.
-        sample_rate=0.025,  # Mostly for debugging purposes.
-        num_workers=2,
+        batch_size=1,  # This MUST be 1 for now.
+        sample_rate=1,  # Mostly for debugging purposes.
+        num_workers=1,
         init_lr=1E-3,
         log_dir='./logs',
         ckpt_dir='./checkpoints',
         gpu=1,  # Set to None for CPU mode.
-        num_epochs=10,
+        num_epochs=20,
         max_to_keep=2,
         verbose=False,
         save_best_only=True,
