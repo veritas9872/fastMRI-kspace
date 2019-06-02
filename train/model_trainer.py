@@ -111,7 +111,7 @@ class ModelTrainerK:
         self.writer.close()  # Flushes remaining data to TensorBoard.
         toc_toc = int(time() - tic_tic)
         self.logger.info(f'Finishing Training Loop. Total elapsed time: '
-                         f'{toc_toc // 3600} hr {toc_toc // 60} min {toc_toc % 60} sec.')
+                         f'{toc_toc // 3600} hr {(toc_toc // 60) % 60} min {toc_toc % 60} sec.')
 
     def _train_step(self, inputs, targets, extra_params):
         self.optimizer.zero_grad()
