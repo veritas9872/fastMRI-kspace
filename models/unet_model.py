@@ -1,8 +1,6 @@
 """
-UNET model with Post-Processing.
-Slightly different from Facebook model since there are no trailing 1x1 convolutions with no non-linearity any more.
+UNET model same as that of Facebook's but with processing steps included in the model.
 """
-
 
 import torch
 from torch import nn
@@ -48,7 +46,7 @@ class ConvBlock(nn.Module):
         return f'ConvBlock(in_chans={self.in_chans}, out_chans={self.out_chans})'
 
 
-class UnetModel(nn.Module):
+class ResidualUnetModel(nn.Module):
     """
     PyTorch implementation of a U-Net model.
     This is based on:
@@ -57,14 +55,13 @@ class UnetModel(nn.Module):
         computing and computer-assisted intervention, pages 234–241. Springer, 2015.
     """
 
-    def __init__(self, in_chans, out_chans, chans, num_pool_layers, post_processing):
+    def __init__(self, in_chans, out_chans, chans, num_pool_layers):
         """
         Args:
             in_chans (int): Number of channels in the input to the U-Net model.
             out_chans (int): Number of channels in the output to the U-Net model.
             chans (int): Number of output channels of the first convolution layer.
             num_pool_layers (int): Number of down-sampling and up-sampling layers.
-            post_processing (a callable function): Function to generate k-space from 2D CNN outputs.
         """
         super().__init__()
 
@@ -72,7 +69,6 @@ class UnetModel(nn.Module):
         self.out_chans = out_chans
         self.chans = chans
         self.num_pool_layers = num_pool_layers
-        self.post_processing = post_processing
 
         self.down_sample_layers = nn.ModuleList([ConvBlock(in_chans, chans)])
         ch = chans
@@ -86,24 +82,16 @@ class UnetModel(nn.Module):
             self.up_sample_layers += [ConvBlock(ch * 2, ch // 2)]
             ch //= 2
         self.up_sample_layers += [ConvBlock(ch * 2, ch)]
+        self.conv2 = nn.Conv2d(ch, out_chans, kernel_size=1)  # Simplified this part since there were no ReLUs anyway.
 
-        # Replaced 1x1 convolutions with no non-linearity. They are probably not useful.
-        # They most certainly slow the model down.
-        self.conv2 = nn.Conv2d(ch, out_chans, kernel_size=1)
-
-    def forward(self, tensor, targets):  # Using out_shape only works for batch size of 1.
+    def forward(self, tensor):  # Using out_shape only works for batch size of 1.
         """
         Args:
             tensor (torch.Tensor): Input tensor of shape [batch_size, in_chans, height, width]
-            targets (iterable): list or tuple containing the target slices in the same order as the k-slices.
             Note that in_chans = 2 * num_coils
         Returns:
             (torch.Tensor): Output tensor of shape [batch_size, self.out_chans, height, width]
         """
-
-        if tensor.size(0) > 1:
-            raise NotImplementedError('I have not decided how to process batches of different sizes yet.')
-
         stack = list()
         output = tensor
         # Apply down-sampling layers
@@ -120,6 +108,5 @@ class UnetModel(nn.Module):
             output = torch.cat((output, stack.pop()), dim=1)
             output = layer(output)
 
-        output = self.conv2(output)  # End of learning.
-
-        return self.post_processing(output)  # Is this correct?
+        # Residual output. Not total replacement.
+        return tensor + self.conv2(output)  # End of learning.

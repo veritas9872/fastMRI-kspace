@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.multiprocessing as multiprocessing
+import torch.cuda as cuda
 from torch.utils.data import DataLoader
 
 import numpy as np
@@ -13,9 +15,9 @@ from train.subsample import MaskFunc
 from utils.train_utils import CheckpointManager
 from utils.run_utils import get_logger, initialize, save_dict_as_json
 from data.mri_data import SliceData
-from data.pre_processing import TrainInputSliceTransform
+from data.pre_processing import TrainInputSliceTransform, NewTrainInputSliceTransform
 
-from models.k_unet_model import UnetModel  # TODO: Create method to specify model in main.py
+from models.k_unet_model import UnetModel
 
 """
 Please note a bit of terminology. 
@@ -23,10 +25,70 @@ In this file, 'recons' indicates coil-wise reconstructions,
 not final reconstructions for submissions.
 Also, 'targets' indicates coil-wise targets, not the 320x320 ground-truth labels.
 k-slice means a slice of k-space, i.e. only 1 slice of k-space.
+
+N.B. The Fourier and Inverse Fourier Transforms are linear transforms. 
+Scalar multiplication in the Fourier domain and image domain are equivalent.
+However, I have currently moved that to the data pre-processing stage.
 """
 
 
-def create_datasets(args):
+# def create_datasets(args):
+#     if args.batch_size > 1:
+#         raise NotImplementedError('Batch size must be greater than 1 for the current implementation to function.')
+#
+#     train_mask_func = MaskFunc(args.center_fractions, args.accelerations)
+#     val_mask_func = MaskFunc(args.center_fractions, args.accelerations)
+#
+#     divisor = 2 ** args.num_pool_layers  # UNET architecture requires that all inputs be dividable by some power of 2.
+#     # The current implementation only works if the batch size is 1.
+#
+#     train_dataset = SliceData(
+#         root=Path(args.data_root) / f'{args.challenge}_train',
+#         transform=TrainInputSliceTransform(train_mask_func, args.challenge, use_seed=False, divisor=divisor),
+#         challenge=args.challenge,
+#         sample_rate=args.sample_rate,
+#         use_gt=False,
+#         converted=args.converted
+#     )
+#
+#     val_dataset = SliceData(
+#         root=Path(args.data_root) / f'{args.challenge}_val',
+#         transform=TrainInputSliceTransform(val_mask_func, args.challenge, use_seed=True, divisor=divisor),
+#         challenge=args.challenge,
+#         sample_rate=args.sample_rate,
+#         use_gt=False,
+#         converted=args.converted
+#     )
+#
+#     return train_dataset, val_dataset
+
+
+# def create_data_loaders(args):
+#     train_dataset, val_dataset = create_datasets(args)
+#
+#     train_loader = DataLoader(
+#         dataset=train_dataset,
+#         batch_size=args.batch_size,
+#         shuffle=True,
+#         num_workers=args.num_workers,
+#         pin_memory=True
+#     )
+#
+#     val_loader = DataLoader(
+#         dataset=val_dataset,
+#         batch_size=args.batch_size,
+#         num_workers=args.num_workers,
+#         pin_memory=True
+#     )
+#     return train_loader, val_loader
+
+
+def sb_custom_collate_fn(batch):  # Super hacky function for 1 batch, single batch, case
+    only_batch = batch[0]
+    return only_batch[0].unsqueeze(dim=0), only_batch[1].unsqueeze(dim=0)
+
+
+def create_new_data_loaders(args, device):
     if args.batch_size > 1:
         raise NotImplementedError('Batch size must be greater than 1 for the current implementation to function.')
 
@@ -36,9 +98,12 @@ def create_datasets(args):
     divisor = 2 ** args.num_pool_layers  # UNET architecture requires that all inputs be dividable by some power of 2.
     # The current implementation only works if the batch size is 1.
 
+    # Generating Datasets.
     train_dataset = SliceData(
         root=Path(args.data_root) / f'{args.challenge}_train',
-        transform=TrainInputSliceTransform(train_mask_func, args.challenge, use_seed=False, divisor=divisor),
+        transform=NewTrainInputSliceTransform(
+            mask_func=train_mask_func, which_challenge=args.challenge,
+            device=device, use_seed=False, amp_fac=args.amp_fac, divisor=divisor),
         challenge=args.challenge,
         sample_rate=args.sample_rate,
         use_gt=False,
@@ -47,32 +112,29 @@ def create_datasets(args):
 
     val_dataset = SliceData(
         root=Path(args.data_root) / f'{args.challenge}_val',
-        transform=TrainInputSliceTransform(val_mask_func, args.challenge, use_seed=True, divisor=divisor),
+        transform=NewTrainInputSliceTransform(
+            mask_func=val_mask_func, which_challenge=args.challenge,
+            device=device, use_seed=True, amp_fac=args.amp_fac, divisor=divisor),
         challenge=args.challenge,
         sample_rate=args.sample_rate,
         use_gt=False,
         converted=args.converted
-    )
+    )  # Maybe I should separate these into two separate functions.
 
-    return train_dataset, val_dataset
-
-
-def create_data_loaders(args):
-    train_dataset, val_dataset = create_datasets(args)
-
+    # Generating Data Loaders
     train_loader = DataLoader(
         dataset=train_dataset,
         batch_size=args.batch_size,
         shuffle=True,
         num_workers=args.num_workers,
-        pin_memory=True
+        pin_memory=False,  # Since tensors are already on GPU.
     )
 
     val_loader = DataLoader(
         dataset=val_dataset,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
-        pin_memory=True
+        pin_memory=False,  # Since tensors are already on GPU.
     )
     return train_loader, val_loader
 
@@ -80,7 +142,7 @@ def create_data_loaders(args):
 def train_step(model, optimizer, loss_func, inputs, targets):
     optimizer.zero_grad()
     recons = model(inputs, targets.shape)
-    step_loss = loss_func(recons * 10000, targets * 10000)  # TODO: Fix this later!! Very ugly hack...
+    step_loss = loss_func(recons, targets)
     step_loss.backward()
     optimizer.step()
     return step_loss, recons
@@ -97,9 +159,6 @@ def train_epoch(model, optimizer, loss_func, data_loader, device, epoch, verbose
 
     # labels are fully sampled coil-wise images, not rss or esc.
     for idx, (inputs, targets) in enumerate(data_loader, start=1):
-
-        inputs = inputs.to(device)
-        targets = targets.to(device, non_blocking=True)
         step_loss, recons = train_step(model, optimizer, loss_func, inputs, targets)
 
         # Gradients are not calculated so as to boost speed and remove weird errors.
@@ -159,7 +218,7 @@ def make_grid_triplet(recons, targets):
 
 def val_step(model, loss_func, inputs, targets):
     recons = model(inputs, targets.shape)
-    step_loss = loss_func(recons * 10000, targets * 10000)  # TODO: Fix this later!! VERY UGLY HACK!!
+    step_loss = loss_func(recons, targets)
     return step_loss, recons
 
 
@@ -171,8 +230,6 @@ def val_epoch(model, loss_func, data_loader, writer, device, epoch, max_imgs=0, 
     epoch_metrics_lst = [list() for _ in metrics] if metrics else None
 
     for step, (inputs, targets) in enumerate(data_loader, start=1):
-        inputs = inputs.to(device)
-        targets = targets.to(device, non_blocking=True)
         step_loss, recons = val_step(model, loss_func, inputs, targets)
 
         with torch.no_grad():  # Probably not actually necessary...
@@ -193,9 +250,9 @@ def val_epoch(model, loss_func, data_loader, writer, device, epoch, max_imgs=0, 
                 if step % interval == 0:  # Note that all images are scaled independently of all other images.
                     assert isinstance(writer, SummaryWriter)
                     recons_grid, targets_grid, deltas_grid = make_grid_triplet(recons, targets)
-                    writer.add_image(f'Recons', recons_grid, epoch, dataformats='HW')
-                    writer.add_image(f'Targets', targets_grid, epoch, dataformats='HW')
-                    writer.add_image(f'Deltas', deltas_grid, epoch, dataformats='HW')
+                    writer.add_image(f'Recons/{step}', recons_grid, epoch, dataformats='HW')
+                    writer.add_image(f'Targets/{step}', targets_grid, epoch, dataformats='HW')
+                    writer.add_image(f'Deltas/{step}', deltas_grid, epoch, dataformats='HW')
 
     epoch_loss = float(np.nanmean(epoch_loss_lst))  # Remove nan values just in case.
     epoch_metrics = [float(np.nanmean(epoch_metric_lst)) for epoch_metric_lst in epoch_metrics_lst] if metrics else None
@@ -208,10 +265,6 @@ def val_epoch(model, loss_func, data_loader, writer, device, epoch, max_imgs=0, 
 
 
 def train_model(args):
-    # TODO: I found that the loss disappears due to numerical underflow when trained like this.
-    #  I need to implement multiplication to make training more stable.
-    #  I have verified that training is possible.
-
     if args.batch_size > 1:
         raise NotImplementedError('Only batch size of 1 for now.')
 
@@ -241,23 +294,25 @@ def train_model(args):
         logger.info(f'Using CPU for {run_name}')
 
     # Create Datasets. Use one slice at a time for now.
-    train_loader, val_loader = create_data_loaders(args)
+    train_loader, val_loader = create_new_data_loaders(args, device=device)
+    torch.multiprocessing.set_start_method(method='spawn')
 
     # Define model.
     data_chans = 2 if args.challenge == 'singlecoil' else 30  # Multicoil has 15 coils with 2 for real/imag
     # data_chans indicates the number of channels in the data.
     model = UnetModel(in_chans=data_chans, out_chans=data_chans, chans=args.chans,
-                      num_pool_layers=args.num_pool_layers).to(device)  # TODO: Move to main.py
+                      num_pool_layers=args.num_pool_layers).to(device=device)
 
-    optimizer = optim.Adam(model.parameters(), lr=args.init_lr)  # Maybe move to main.py
-    loss_func = nn.L1Loss(reduction='mean').to(device)  # TODO: move to main.py
-    metrics = None  # TODO: Move to main.py. I wish to specify metrics and loss on main.py.
+    optimizer = optim.Adam(model.parameters(), lr=args.init_lr)  # Move to main.py
+    loss_func = nn.L1Loss(reduction='mean').to(device)
+    metrics = None
 
+    # Maybe move this to main.py too.
     checkpointer = CheckpointManager(model=model, optimizer=optimizer, mode='min', save_best_only=args.save_best_only,
                                      ckpt_dir=ckpt_path, max_to_keep=args.max_to_keep)
 
-    if hasattr(args, 'previous_model') and args.previous_model:
-        checkpointer.load(load_dir=checkpointer, load_optimizer=False)
+    if hasattr(args, 'previous_model') and args.previous_model:  # For loading previous models. Maybe refactor later.
+        checkpointer.load(load_dir=args.previous_model, load_optimizer=False)  # Variable names are confusing.
 
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(  # TODO: This should also be moved to main.py
         optimizer, mode='min', factor=0.1, patience=5, verbose=True, cooldown=0, min_lr=1E-7)
@@ -305,4 +360,5 @@ def train_model(args):
 
         scheduler.step(metrics=val_epoch_loss)
 
+    writer.close()  # Ensures that writing will not be cut off.
     return model
