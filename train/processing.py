@@ -84,5 +84,43 @@ class OutputBatchTransform(nn.Module):
         return image_recons, kspace_recons
 
 
+class OutputBatchMaskTransform(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, k_output, k_input, targets, extra_params):
+        """
+
+        Args:
+            k_output (torch.Tensor):
+            k_input (torch.Tensor):
+            targets (list):
+            extra_params (list):
+
+        Returns:
+            image_recons (list):
+            kspace_recons (list):
+
+        """
+        assert k_output.shape == k_input.shape
+        assert k_output.size(0) == len(targets) == len(extra_params)
+        image_recons = list()
+        kspace_recons = list()
+
+        for k_output_slice, k_input_slice, target, extra_param in zip(k_output, k_input, targets, extra_params):
+
+            left = (k_output_slice.size(-1) - target.size(-1)) // 2
+            right = left + target.size(-1)
+
+            k_slice_recon = chw_to_k_slice(k_output_slice[..., left:right] * extra_param['scaling']) * (1 - extra_param['mask']) + extra_param['masked_kspace']
+            i_slice_recon = complex_abs(ifft2(k_slice_recon))
+
+            assert i_slice_recon.shape == target.shape
+            image_recons.append(i_slice_recon)
+            kspace_recons.append(k_slice_recon)
+
+        return image_recons, kspace_recons
+
+
 
 

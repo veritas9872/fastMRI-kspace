@@ -189,6 +189,27 @@ def multi_collate_fn(batch):
     return torch.stack(tensors, dim=0), targets, scales
 
 
+def multi_mask_collate_fn(batch):
+    tensors = list()
+    targets = list()
+    extra_params = list()
+
+    with torch.no_grad():
+        for (tensor, target, extra) in batch:
+            tensors.append(tensor)
+            targets.append(target)  # Note that targets are 3D Tensors in a list, not 4D.
+            extra_params.append(extra)
+
+        max_width = max(tensor.size(-1) for tensor in tensors)
+
+        # Assumes that padding for UNET divisor has already been performed for each slice.
+        for idx in range(len(tensors)):
+            pad = (max_width - tensors[idx].size(-1)) // 2
+            tensors[idx] = F.pad(tensors[idx], pad=[pad, pad], value=0)
+
+    return torch.stack(tensors, dim=0), targets, extra_params
+
+
 def create_data_loaders(args, train_transform, val_transform):
 
     """
@@ -207,7 +228,7 @@ def create_data_loaders(args, train_transform, val_transform):
     if args.batch_size == 1:
         collate_fn = single_collate_fn
     elif args.batch_size > 1:
-        collate_fn = multi_collate_fn
+        collate_fn = multi_mask_collate_fn
     else:
         raise RuntimeError('Invalid batch size')
 
@@ -281,7 +302,7 @@ def make_k_grid(kspace_recons):
     if kspace_recons.size(0) > 1:
         raise NotImplementedError('Mini-batch size greater than 1 has not been implemented yet.')
 
-    kspace_recons = torch.log10(complex_abs(kspace_recons)).cpu().squeeze(dim=0)
+    kspace_recons = torch.log10(complex_abs(kspace_recons) * 1E6 + 1).cpu().squeeze(dim=0)
 
     if kspace_recons.size(0) == 15:
         kspace_recons = \

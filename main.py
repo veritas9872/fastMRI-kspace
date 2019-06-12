@@ -5,13 +5,14 @@ import torch.nn as nn
 from pathlib import Path
 
 from utils.run_utils import initialize, save_dict_as_json, get_logger, create_arg_parser
-from data.pre_processing import KInputSliceTransform
+from data.pre_processing import KInputTransform, KInputSliceTransform
 from utils.train_utils import create_data_loaders
 from train.subsample import MaskFunc
-from train.processing import SingleBatchOutputTransform, OutputBatchTransform
-from train.model_trainer import ModelTrainerK
-from train.metrics import CustomL1Loss
-from models.unet_model import ResidualUnetModel
+from train.processing import SingleBatchOutputTransform, OutputBatchMaskTransform
+from train.mask_model_trainer import ModelTrainerK
+from train.metrics import CustomL1Loss, CustomL2Loss
+from train.loss import CustomLoss
+from eda.unet_model import ResidualUnetModel
 
 
 # Try out SSIM and MS-SSIM as loss functions. They appear to be effective in getting fine-grained features,
@@ -20,23 +21,23 @@ from models.unet_model import ResidualUnetModel
 
 def main():
     defaults = dict(
-        batch_size=4,  # This MUST be 1 for now.
-        sample_rate=0.025,  # Mostly for debugging purposes.
-        num_workers=2,
-        init_lr=1E-3,
+        batch_size=2,
+        sample_rate=1,  # Mostly for debugging purposes.
+        num_workers=1,
+        init_lr=1E-4,
         log_dir='./logs',
         ckpt_dir='./checkpoints',
-        gpu=1,  # Set to None for CPU mode.
-        num_epochs=10,
+        gpu=0,  # Set to None for CPU mode.
+        num_epochs=50,
         max_to_keep=2,
         verbose=False,
         save_best_only=True,
-        data_root='/media/veritas/F/compFastMRI',  # Using compressed dataset for better I/O performance.
+        data_root='/media/user/Data2/compFastMRI',  # Using compressed dataset for better I/O performance.
         challenge='multicoil',
         center_fractions=[0.08, 0.04],
         accelerations=[4, 8],
         max_images=4,  # Maximum number of images to save.
-        chans=32,
+        chans=64,
         num_pool_layers=4,
         converted=True,
         pin_memory=False,
@@ -86,10 +87,10 @@ def main():
 
     mask_func = MaskFunc(args.center_fractions, args.accelerations)
 
-    input_slice_train_transform = KInputSliceTransform(
+    input_slice_train_transform = KInputTransform(
         mask_func=mask_func, challenge=args.challenge, device=args.device, use_seed=False, divisor=divisor)
 
-    input_slice_val_transform = KInputSliceTransform(
+    input_slice_val_transform = KInputTransform(
         mask_func=mask_func, challenge=args.challenge, device=args.device, use_seed=True, divisor=divisor)
 
     # DataLoaders
@@ -101,8 +102,8 @@ def main():
         loss_func = nn.L1Loss(reduction='mean')
         output_batch_transform = SingleBatchOutputTransform()
     elif args.batch_size > 1:
-        loss_func = CustomL1Loss(reduction='mean')
-        output_batch_transform = OutputBatchTransform()
+        loss_func = CustomL2Loss(reduction='mean')
+        output_batch_transform = OutputBatchMaskTransform()
     else:
         raise RuntimeError('Invalid batch size.')
 

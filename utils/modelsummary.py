@@ -5,7 +5,7 @@ from collections import OrderedDict
 import numpy as np
 
 
-def summary(model, input1_size, input2_size, batch_size=-1, device="cuda", disp_func=print):
+def summary(model, input_size, batch_size=-1, device="cuda", disp_func=print):
 
     def register_hook(module):
 
@@ -41,16 +41,16 @@ def summary(model, input1_size, input2_size, batch_size=-1, device="cuda", disp_
             hooks.append(module.register_forward_hook(hook))
 
     # multiple inputs to the network
-    if isinstance(input1_size, tuple):
-        input1_size = [input1_size]
+    if isinstance(input_size, tuple):
+        input1_size = [input_size]
 
-    if isinstance(input2_size, tuple):
-        input2_size = [input2_size]
+    # if isinstance(input2_size, tuple):
+    #     input2_size = [input2_size]
 
 
     # batch_size of 2 for batchnorm
     x = [torch.rand(batch_size, *in_size).to(device=device, dtype=torch.float) for in_size in input1_size]
-    x2 = [torch.rand(batch_size, *in_size).to(device=device, dtype=torch.float) for in_size in input2_size]
+    # x2 = [torch.rand(batch_size, *in_size).to(device=device, dtype=torch.float) for in_size in input2_size]
     # disp_func(type(x[0]))
 
     # create properties
@@ -62,7 +62,7 @@ def summary(model, input1_size, input2_size, batch_size=-1, device="cuda", disp_
 
     # make a forward pass
     # disp_func(x.shape)
-    model(*x, *x2)
+    model(*x)
 
     # remove these hooks
     for h in hooks:
