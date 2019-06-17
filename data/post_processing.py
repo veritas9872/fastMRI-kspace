@@ -1,4 +1,5 @@
-from data.data_transforms import ifft2, complex_abs, chw_to_k_slice, nchw_to_kspace
+from torch import nn
+from data.data_transforms import ifft2, complex_abs, chw_to_k_slice, nchw_to_kspace, fft2
 
 
 class TrainOutputSliceTransform:
@@ -133,3 +134,86 @@ class SubmitOutputSliceTransform:
 
     def __call__(self, k_slice, *args, **kwargs):
         pass
+
+
+class OutputBatchTransformK2K(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, kspace_output, kspace_target, extra_params):
+        if not kspace_output.size(0) == 1:
+            raise NotImplementedError('Only single batch for now.')
+
+        scaling, mask = extra_params
+
+        # For removing width dimension padding. Recall that k-space form has 2 as last dim size.
+        left = (kspace_output.size(-1) - kspace_target.size(-2)) // 2
+        right = left + kspace_target.size(-2)
+
+        # Cropping width dimension by pad. Multiply by scales to restore the original scaling.
+        k_output = kspace_output[..., left:right] * scaling
+
+        # Processing to k-space form. This is where the batch_size == 1 is important.
+        kspace_recon = nchw_to_kspace(k_output)
+
+        assert kspace_recon.size() == kspace_target.size(), 'Reconstruction and target sizes do not match.'
+
+        return kspace_recon
+
+
+class OutputBatchReplaceTransformK2K(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, kspace_output, kspace_target, extra_params):
+        if not kspace_output.size(0) == 1:
+            raise NotImplementedError('Only single batch for now.')
+
+        scaling, mask = extra_params
+
+        # For removing width dimension padding. Recall that k-space form has 2 as last dim size.
+        left = (kspace_output.size(-1) - kspace_target.size(-2)) // 2
+        right = left + kspace_target.size(-2)
+
+        # Cropping width dimension by pad. Multiply by scales to restore the original scaling.
+        k_output = kspace_output[..., left:right] * scaling
+
+        # Processing to k-space form. This is where the batch_size == 1 is important.
+        kspace_recon = nchw_to_kspace(k_output)
+
+        assert kspace_recon.size() == kspace_target.size(), 'Reconstruction and target sizes do not match.'
+
+        kspace_recon = kspace_recon * (1 - mask) + kspace_target * mask
+
+        return kspace_recon
+
+
+class OutputReplaceTransformK2C(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, kspace_output, c_img_target, extra_params):
+        scaling, mask = extra_params
+
+        kspace_target = fft2(c_img_target)  # Very inefficient but using this temporarily.
+
+        # For removing width dimension padding. Recall that k-space form has 2 as last dim size.
+        left = (kspace_output.size(-1) - kspace_target.size(-2)) // 2
+        right = left + kspace_target.size(-2)
+
+        # Cropping width dimension by pad. Multiply by scales to restore the original scaling.
+        k_output = kspace_output[..., left:right] * scaling
+
+        # Processing to k-space form. This is where the batch_size == 1 is important.
+        kspace_recon = nchw_to_kspace(k_output)
+
+        assert kspace_recon.size() == kspace_target.size(), 'Reconstruction and target sizes do not match.'
+
+        kspace_recon = kspace_recon * (1 - mask) + kspace_target * mask
+
+        c_img_recons = ifft2(kspace_recon)
+
+        return c_img_recons
+
+
+

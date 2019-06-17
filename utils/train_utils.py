@@ -6,7 +6,7 @@ import torch.nn.functional as F
 from pathlib import Path
 
 from data.mri_data import SliceData
-from data.data_transforms import complex_abs
+from data.data_transforms import complex_abs, ifft2
 
 
 class CheckpointManager:
@@ -145,8 +145,7 @@ def create_datasets(args, train_transform, val_transform):
         transform=train_transform,
         challenge=args.challenge,
         sample_rate=args.sample_rate,
-        use_gt=False,
-        converted=args.converted
+        use_gt=False
     )
 
     val_dataset = SliceData(
@@ -154,8 +153,7 @@ def create_datasets(args, train_transform, val_transform):
         transform=val_transform,
         challenge=args.challenge,
         sample_rate=args.sample_rate,
-        use_gt=False,
-        converted=args.converted
+        use_gt=False
     )
     return train_dataset, val_dataset
 
@@ -270,7 +268,7 @@ def make_grid_triplet(image_recons, targets):
     return image_recons, targets, deltas
 
 
-def make_k_grid(kspace_recons):
+def make_k_grid(kspace_recons, smoothing_factor=4):
     """
     Function for making k-space visualizations for Tensorboard.
     """
@@ -281,12 +279,32 @@ def make_k_grid(kspace_recons):
     if kspace_recons.size(0) > 1:
         raise NotImplementedError('Mini-batch size greater than 1 has not been implemented yet.')
 
-    kspace_recons = torch.log10(complex_abs(kspace_recons)).cpu().squeeze(dim=0)
+    # Assumes that the smallest values will be close enough to 0 as to not matter much.
+    kspace_view = complex_abs(kspace_recons.detach()).squeeze(dim=0)
+    # Scaling & smoothing.
+    kspace_view *= ((torch.exp(torch.tensor(smoothing_factor, dtype=torch.float32)) - 1) / kspace_view.max())
+    kspace_view = torch.log1p(kspace_view)  # Adds 1 to input for natural log.
+    kspace_view /= kspace_view.max()  # Normalization to 0~1 range.
+    kspace_view = kspace_view.cpu()
 
-    if kspace_recons.size(0) == 15:
-        kspace_recons = \
-            torch.cat(torch.chunk(kspace_recons.view(-1, kspace_recons.size(-1)), chunks=5, dim=0), dim=1)
+    if kspace_view.size(0) == 15:
+        kspace_view = torch.cat(torch.chunk(kspace_view.view(-1, kspace_view.size(-1)), chunks=5, dim=0), dim=1)
 
-    kspace_recons = kspace_recons.squeeze()
-    return kspace_recons
+    return kspace_view.squeeze()
+
+
+def visualize_from_kspace(kspace_recons, kspace_targets, smoothing_factor=4):
+    """
+    Assumes that all values are on the same scale and have the same shape.
+    """
+    image_recons = complex_abs(ifft2(kspace_recons))
+    image_targets = complex_abs(ifft2(kspace_targets))
+    image_recons, image_targets, image_deltas = make_grid_triplet(image_recons, image_targets)
+    kspace_targets = make_k_grid(kspace_targets, smoothing_factor)
+    kspace_recons = make_k_grid(kspace_recons, smoothing_factor)
+    return kspace_recons, kspace_targets, image_recons, image_targets, image_deltas
+
+
+
+
 

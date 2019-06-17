@@ -6,92 +6,24 @@ import numpy as np
 from tensorboardX import SummaryWriter
 
 from time import time
+from collections.abc import Iterable
 
-from abc import ABC, abstractmethod
-
-from utils.train_utils import CheckpointManager, make_grid_triplet, make_k_grid
 from utils.run_utils import get_logger
+from utils.train_utils import CheckpointManager, make_grid_triplet, make_k_grid
+from data.data_transforms import complex_abs, fft2
 
 
-class _ModelTrainer(ABC):
-
-    def __init__(self):
-        pass
-
-    @abstractmethod
-    def train_model(self):
-        pass
-
-    @abstractmethod
-    def _train_step(self):
-        pass
-
-    @abstractmethod
-    def _train_epoch(self):
-        pass
-
-    @abstractmethod
-    def _val_step(self):
-        pass
-
-    @abstractmethod
-    def _val_epoch(self):
-        pass
-
-    # def _get_step_metrics(self, image_recons, targets, epoch_metrics_lst):
-    #     if self.metrics is not None:
-    #         step_metrics = [metric(image_recons, targets) for metric in self.metrics]
-    #         for step_metric, epoch_metric_lst in zip(step_metrics, epoch_metrics_lst):
-    #             epoch_metric_lst.append(step_metric.item())
-    #         return step_metrics
-    #     return None  # Explicitly return None for step_metrics if self.metrics is None. Not necessary but more readable.
-    #
-    # def _get_epoch_outputs(self, epoch, epoch_loss_lst, epoch_metrics_lst, training=True):
-    #     mode = 'training' if training else 'validation'
-    #     num_slices = len(self.train_loader.dataset) if training else len(self.val_loader.dataset)
-    #
-    #     # Checking for nan values.
-    #     num_nans = np.isnan(epoch_loss_lst).sum()
-    #     if num_nans > 0:
-    #         self.logger.warning(f'Epoch {epoch} {mode}: {num_nans} NaN values present in {num_slices} slices')
-    #
-    #     epoch_loss = float(np.nanmean(epoch_loss_lst))  # Remove nan values just in case.
-    #     epoch_metrics = [float(np.nanmean(epoch_metric_lst)) for epoch_metric_lst in
-    #                      epoch_metrics_lst] if self.metrics else None
-    #
-    #     return epoch_loss, epoch_metrics
-    #
-    # def _log_step_outputs(self, epoch, step, step_loss, step_metrics, training=True):
-    #     if self.verbose:
-    #         mode = 'Training' if training else 'Validation'
-    #         self.logger.info(f'Epoch {epoch:03d} Step {step:03d} {mode} loss: {step_loss.item():.4e}')
-    #         if self.metrics:
-    #             for idx, step_metric in enumerate(step_metrics):
-    #                 self.logger.info(
-    #                     f'Epoch {epoch:03d} Step {step:03d}: {mode} metric {idx}: {step_metric.item():.4e}')
-    #
-    # def _log_epoch_outputs(self, epoch, epoch_loss, epoch_metrics, elapsed_secs, training=True):
-    #     mode = 'Training' if training else 'Validation'
-    #     self.logger.info(
-    #         f'Epoch {epoch:03d} {mode}. loss: {epoch_loss:.4e}, Time: {elapsed_secs // 60} min {elapsed_secs % 60} sec')
-    #     self.writer.add_scalar(f'{mode}_epoch_loss', scalar_value=epoch_loss, global_step=epoch)
-    #     if isinstance(epoch_metrics, list):  # The metrics being returned are either 'None' or a list of values.
-    #         for idx, epoch_metric in enumerate(epoch_metrics, start=1):
-    #             self.logger.info(f'Epoch {epoch:03d} {mode}. Metric {idx}: {epoch_metric}')
-    #             self.writer.add_scalar(f'{mode}_epoch_metric_{idx}', scalar_value=epoch_metric, global_step=epoch)
-
-
-class ModelTrainerK:
+class ModelTrainerK2C:
     """
-    Model Trainer for K-space learning.
-    Please note a bit of terminology.
-    In this file, 'recons' indicates coil-wise reconstructions,
-    not final reconstructions for submissions.
-    Also, 'targets' indicates coil-wise targets, not the 320x320 ground-truth labels.
-    k-slice means a slice of k-space, i.e. only 1 slice of k-space.
+    Model trainer for K space to K space learning.
+    All loss is calculated on the complex image domain, C.
+    Conversion to image domain is for viewing only.
     """
     def __init__(self, args, model, optimizer, train_loader, val_loader,
-                 post_processing, loss_func, metrics=None, scheduler=None):
+                 post_processing, c_loss, metrics=None, scheduler=None):
+
+        multiprocessing.set_start_method(method='spawn')
+
         self.logger = get_logger(name=__name__, save_file=args.log_path / args.run_name)
 
         # Checking whether inputs are correct.
@@ -104,10 +36,10 @@ class ModelTrainerK:
         assert isinstance(post_processing, nn.Module), '`post_processing_func` must be a Pytorch Module.'
 
         # This is not a mistake. Pytorch implements loss functions as modules.
-        assert isinstance(loss_func, nn.Module), '`loss_func` must be a callable Pytorch Module.'
+        assert isinstance(c_loss, nn.Module), '`c_loss` must be a callable Pytorch Module.'
 
         if metrics is not None:
-            assert isinstance(metrics, (list, tuple)), '`metrics` must be a list or tuple.'
+            assert isinstance(metrics, Iterable), '`metrics` must be an iterable, preferably a list or tuple.'
             for metric in metrics:
                 assert callable(metric), 'All metrics must be callable functions.'
 
@@ -124,7 +56,7 @@ class ModelTrainerK:
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.post_processing_func = post_processing
-        self.loss_func = loss_func  # I don't think it is necessary to send loss_func or metrics to device.
+        self.c_loss_func = c_loss
         self.metrics = metrics
         self.scheduler = scheduler
 
@@ -133,14 +65,10 @@ class ModelTrainerK:
         self.writer = SummaryWriter(logdir=str(args.log_path))
 
         # Display interval of 0 means no display of validation images on TensorBoard.
-        self.display_interval = int(len(self.val_loader.dataset) // args.max_images) if (args.max_images > 0) else 0
-
-        # # Writing model graph to TensorBoard. Results might not be very good.
-        if args.add_graph:
-            num_chans = 30 if args.challenge == 'multicoil' else 2
-            example_inputs = torch.ones(size=(1, num_chans, 640, 328), device=args.device)
-            self.writer.add_graph(model=model, input_to_model=example_inputs)
-            del example_inputs  # Remove unnecessary tensor taking up memory.
+        if args.max_images <= 0:
+            self.display_interval = 0
+        else:
+            self.display_interval = int(len(self.val_loader.dataset) // (args.max_images * args.batch_size))
 
         self.checkpointer = CheckpointManager(
             model=self.model, optimizer=self.optimizer, mode='min', save_best_only=args.save_best_only,
@@ -151,9 +79,8 @@ class ModelTrainerK:
             self.checkpointer.load(load_dir=args.prev_model_ckpt, load_optimizer=False)
 
     def train_model(self):
-        multiprocessing.set_start_method(method='spawn')
-        self.logger.info('Beginning Training Loop.')
         tic_tic = time()
+        self.logger.info('Beginning Training Loop.')
         for epoch in range(1, self.num_epochs + 1):  # 1 based indexing
             # Training
             tic = time()
@@ -183,15 +110,6 @@ class ModelTrainerK:
         self.logger.info(f'Finishing Training Loop. Total elapsed time: '
                          f'{toc_toc // 3600} hr {(toc_toc // 60) % 60} min {toc_toc % 60} sec.')
 
-    def _train_step(self, inputs, targets, extra_params):
-        self.optimizer.zero_grad()
-        outputs = self.model(inputs)
-        image_recons, kspace_recons = self.post_processing_func(outputs, targets, extra_params)
-        step_loss = self.loss_func(image_recons, targets)
-        step_loss.backward()
-        self.optimizer.step()
-        return step_loss, image_recons, kspace_recons
-
     def _train_epoch(self, epoch):
         self.model.train()
         torch.autograd.set_grad_enabled(True)
@@ -200,30 +118,26 @@ class ModelTrainerK:
         epoch_metrics_lst = [list() for _ in self.metrics] if self.metrics else None
 
         # labels are fully sampled coil-wise images, not rss or esc.
-        for step, (inputs, targets, extra_params) in enumerate(self.train_loader, start=1):
-            step_loss, image_recons, kspace_recons = self._train_step(inputs, targets, extra_params)
+        for step, (inputs, c_img_targets, extra_params) in enumerate(self.train_loader, start=1):
+            step_loss, c_img_recons = self._train_step(inputs, c_img_targets, extra_params)
 
             # Gradients are not calculated so as to boost speed and remove weird errors.
             with torch.no_grad():  # Update epoch loss and metrics
                 epoch_loss_lst.append(step_loss.item())  # Perhaps not elegant, but underflow makes this necessary.
-
-                # The step functions here have all necessary conditionals internally.
-                # There is no need to externally specify whether to use them or not.
-                step_metrics = self._get_step_metrics(image_recons, targets, epoch_metrics_lst)
+                step_metrics = self._get_step_metrics(c_img_recons, c_img_targets, epoch_metrics_lst)
                 self._log_step_outputs(epoch, step, step_loss, step_metrics, training=True)
 
         epoch_loss, epoch_metrics = self._get_epoch_outputs(epoch, epoch_loss_lst, epoch_metrics_lst, training=True)
         return epoch_loss, epoch_metrics
 
-    def _val_step(self, inputs, targets, extra_params):
-        """
-        All extra parameters are to be placed in extra_params.
-        This makes the system more flexible.
-        """
+    def _train_step(self, inputs, c_img_targets, extra_params):
+        self.optimizer.zero_grad()
         outputs = self.model(inputs)
-        image_recons, kspace_recons = self.post_processing_func(outputs, targets, extra_params)
-        step_loss = self.loss_func(image_recons, targets)
-        return step_loss, image_recons, kspace_recons
+        c_img_recons = self.post_processing_func(outputs, c_img_targets, extra_params)
+        step_loss = self.c_loss_func(c_img_recons, c_img_targets)
+        step_loss.backward()
+        self.optimizer.step()
+        return step_loss, c_img_recons
 
     def _val_epoch(self, epoch):
         self.model.eval()
@@ -232,38 +146,47 @@ class ModelTrainerK:
         epoch_loss_lst = list()
         epoch_metrics_lst = [list() for _ in self.metrics] if self.metrics else None
 
-        for step, (inputs, targets, extra_params) in enumerate(self.val_loader, start=1):
-            step_loss, image_recons, kspace_recons = self._val_step(inputs, targets, extra_params)
+        for step, (inputs, c_img_targets, extra_params) in enumerate(self.val_loader, start=1):
+            step_loss, c_img_recons = self._val_step(inputs, c_img_targets, extra_params)
 
             epoch_loss_lst.append(step_loss.item())
             # Step functions have internalized conditional statements deciding whether to execute or not.
-            step_metrics = self._get_step_metrics(image_recons, targets, epoch_metrics_lst)
+            step_metrics = self._get_step_metrics(c_img_recons, c_img_targets, epoch_metrics_lst)
             self._log_step_outputs(epoch, step, step_loss, step_metrics, training=False)
 
-            # Save images to TensorBoard. Send this to a separate function later on.
+            # Save images to TensorBoard.
             # Condition ensures that self.display_interval != 0 and that the step is right for display.
             if self.display_interval and (step % self.display_interval == 0):
-                recons_grid, targets_grid, deltas_grid = make_grid_triplet(image_recons, targets)
-                kspace_grid = make_k_grid(kspace_recons)
-
-                self.writer.add_image(f'k-space_Recons/{step}', kspace_grid, epoch, dataformats='HW')
-                self.writer.add_image(f'Image_Recons/{step}', recons_grid, epoch, dataformats='HW')
-                self.writer.add_image(f'Targets/{step}', targets_grid, epoch, dataformats='HW')
-                self.writer.add_image(f'Deltas/{step}', deltas_grid, epoch, dataformats='HW')
+                grids = self._visualize_outputs(c_img_recons, c_img_targets, smoothing_factor=8)
+                self.writer.add_image(f'k-space_Recons/{step}', grids[0], epoch, dataformats='HW')
+                self.writer.add_image(f'k-space_Targets/{step}', grids[1], epoch, dataformats='HW')
+                self.writer.add_image(f'Image_Recons/{step}', grids[2], epoch, dataformats='HW')
+                self.writer.add_image(f'Image_Targets/{step}', grids[3], epoch, dataformats='HW')
+                self.writer.add_image(f'Image_Deltas/{step}', grids[4], epoch, dataformats='HW')
 
         epoch_loss, epoch_metrics = self._get_epoch_outputs(epoch, epoch_loss_lst, epoch_metrics_lst, training=False)
         return epoch_loss, epoch_metrics
 
-    def _get_step_metrics(self, image_recons, targets, epoch_metrics_lst):
+    def _val_step(self, inputs, c_img_targets, extra_params):
+        """
+        All extra parameters are to be placed in extra_params.
+        This makes the system more flexible.
+        """
+        outputs = self.model(inputs)
+        c_img_recons = self.post_processing_func(outputs, c_img_targets, extra_params)
+        step_loss = self.c_loss_func(c_img_recons, c_img_targets)
+        return step_loss, c_img_recons
+
+    def _get_step_metrics(self, c_img_recons, c_img_targets, epoch_metrics_lst):
         if self.metrics is not None:
-            step_metrics = [metric(image_recons, targets) for metric in self.metrics]
+            step_metrics = [metric(c_img_recons, c_img_targets) for metric in self.metrics]
             for step_metric, epoch_metric_lst in zip(step_metrics, epoch_metrics_lst):
                 epoch_metric_lst.append(step_metric.item())
             return step_metrics
         return None  # Explicitly return None for step_metrics if self.metrics is None. Not necessary but more readable.
 
     def _get_epoch_outputs(self, epoch, epoch_loss_lst, epoch_metrics_lst, training=True):
-        mode = 'training' if training else 'validation'
+        mode = 'Training' if training else 'Validation'
         num_slices = len(self.train_loader.dataset) if training else len(self.val_loader.dataset)
 
         # Checking for nan values.
@@ -295,3 +218,12 @@ class ModelTrainerK:
             for idx, epoch_metric in enumerate(epoch_metrics, start=1):
                 self.logger.info(f'Epoch {epoch:03d} {mode}. Metric {idx}: {epoch_metric}')
                 self.writer.add_scalar(f'{mode}_epoch_metric_{idx}', scalar_value=epoch_metric, global_step=epoch)
+
+    @staticmethod
+    def _visualize_outputs(c_img_recons, c_img_targets, smoothing_factor=8):
+        image_recons = complex_abs(c_img_recons)
+        image_targets = complex_abs(c_img_targets)
+        kspace_recons = make_k_grid(fft2(c_img_recons), smoothing_factor)
+        kspace_targets = make_k_grid(fft2(c_img_targets), smoothing_factor)
+        image_recons, image_targets, image_deltas = make_grid_triplet(image_recons, image_targets)
+        return kspace_recons, kspace_targets, image_recons, image_targets, image_deltas
