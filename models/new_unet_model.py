@@ -45,9 +45,9 @@ class ConvBlock(nn.Module):
             f'affine={self.affine}, use_bias={self.use_bias})'
 
 
-class UNET(nn.Module):
+class Unet(nn.Module):
 
-    def __init__(self, in_chans, out_chans, chans, num_pool_layers, affine):
+    def __init__(self, in_chans, out_chans, chans, num_pool_layers, affine=False, residual=False):
         """
         Args:
             in_chans (int): Number of channels in the input to the U-Net model.
@@ -62,6 +62,7 @@ class UNET(nn.Module):
         self.out_chans = out_chans
         self.chans = chans
         self.num_pool_layers = num_pool_layers
+        self.residual = residual
 
         self.avg_pool = nn.AvgPool2d(kernel_size=2)
 
@@ -101,5 +102,8 @@ class UNET(nn.Module):
             output = F.interpolate(output, scale_factor=2, mode='bilinear', align_corners=False)
             output = torch.cat((output, stack.pop()), dim=1)
             output = layer(output)
-        return self.conv2(output)
 
+        if self.residual:
+            return tensor + self.conv2(output)
+        else:
+            return self.conv2(output)

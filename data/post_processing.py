@@ -256,3 +256,15 @@ class WeightedOutputReplaceK2C(nn.Module):
         c_img_recons = ifft2(kspace_recon)
 
         return c_img_recons
+
+
+class OutputTransformC2C(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, c_img_output, c_img_target, extra_params):
+        c_scale, c_bias = extra_params
+        # Bias is expected to be subtracted after standardization in pre-processing, hence the current ordering.
+        c_img_output = (c_img_output + c_bias) * c_scale
+        assert c_img_output.size() == c_img_target.size()
+        return c_img_output

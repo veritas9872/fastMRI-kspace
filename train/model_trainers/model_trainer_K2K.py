@@ -9,21 +9,19 @@ from time import time
 from collections.abc import Iterable
 
 from utils.run_utils import get_logger
-from utils.train_utils import CheckpointManager, make_grid_triplet, make_k_grid
-from data.data_transforms import complex_abs, fft2
+from utils.train_utils import CheckpointManager, visualize_from_kspace
 
 
-class ModelTrainerK2C:
+class ModelTrainerK2K:
     """
     Model trainer for K space to K space learning.
-    All loss is calculated on the complex image domain, C.
+    All loss is calculated on the K space domain only.
     Conversion to image domain is for viewing only.
     """
     def __init__(self, args, model, optimizer, train_loader, val_loader,
-                 post_processing, c_loss, metrics=None, scheduler=None):
+                 post_processing, k_loss, metrics=None, scheduler=None):
 
         multiprocessing.set_start_method(method='spawn')
-
         self.logger = get_logger(name=__name__, save_file=args.log_path / args.run_name)
 
         # Checking whether inputs are correct.
@@ -36,7 +34,7 @@ class ModelTrainerK2C:
         assert isinstance(post_processing, nn.Module), '`post_processing_func` must be a Pytorch Module.'
 
         # This is not a mistake. Pytorch implements loss functions as modules.
-        assert isinstance(c_loss, nn.Module), '`c_loss` must be a callable Pytorch Module.'
+        assert isinstance(k_loss, nn.Module), '`k_loss` must be a callable Pytorch Module.'
 
         if metrics is not None:
             assert isinstance(metrics, Iterable), '`metrics` must be an iterable, preferably a list or tuple.'
@@ -56,7 +54,7 @@ class ModelTrainerK2C:
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.post_processing_func = post_processing
-        self.c_loss_func = c_loss
+        self.k_loss_func = k_loss
         self.metrics = metrics
         self.scheduler = scheduler
 
@@ -70,6 +68,13 @@ class ModelTrainerK2C:
         else:
             self.display_interval = int(len(self.val_loader.dataset) // (args.max_images * args.batch_size))
 
+        # Writing model graph to TensorBoard. Results might not be very good.
+        # if args.add_graph:
+        #     num_chans = 30 if args.challenge == 'multicoil' else 2
+        #     example_inputs = torch.ones(size=(1, num_chans, 640, 328), device=args.device)
+        #     self.writer.add_graph(model=model, input_to_model=example_inputs)
+        #     del example_inputs  # Remove unnecessary tensor taking up memory.
+
         self.checkpointer = CheckpointManager(
             model=self.model, optimizer=self.optimizer, mode='min', save_best_only=args.save_best_only,
             ckpt_dir=args.ckpt_path, max_to_keep=args.max_to_keep)
@@ -79,8 +84,9 @@ class ModelTrainerK2C:
             self.checkpointer.load(load_dir=args.prev_model_ckpt, load_optimizer=False)
 
     def train_model(self):
-        tic_tic = time()
         self.logger.info('Beginning Training Loop.')
+        tic_tic = time()
+
         for epoch in range(1, self.num_epochs + 1):  # 1 based indexing
             # Training
             tic = time()
@@ -100,7 +106,7 @@ class ModelTrainerK2C:
 
             if self.scheduler is not None:
                 if self.metric_scheduler:  # If the scheduler is a metric based scheduler, include metrics.
-                    self.scheduler.step(metrics=val_epoch_metrics)
+                    self.scheduler.step(metrics=val_epoch_loss)
                 else:
                     self.scheduler.step()
 
@@ -118,26 +124,29 @@ class ModelTrainerK2C:
         epoch_metrics_lst = [list() for _ in self.metrics] if self.metrics else None
 
         # labels are fully sampled coil-wise images, not rss or esc.
-        for step, (inputs, c_img_targets, extra_params) in enumerate(self.train_loader, start=1):
-            step_loss, c_img_recons = self._train_step(inputs, c_img_targets, extra_params)
+        for step, (inputs, kspace_targets, extra_params) in enumerate(self.train_loader, start=1):
+            step_loss, kspace_recons = self._train_step(inputs, kspace_targets, extra_params)
 
             # Gradients are not calculated so as to boost speed and remove weird errors.
             with torch.no_grad():  # Update epoch loss and metrics
                 epoch_loss_lst.append(step_loss.item())  # Perhaps not elegant, but underflow makes this necessary.
-                step_metrics = self._get_step_metrics(c_img_recons, c_img_targets, epoch_metrics_lst)
+
+                # The step functions here have all necessary conditionals internally.
+                # There is no need to externally specify whether to use them or not.
+                step_metrics = self._get_step_metrics(kspace_recons, kspace_targets, epoch_metrics_lst)
                 self._log_step_outputs(epoch, step, step_loss, step_metrics, training=True)
 
         epoch_loss, epoch_metrics = self._get_epoch_outputs(epoch, epoch_loss_lst, epoch_metrics_lst, training=True)
         return epoch_loss, epoch_metrics
 
-    def _train_step(self, inputs, c_img_targets, extra_params):
+    def _train_step(self, inputs, kspace_targets, extra_params):
         self.optimizer.zero_grad()
         outputs = self.model(inputs)
-        c_img_recons = self.post_processing_func(outputs, c_img_targets, extra_params)
-        step_loss = self.c_loss_func(c_img_recons, c_img_targets)
+        kspace_recons = self.post_processing_func(outputs, kspace_targets, extra_params)
+        step_loss = self.k_loss_func(kspace_recons, kspace_targets)
         step_loss.backward()
         self.optimizer.step()
-        return step_loss, c_img_recons
+        return step_loss, kspace_recons
 
     def _val_epoch(self, epoch):
         self.model.eval()
@@ -146,18 +155,19 @@ class ModelTrainerK2C:
         epoch_loss_lst = list()
         epoch_metrics_lst = [list() for _ in self.metrics] if self.metrics else None
 
-        for step, (inputs, c_img_targets, extra_params) in enumerate(self.val_loader, start=1):
-            step_loss, c_img_recons = self._val_step(inputs, c_img_targets, extra_params)
+        for step, (inputs, kspace_targets, extra_params) in enumerate(self.val_loader, start=1):
+            step_loss, kspace_recons = self._val_step(inputs, kspace_targets, extra_params)
 
             epoch_loss_lst.append(step_loss.item())
             # Step functions have internalized conditional statements deciding whether to execute or not.
-            step_metrics = self._get_step_metrics(c_img_recons, c_img_targets, epoch_metrics_lst)
+            step_metrics = self._get_step_metrics(kspace_recons, kspace_targets, epoch_metrics_lst)
             self._log_step_outputs(epoch, step, step_loss, step_metrics, training=False)
 
             # Save images to TensorBoard.
             # Condition ensures that self.display_interval != 0 and that the step is right for display.
             if self.display_interval and (step % self.display_interval == 0):
-                grids = self._visualize_outputs(c_img_recons, c_img_targets, smoothing_factor=8)
+                # Terrible coding. Unreadable by outsiders. Change later.
+                grids = visualize_from_kspace(kspace_recons, kspace_targets, smoothing_factor=8)
                 self.writer.add_image(f'k-space_Recons/{step}', grids[0], epoch, dataformats='HW')
                 self.writer.add_image(f'k-space_Targets/{step}', grids[1], epoch, dataformats='HW')
                 self.writer.add_image(f'Image_Recons/{step}', grids[2], epoch, dataformats='HW')
@@ -167,19 +177,19 @@ class ModelTrainerK2C:
         epoch_loss, epoch_metrics = self._get_epoch_outputs(epoch, epoch_loss_lst, epoch_metrics_lst, training=False)
         return epoch_loss, epoch_metrics
 
-    def _val_step(self, inputs, c_img_targets, extra_params):
+    def _val_step(self, inputs, kspace_targets, extra_params):
         """
         All extra parameters are to be placed in extra_params.
         This makes the system more flexible.
         """
         outputs = self.model(inputs)
-        c_img_recons = self.post_processing_func(outputs, c_img_targets, extra_params)
-        step_loss = self.c_loss_func(c_img_recons, c_img_targets)
-        return step_loss, c_img_recons
+        kspace_recons = self.post_processing_func(outputs, kspace_targets, extra_params)
+        step_loss = self.k_loss_func(kspace_recons, kspace_targets)
+        return step_loss, kspace_recons
 
-    def _get_step_metrics(self, c_img_recons, c_img_targets, epoch_metrics_lst):
+    def _get_step_metrics(self, kspace_recons, kspace_targets, epoch_metrics_lst):
         if self.metrics is not None:
-            step_metrics = [metric(c_img_recons, c_img_targets) for metric in self.metrics]
+            step_metrics = [metric(kspace_recons, kspace_targets) for metric in self.metrics]
             for step_metric, epoch_metric_lst in zip(step_metrics, epoch_metrics_lst):
                 epoch_metric_lst.append(step_metric.item())
             return step_metrics
@@ -219,11 +229,6 @@ class ModelTrainerK2C:
                 self.logger.info(f'Epoch {epoch:03d} {mode}. Metric {idx}: {epoch_metric}')
                 self.writer.add_scalar(f'{mode}_epoch_metric_{idx}', scalar_value=epoch_metric, global_step=epoch)
 
-    @staticmethod
-    def _visualize_outputs(c_img_recons, c_img_targets, smoothing_factor=8):
-        image_recons = complex_abs(c_img_recons)
-        image_targets = complex_abs(c_img_targets)
-        kspace_recons = make_k_grid(fft2(c_img_recons), smoothing_factor)
-        kspace_targets = make_k_grid(fft2(c_img_targets), smoothing_factor)
-        image_recons, image_targets, image_deltas = make_grid_triplet(image_recons, image_targets)
-        return kspace_recons, kspace_targets, image_recons, image_targets, image_deltas
+
+
+

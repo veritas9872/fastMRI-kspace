@@ -164,8 +164,7 @@ def single_collate_fn(batch):  # Returns `targets` as a 4D Tensor.
     """
     hack for single batch case.
     """
-    temp = batch[0]
-    return temp[0].unsqueeze(0), temp[1].unsqueeze(0), temp[2]
+    return batch[0][0].unsqueeze(0), batch[0][1].unsqueeze(0), batch[0][2]
 
 
 def multi_collate_fn(batch):
@@ -231,46 +230,44 @@ def create_data_loaders(args, train_transform, val_transform):
     return train_loader, val_loader
 
 
-def make_grid_triplet(image_recons, targets):
+def make_grid_triplet(image_recons, image_targets):
 
     # Simple hack. Just use the first element if the input is a list for batching implementation.
-    if isinstance(image_recons, list) and isinstance(targets, list):
+    if isinstance(image_recons, list) and isinstance(image_targets, list):
         # Recall that in the mini-batched implementation, the outputs are lists of 3D Tensors.
         image_recons = image_recons[0].unsqueeze(dim=0)
-        targets = targets[0].unsqueeze(dim=0)
+        image_targets = image_targets[0].unsqueeze(dim=0)
 
     if image_recons.size(0) > 1:
         raise NotImplementedError('Mini-batch size greater than 1 has not been implemented yet.')
 
-    assert image_recons.size() == targets.size()
+    assert image_recons.size() == image_targets.size()
 
-    large = torch.max(targets)
-    small = torch.min(targets)
+    large = torch.max(image_targets)
+    small = torch.min(image_targets)
     diff = large - small
 
     # Scaling to 0~1 range.
-    image_recons = (image_recons.clamp(min=small, max=large) - small) / diff
-    targets = (targets - small) / diff
+    image_recons = (image_recons.clamp(min=small, max=large) - small) * (torch.tensor(1) / diff)
+    image_targets = (image_targets - small) * (torch.tensor(1) / diff)
 
     # Send to CPU if necessary. Assumes batch size of 1.
-    image_recons = image_recons.detach().cpu().squeeze(dim=0)
-    targets = targets.detach().cpu().squeeze(dim=0)
+    image_recons = image_recons.detach().squeeze(dim=0)
+    image_targets = image_targets.detach().squeeze(dim=0)
 
     if image_recons.size(0) == 15:
         image_recons = torch.cat(torch.chunk(image_recons.view(-1, image_recons.size(-1)), chunks=5, dim=0), dim=1)
-        targets = torch.cat(torch.chunk(targets.view(-1, targets.size(-1)), chunks=5, dim=0), dim=1)
-    elif image_recons.size(0) == 1:
-        image_recons = image_recons.squeeze()
-        targets = targets.squeeze()
-    else:
-        raise ValueError('Invalid dimensions!')
+        image_targets = torch.cat(torch.chunk(image_targets.view(-1, image_targets.size(-1)), chunks=5, dim=0), dim=1)
 
-    deltas = targets - image_recons
+    image_recons = image_recons.squeeze().cpu()
+    image_targets = image_targets.squeeze().cpu()
 
-    return image_recons, targets, deltas
+    deltas = image_targets - image_recons
+
+    return image_recons, image_targets, deltas
 
 
-def make_k_grid(kspace_recons, smoothing_factor=4):
+def make_k_grid(kspace_recons, smoothing_factor=8):
     """
     Function for making k-space visualizations for Tensorboard.
     """
@@ -286,16 +283,15 @@ def make_k_grid(kspace_recons, smoothing_factor=4):
     # Scaling & smoothing.
     # smoothing_factor converted to float32 tensor. expm1 and log1p require float32 tensors.
     # They cannot accept python integers.
-    sf = torch.as_tensor(smoothing_factor, dtype=torch.float32)
+    sf = torch.tensor(smoothing_factor, dtype=torch.float32)
     kspace_view *= torch.expm1(sf) / kspace_view.max()
     kspace_view = torch.log1p(kspace_view)  # Adds 1 to input for natural log.
     kspace_view /= kspace_view.max()  # Normalization to 0~1 range.
-    kspace_view = kspace_view.cpu()
 
     if kspace_view.size(0) == 15:
         kspace_view = torch.cat(torch.chunk(kspace_view.view(-1, kspace_view.size(-1)), chunks=5, dim=0), dim=1)
 
-    return kspace_view.squeeze()
+    return kspace_view.squeeze().cpu()
 
 
 def visualize_from_kspace(kspace_recons, kspace_targets, smoothing_factor=4):

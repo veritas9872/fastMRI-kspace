@@ -598,3 +598,53 @@ class TrainInputBatchTransform:
             # Using the data acquisition method (fat suppression) may be useful later on.
 
         return data_slice, target_slice
+
+
+class InputSliceTransformC2C:  # Assumes only Complex to Complex will be calculated.
+    def __init__(self, mask_func, challenge, device, use_seed=True, divisor=1):
+        if challenge not in ('singlecoil', 'multicoil'):
+            raise ValueError(f'Challenge should either be "singlecoil" or "multicoil"')
+
+        assert callable(mask_func)
+
+        self.mask_func = mask_func
+        self.challenge = challenge
+        self.device = device
+        self.use_seed = use_seed
+        self.divisor = divisor
+
+    def __call__(self, k_slice, target, attrs, file_name, slice_num):
+        assert np.iscomplexobj(k_slice), 'kspace must be complex.'
+
+        if k_slice.ndim == 2:  # For singlecoil. Makes data processing later on much easier.
+            k_slice = np.expand_dims(k_slice, axis=0)
+        elif k_slice.ndim != 3:  # Prevents possible errors.
+            raise RuntimeError('Invalid slice shape. Please check input shape.')
+
+        with torch.no_grad():  # Remove unnecessary gradient calculations.
+            # Now a Tensor of (num_coils, height, width, 2), where 2 is (real, imag).
+            kspace_target = to_tensor(k_slice).to(device=self.device)
+            c_img_target = k_slice_to_chw(ifft2(kspace_target))  # Assumes only C2C will be calculated.
+
+            # Apply mask
+            seed = None if not self.use_seed else tuple(map(ord, file_name))
+            masked_kspace, mask = apply_mask(kspace_target, self.mask_func, seed)
+
+            c_img_input = k_slice_to_chw(ifft2(masked_kspace))
+            c_scale = torch.std(c_img_input)
+            c_img_input *= (torch.tensor(1) / c_scale)
+            c_bias = torch.mean(c_img_input)
+            c_img_input -= c_bias
+
+            margin = c_img_input.size(-1) % self.divisor
+
+            if margin > 0:  # Cut off instead of adding padding.
+                left = margin // 2
+                right = (margin + 1) // 2
+                assert c_img_input.size() == c_img_target.size()
+                c_img_input = c_img_input[..., left:-right]
+                c_img_target = c_img_target[..., left:-right]
+
+        assert c_img_input.size() == c_img_target.size()
+
+        return c_img_input, c_img_target, (c_scale, c_bias)
