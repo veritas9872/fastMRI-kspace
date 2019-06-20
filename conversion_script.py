@@ -89,7 +89,7 @@ if __name__ == '__main__':
     val_dir = '/media/veritas/E/fastMRI/multicoil_val'
     test_dir = '/media/veritas/E/fastMRI/multicoil_test'
 
-    data_root = '/media/veritas/F/lzfCompFastMRI'  # Compressed Fast MRI Dataset
+    data_root = '/media/veritas/D/FastMRI'  # Compressed Fast MRI Dataset
     data_path_ = Path(data_root)
 
     # For floating point values, I have found that gzip level 1 and 9 give almost the same compression.

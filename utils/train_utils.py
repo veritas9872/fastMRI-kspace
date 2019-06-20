@@ -107,9 +107,11 @@ class CheckpointManager:
         save_dict = torch.load(load_dir)
 
         self.model.load_state_dict(save_dict['model_state_dict'])
+        print(f'Loaded model parameters from {load_dir}')
 
         if load_optimizer:
             self.optimizer.load_state_dict(save_dict['optimizer_state_dict'])
+            print(f'Loaded optimizer parameters from {load_dir}')
 
     def load_latest(self, load_root):
         load_root = Path(load_root)
@@ -282,7 +284,10 @@ def make_k_grid(kspace_recons, smoothing_factor=4):
     # Assumes that the smallest values will be close enough to 0 as to not matter much.
     kspace_view = complex_abs(kspace_recons.detach()).squeeze(dim=0)
     # Scaling & smoothing.
-    kspace_view *= ((torch.exp(torch.tensor(smoothing_factor, dtype=torch.float32)) - 1) / kspace_view.max())
+    # smoothing_factor converted to float32 tensor. expm1 and log1p require float32 tensors.
+    # They cannot accept python integers.
+    sf = torch.as_tensor(smoothing_factor, dtype=torch.float32)
+    kspace_view *= torch.expm1(sf) / kspace_view.max()
     kspace_view = torch.log1p(kspace_view)  # Adds 1 to input for natural log.
     kspace_view /= kspace_view.max()  # Normalization to 0~1 range.
     kspace_view = kspace_view.cpu()

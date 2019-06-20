@@ -1,10 +1,9 @@
-torchsummary
+torch
 torchvision
-tensorboardX
+numpy
+h5py
 pytest
 scikit-image
 runstats
-numpy
-torch
-h5py
+tensorboardX
 pillow

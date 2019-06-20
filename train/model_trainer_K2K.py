@@ -21,6 +21,7 @@ class ModelTrainerK2K:
     def __init__(self, args, model, optimizer, train_loader, val_loader,
                  post_processing, k_loss, metrics=None, scheduler=None):
 
+        multiprocessing.set_start_method(method='spawn')
         self.logger = get_logger(name=__name__, save_file=args.log_path / args.run_name)
 
         # Checking whether inputs are correct.
@@ -83,7 +84,6 @@ class ModelTrainerK2K:
             self.checkpointer.load(load_dir=args.prev_model_ckpt, load_optimizer=False)
 
     def train_model(self):
-        multiprocessing.set_start_method(method='spawn')
         self.logger.info('Beginning Training Loop.')
         tic_tic = time()
 

@@ -306,13 +306,11 @@ def nchw_to_kspace(tensor):
     return tensor
 
 
-def batch_collate_func(batch):
-    """
-    Custom collate function for DataLoader to allow batching of multiple k-slices into a single mini-batch for CNNs.
-    See https://github.com/pytorch/pytorch/blob/master/torch/utils/data/dataloader.py and
-    https://github.com/pytorch/pytorch/blob/master/torch/utils/data/_utils/collate.py for how this works.
-    See https://github.com/pytorch/pytorch/blob/master/torch/utils/data/dataloader.py#L560 in particular
-    for how the inputs to the collate_fn are structured.
-    Though the line is for non-parallel access, the structure should be the same.
-    """
-    pass
+def log_weighting(tensor, scale=1):
+    assert scale > 0, '`scale` must be a positive value.'
+    return scale * torch.sign(tensor) * torch.log1p(torch.abs(tensor))
+
+
+def exp_weighting(tensor, scale=1):
+    assert scale > 0, '`scale` must be a positive value.'
+    return torch.sign(tensor) * torch.expm1(torch.abs(tensor) * (1 / scale))

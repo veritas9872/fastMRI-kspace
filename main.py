@@ -4,8 +4,10 @@ from torch import nn, optim
 from pathlib import Path
 
 from utils.run_utils import initialize, save_dict_as_json, get_logger, create_arg_parser
-from data.pre_processing import KInputSliceTransform, InputSliceTransformK2K, InputSliceTransformK2C
-from data.post_processing import OutputBatchTransformK2K, OutputBatchReplaceTransformK2K, OutputReplaceTransformK2C
+from data.pre_processing import KInputSliceTransform, InputSliceTransformK2K, InputSliceTransformK2C, \
+    WeightedInputSliceK2K, WeightedInputSliceK2C
+from data.post_processing import OutputBatchTransformK2K, OutputBatchReplaceTransformK2K, OutputReplaceTransformK2C, \
+    WeightedOutputReplaceK2K, WeightedOutputReplaceK2C
 from utils.train_utils import create_data_loaders
 from train.subsample import MaskFunc
 from train.processing import SingleBatchOutputTransform, OutputBatchTransform
@@ -14,6 +16,7 @@ from train.model_trainer_K2K import ModelTrainerK2K
 from train.model_trainer_K2C import ModelTrainerK2C
 from train.metrics import CustomL1Loss
 from models.unet_model import NewUnetModel
+from models.new_unet_model import UNET
 
 
 # Try out SSIM and MS-SSIM as loss functions. They appear to be effective in getting fine-grained features,
@@ -124,16 +127,16 @@ def train_k2k():
     defaults = dict(
         batch_size=1,  # This MUST be 1 for now.
         sample_rate=1,  # Mostly for debugging purposes.
-        num_workers=1,
+        num_workers=2,
         init_lr=1E-3,
         log_dir='./logs',
         ckpt_dir='./checkpoints',
         gpu=1,  # Set to None for CPU mode.
         num_epochs=20,
-        max_to_keep=1,
+        max_to_keep=2,
         verbose=False,
         save_best_only=True,
-        data_root='/media/veritas/F/compFastMRI',  # Using compressed dataset for better I/O performance.
+        data_root='/media/veritas/D/FastMRI',  # Using compressed dataset for better I/O performance.
         challenge='multicoil',
         center_fractions=[0.08, 0.04],
         accelerations=[4, 8],
@@ -150,8 +153,8 @@ def train_k2k():
     if args.batch_size > 1:
         raise NotImplementedError('K2K for batch size greater than 1 not implemented yet.')
 
-    # Maybe move this to args later.
-    train_method = 'k2k'
+    # Move this to args later.
+    train_method = 'K2K'
 
     # Creating checkpoint and logging directories, as well as the run name.
     ckpt_path = Path(args.ckpt_dir)
@@ -204,10 +207,10 @@ def train_k2k():
 
     mask_func = MaskFunc(args.center_fractions, args.accelerations)
 
-    input_slice_train_transform = InputSliceTransformK2K(
+    input_slice_train_transform = WeightedInputSliceK2K(
         mask_func=mask_func, challenge=args.challenge, device=args.device, use_seed=False, divisor=divisor)
 
-    input_slice_val_transform = InputSliceTransformK2K(
+    input_slice_val_transform = WeightedInputSliceK2K(
         mask_func=mask_func, challenge=args.challenge, device=args.device, use_seed=True, divisor=divisor)
 
     # DataLoaders
@@ -217,7 +220,7 @@ def train_k2k():
     # Loss Function and output post-processing functions.
     if args.batch_size == 1:
         loss_func = nn.MSELoss(reduction='sum')
-        output_batch_transform = OutputBatchReplaceTransformK2K()
+        output_batch_transform = WeightedOutputReplaceK2K(log_amp_scale=1)  # Send log_scale to args later.
     else:
         raise RuntimeError('Invalid batch size.')
 
@@ -237,25 +240,27 @@ def train_k2k():
 def train_k2c():
     defaults = dict(
         batch_size=1,  # This MUST be 1 for now.
-        sample_rate=0.1,  # Mostly for debugging purposes.
-        num_workers=1,
-        init_lr=1E-3,
+        sample_rate=1,  # Mostly for debugging purposes.
+        num_workers=2,
+        init_lr=1E-4,
         log_dir='./logs',
         ckpt_dir='./checkpoints',
-        gpu=0,  # Set to None for CPU mode.
-        num_epochs=30,
+        gpu=1,  # Set to None for CPU mode.
+        num_epochs=50,
         max_to_keep=1,
         verbose=False,
         save_best_only=True,
-        data_root='/media/veritas/F/compFastMRI',  # Using compressed dataset for better I/O performance.
+        data_root='/media/veritas/D/FastMRI',  # Using compressed dataset for better I/O performance and chunking.
         challenge='multicoil',
         center_fractions=[0.08, 0.04],
         accelerations=[4, 8],
-        max_images=6,  # Maximum number of images to save.
+        max_images=8,  # Maximum number of images to save.
         chans=32,
         num_pool_layers=4,
         pin_memory=False,
-        add_graph=False
+        add_graph=False,
+        prev_model_ckpt='./checkpoints/K2C/Trial 02  2019-06-17 14-40-15/ckpt_002.tar',
+        apply_weighting=False
     )
 
     # Replace with a proper argument parsing function later.
@@ -318,11 +323,18 @@ def train_k2c():
 
     mask_func = MaskFunc(args.center_fractions, args.accelerations)
 
-    input_slice_train_transform = InputSliceTransformK2C(
-        mask_func=mask_func, challenge=args.challenge, device=args.device, use_seed=False, divisor=divisor)
+    if args.apply_weighting:
+        input_slice_train_transform = WeightedInputSliceK2C(
+            mask_func=mask_func, challenge=args.challenge, device=args.device, use_seed=False, divisor=divisor)
 
-    input_slice_val_transform = InputSliceTransformK2C(
-        mask_func=mask_func, challenge=args.challenge, device=args.device, use_seed=True, divisor=divisor)
+        input_slice_val_transform = WeightedInputSliceK2C(
+            mask_func=mask_func, challenge=args.challenge, device=args.device, use_seed=True, divisor=divisor)
+    else:
+        input_slice_train_transform = InputSliceTransformK2C(
+            mask_func=mask_func, challenge=args.challenge, device=args.device, use_seed=False, divisor=divisor)
+
+        input_slice_val_transform = InputSliceTransformK2C(
+            mask_func=mask_func, challenge=args.challenge, device=args.device, use_seed=True, divisor=divisor)
 
     # DataLoaders
     train_loader, val_loader = create_data_loaders(
@@ -331,7 +343,10 @@ def train_k2c():
     # Loss Function and output post-processing functions.
     if args.batch_size == 1:
         loss_func = nn.MSELoss(reduction='sum')
-        output_batch_transform = OutputReplaceTransformK2C()
+        if args.apply_weighting:
+            output_batch_transform = WeightedOutputReplaceK2C()
+        else:
+            output_batch_transform = OutputReplaceTransformK2C()
     else:
         raise RuntimeError('Invalid batch size.')
 

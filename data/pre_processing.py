@@ -3,7 +3,7 @@ import torch.nn.functional as F
 
 import numpy as np
 
-from data.data_transforms import to_tensor, ifft2, complex_abs, apply_mask, k_slice_to_chw
+from data.data_transforms import to_tensor, ifft2, complex_abs, apply_mask, k_slice_to_chw, log_weighting
 
 
 # My transforms for data processing
@@ -347,6 +347,56 @@ class InputSliceTransformK2K:
         return masked_kspace, kspace_target, (scaling, mask)
 
 
+class WeightedInputSliceK2K:
+    def __init__(self, mask_func, challenge, device, use_seed=True, divisor=1, log_amp_scale=1):
+        if challenge not in ('singlecoil', 'multicoil'):
+            raise ValueError(f'Challenge should either be "singlecoil" or "multicoil"')
+        assert callable(mask_func)
+
+        self.mask_func = mask_func
+        self.challenge = challenge
+        self.device = device
+        self.use_seed = use_seed
+        self.divisor = divisor
+        self.log_amp_scale = torch.as_tensor(log_amp_scale, dtype=torch.float32)
+
+    def __call__(self, k_slice, target, attrs, file_name, slice_num):
+        assert np.iscomplexobj(k_slice), 'kspace must be complex.'
+
+        if k_slice.ndim == 2:  # For singlecoil. Makes data processing later on much easier.
+            k_slice = np.expand_dims(k_slice, axis=0)
+        elif k_slice.ndim != 3:  # Prevents possible errors.
+            raise RuntimeError('Invalid slice shape. Please check input shape.')
+
+        with torch.no_grad():  # Remove unnecessary gradient calculations.
+            # Now a Tensor of (num_coils, height, width, 2), where 2 is (real, imag).
+            kspace_target = to_tensor(k_slice).to(device=self.device)
+
+            # Apply mask
+            seed = None if not self.use_seed else tuple(map(ord, file_name))
+            masked_kspace, mask = apply_mask(kspace_target, self.mask_func, seed)
+            # Multiplying the whole tensor by 1/scaling is faster than dividing the whole tensor by scaling.
+
+            # Maybe call this scaling k_scale or something. Using scaling every time is confusing.
+            k_scale = torch.std(masked_kspace)  # Pseudo-standard deviation for normalization.
+            masked_kspace *= (torch.as_tensor(1) / k_scale)  # Standardization of CNN inputs.
+
+            # Performing log weighting for smoother inputs. It can be before padding since 0 will be 0 after weighting.
+            masked_kspace = log_weighting(k_slice_to_chw(masked_kspace), scale=self.log_amp_scale)
+
+            margin = masked_kspace.size(-1) % self.divisor
+
+            if margin > 0:
+                pad = [(self.divisor - margin) // 2, (1 + self.divisor - margin) // 2]
+            else:  # This is a temporary fix to prevent padding by half the divisor when margin=0.
+                pad = [0, 0]
+
+            # This pads at the last dimension of a tensor with 0.
+            masked_kspace = F.pad(masked_kspace, pad=pad, value=0)
+
+        return masked_kspace, kspace_target, (k_scale, mask)
+
+
 class InputSliceTransformK2C:
     def __init__(self, mask_func, challenge, device, use_seed=True, divisor=1):
         if challenge not in ('singlecoil', 'multicoil'):
@@ -374,11 +424,9 @@ class InputSliceTransformK2C:
             seed = None if not self.use_seed else tuple(map(ord, file_name))
             masked_kspace, mask = apply_mask(kspace_target, self.mask_func, seed)
 
-            del kspace_target  # Clears memory in GPU.
-
             # Multiplying the whole tensor by 1/scaling is faster than dividing the whole tensor by scaling.
-            scaling = torch.std(masked_kspace)  # Pseudo-standard deviation for normalization.
-            masked_kspace *= (torch.tensor(1) / scaling)  # Standardization of CNN inputs.
+            k_scale = torch.std(masked_kspace)  # Pseudo-standard deviation for normalization.
+            masked_kspace *= (torch.tensor(1) / k_scale)  # Standardization of CNN inputs.
             masked_kspace = k_slice_to_chw(masked_kspace)
             margin = masked_kspace.size(-1) % self.divisor
 
@@ -390,7 +438,56 @@ class InputSliceTransformK2C:
             # This pads at the last dimension of a tensor with 0.
             masked_kspace = F.pad(masked_kspace, pad=pad, value=0)
 
-        return masked_kspace, c_img_target, (scaling, mask)
+        return masked_kspace, c_img_target, (kspace_target.unsqueeze(dim=0), k_scale, mask)
+
+
+class WeightedInputSliceK2C:
+    def __init__(self, mask_func, challenge, device, use_seed=True, divisor=1, log_amp_scale=1):
+        if challenge not in ('singlecoil', 'multicoil'):
+            raise ValueError(f'Challenge should either be "singlecoil" or "multicoil"')
+
+        assert callable(mask_func)
+
+        self.mask_func = mask_func
+        self.challenge = challenge
+        self.device = device
+        self.use_seed = use_seed
+        self.divisor = divisor
+        self.log_amp_scale = log_amp_scale
+
+    def __call__(self, k_slice, target, attrs, file_name, slice_num):
+        assert np.iscomplexobj(k_slice), 'kspace must be complex.'
+
+        if k_slice.ndim == 2:  # For singlecoil. Makes data processing later on much easier.
+            k_slice = np.expand_dims(k_slice, axis=0)
+        elif k_slice.ndim != 3:  # Prevents possible errors.
+            raise RuntimeError('Invalid slice shape. Please check input shape.')
+
+        with torch.no_grad():  # Remove unnecessary gradient calculations.
+            # Now a Tensor of (num_coils, height, width, 2), where 2 is (real, imag).
+            kspace_target = to_tensor(k_slice).to(device=self.device)
+            c_img_target = ifft2(kspace_target)
+
+            # Apply mask
+            seed = None if not self.use_seed else tuple(map(ord, file_name))
+            masked_kspace, mask = apply_mask(kspace_target, self.mask_func, seed)
+
+            # Multiplying the whole tensor by 1/scaling is faster than dividing the whole tensor by scaling.
+            k_scale = torch.std(masked_kspace)  # Pseudo-standard deviation for normalization.
+            masked_kspace *= (torch.tensor(1) / k_scale)  # Standardization of CNN inputs.
+            # Weighting is performed here since it is shape independent and inputs of 0 result in outputs of 0.
+            masked_kspace = log_weighting(k_slice_to_chw(masked_kspace), scale=self.log_amp_scale)
+            margin = masked_kspace.size(-1) % self.divisor
+
+            if margin > 0:
+                pad = [(self.divisor - margin) // 2, (1 + self.divisor - margin) // 2]
+            else:  # This is a temporary fix to prevent padding by half the divisor when margin=0.
+                pad = [0, 0]
+
+            # This pads at the last dimension of a tensor with 0.
+            masked_kspace = F.pad(masked_kspace, pad=pad, value=0)
+
+        return masked_kspace, c_img_target, (kspace_target.unsqueeze(dim=0), k_scale, mask)
 
 
 class TrainInputBatchTransform:

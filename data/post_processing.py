@@ -1,5 +1,6 @@
+import torch
 from torch import nn
-from data.data_transforms import ifft2, complex_abs, chw_to_k_slice, nchw_to_kspace, fft2
+from data.data_transforms import ifft2, complex_abs, chw_to_k_slice, nchw_to_kspace, fft2, exp_weighting
 
 
 class TrainOutputSliceTransform:
@@ -188,14 +189,33 @@ class OutputBatchReplaceTransformK2K(nn.Module):
         return kspace_recon
 
 
+class WeightedOutputReplaceK2K(nn.Module):
+    def __init__(self, log_amp_scale=1):
+        super().__init__()
+        self.log_amp_scale = log_amp_scale
+
+    def forward(self, kspace_output, kspace_target, extra_params):
+        k_scale, mask = extra_params
+
+        # For removing width dimension padding. Recall that k-space form has 2 as last dim size.
+        left = (kspace_output.size(-1) - kspace_target.size(-2)) // 2
+        right = left + kspace_target.size(-2)
+
+        # Processing to k-space form. This is where the batch_size == 1 is important.
+        # 1. Crop padding. 2. Reshape to kspace shape. 3. Unweight k-space values. 4. Rescale to original scale.
+        kspace_recon = exp_weighting(nchw_to_kspace(kspace_output[..., left:right]), scale=self.log_amp_scale) * k_scale
+
+        assert kspace_recon.size() == kspace_target.size(), 'Reconstruction and target sizes do not match.'
+        kspace_recon = kspace_recon * (1 - mask) + kspace_target * mask
+        return kspace_recon
+
+
 class OutputReplaceTransformK2C(nn.Module):
     def __init__(self):
         super().__init__()
 
     def forward(self, kspace_output, c_img_target, extra_params):
-        scaling, mask = extra_params
-
-        kspace_target = fft2(c_img_target)  # Very inefficient but using this temporarily.
+        kspace_target, scaling, mask = extra_params
 
         # For removing width dimension padding. Recall that k-space form has 2 as last dim size.
         left = (kspace_output.size(-1) - kspace_target.size(-2)) // 2
@@ -216,4 +236,23 @@ class OutputReplaceTransformK2C(nn.Module):
         return c_img_recons
 
 
+class WeightedOutputReplaceK2C(nn.Module):
+    def __init__(self, log_amp_scale=1):
+        super().__init__()
+        self.log_amp_scale = log_amp_scale
 
+    def forward(self, kspace_output, c_img_target, extra_params):
+        kspace_target, k_scale, mask = extra_params
+
+        # For removing width dimension padding. Recall that k-space form has 2 as last dim size.
+        left = (kspace_output.size(-1) - kspace_target.size(-2)) // 2
+        right = left + kspace_target.size(-2)
+
+        # Cropping width dimension by pad. Multiply by scales to restore the original scaling.
+        kspace_recon = exp_weighting(nchw_to_kspace(kspace_output[..., left:right]), scale=self.log_amp_scale) * k_scale
+        assert kspace_recon.size() == kspace_target.size(), 'Reconstruction and target sizes do not match.'
+
+        kspace_recon = kspace_recon * (1 - mask) + kspace_target * mask
+        c_img_recons = ifft2(kspace_recon)
+
+        return c_img_recons
