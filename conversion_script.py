@@ -99,8 +99,8 @@ if __name__ == '__main__':
     # when used with the shuffle filter. They both reduce the data by about half.
     # The differences are not great enough to justify the extra computational cost of higher gzip levels.
     # The differences do justify using gzip over lzf, however.
-    # kwargs = dict(compression='gzip', compression_opts=1, shuffle=True, fletcher32=True)
-    kwargs = dict(compression='lzf', shuffle=True)
+    kwargs = dict(compression='gzip', compression_opts=1, shuffle=True, fletcher32=False)
+    # kwargs = dict(compression='lzf', shuffle=True)
 
     # Use compression if storing on hard drive, not SSD.
     make_compressed_dataset(train_dir, data_root, **kwargs)
