@@ -1,19 +1,15 @@
 import torch
-from torch import nn, autograd, cuda
+from torch import nn
 from torch.utils.data import DataLoader
+
 import numpy as np
-import h5py
 from tqdm import tqdm
+import h5py
+from utils.train_utils import load_model_from_checkpoint
+from utils.run_utils import create_arg_parser
 
 from pathlib import Path
 from collections import defaultdict
-
-from utils.train_utils import load_model_from_checkpoint
-from data.mri_data import HDF5Dataset
-from models.unet import UnetModel
-from utils.arguments import create_arg_parser
-from data.pre_processing import InputTestTransform
-from data.post_processing import OutputReconstructionTransform
 
 
 class ModelEvaluator:
@@ -53,7 +49,7 @@ class ModelEvaluator:
         return reconstructions
 
     def _create_data_loader(self):
-        dataset = HDF5Dataset(root=self.data_dir, transform=self.pre_processing, training=False)
+        # dataset = HDF5Dataset(root=self.data_dir, transform=self.pre_processing, training=False)
         data_loader = DataLoader(dataset, batch_size=1, num_workers=1, pin_memory=True)
         return data_loader
 
@@ -108,7 +104,7 @@ if __name__ == '__main__':
         out_dir='./wgan_gp_test'  # Change this every time! Attempted overrides will throw errors by design.
     )
 
-    parser = create_arg_parser(defaults).parse_args()
+    parser = create_arg_parser(**defaults).parse_args()
 
     # Change this part when a different model is being used.
     unet = UnetModel(in_chans=1, out_chans=1, chans=32, num_pool_layers=4, drop_prob=0)

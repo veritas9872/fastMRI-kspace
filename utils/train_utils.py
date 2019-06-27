@@ -5,7 +5,7 @@ import torch.nn.functional as F
 
 from pathlib import Path
 
-from data.mri_data import SliceData
+from data.mri_data import SliceData, CustomSliceData
 from data.data_transforms import complex_abs, ifft2
 
 
@@ -167,6 +167,10 @@ def single_collate_fn(batch):  # Returns `targets` as a 4D Tensor.
     return batch[0][0].unsqueeze(0), batch[0][1].unsqueeze(0), batch[0][2]
 
 
+def single_triplet_collate_fn(batch):
+    return batch[0][0], batch[0][0], batch[0][2]
+
+
 def multi_collate_fn(batch):
     tensors = list()
     targets = list()
@@ -223,6 +227,59 @@ def create_data_loaders(args, train_transform, val_transform):
     val_loader = DataLoader(
         dataset=val_dataset,
         batch_size=args.batch_size,
+        num_workers=args.num_workers,
+        pin_memory=args.pin_memory,
+        collate_fn=collate_fn
+    )
+    return train_loader, val_loader
+
+
+def create_custom_datasets(args, train_transform, val_transform):
+    assert callable(train_transform) and callable(val_transform), 'Transforms should be callable functions.'
+
+    # Generating Datasets.
+    train_dataset = CustomSliceData(
+        root=Path(args.data_root) / f'{args.challenge}_train',
+        transform=train_transform,
+        challenge=args.challenge,
+        sample_rate=args.sample_rate,
+        start_slice=args.start_slice,
+        use_gt=False
+    )
+
+    val_dataset = CustomSliceData(
+        root=Path(args.data_root) / f'{args.challenge}_val',
+        transform=val_transform,
+        challenge=args.challenge,
+        sample_rate=args.sample_rate,
+        start_slice=args.start_slice,
+        use_gt=False
+    )
+    return train_dataset, val_dataset
+
+
+def create_custom_data_loaders(args, train_transform, val_transform):
+    train_dataset, val_dataset = create_custom_datasets(args, train_transform, val_transform)
+
+    if args.batch_size > 1:
+        raise NotImplementedError('Batch size should be 1 for now.')
+
+    collate_fn = single_triplet_collate_fn
+
+    # Generating Data Loaders
+    train_loader = DataLoader(
+        dataset=train_dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=args.num_workers,
+        pin_memory=args.pin_memory,
+        collate_fn=collate_fn
+    )
+
+    val_loader = DataLoader(
+        dataset=val_dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
         num_workers=args.num_workers,
         pin_memory=args.pin_memory,
         collate_fn=collate_fn
@@ -304,8 +361,3 @@ def visualize_from_kspace(kspace_recons, kspace_targets, smoothing_factor=4):
     kspace_targets = make_k_grid(kspace_targets, smoothing_factor)
     kspace_recons = make_k_grid(kspace_recons, smoothing_factor)
     return kspace_recons, kspace_targets, image_recons, image_targets, image_deltas
-
-
-
-
-

@@ -8,7 +8,7 @@ from torch import nn
 def _fspecial_gaussian(size, channel, sigma, device):
     # Changed this part to initialize on GPU, not on CPU.
     coords = torch.arange(start=(1-size)/2., end=(1+size)/2., step=1, dtype=torch.float32, device=device)
-    coords = -coords ** 2 / (2. * sigma ** 2)
+    coords = -coords * coords / (2. * sigma * sigma)
     grid = coords.view(1, -1) + coords.view(-1, 1)
     grid = grid.view(1, -1)
     grid = grid.softmax(-1)
@@ -18,14 +18,14 @@ def _fspecial_gaussian(size, channel, sigma, device):
 
 
 def _ssim(input, target, max_val, k1, k2, channel, kernel):
-    c1 = (k1 * max_val) ** 2
-    c2 = (k2 * max_val) ** 2
+    c1 = (k1 * max_val) * (k1 * max_val)
+    c2 = (k2 * max_val) * (k2 * max_val)
 
     mu1 = conv2d(input, kernel, groups=channel)
     mu2 = conv2d(target, kernel, groups=channel)
 
-    mu1_sq = mu1 ** 2
-    mu2_sq = mu2 ** 2
+    mu1_sq = mu1 * mu1
+    mu2_sq = mu2 * mu2
     mu1_mu2 = mu1 * mu2
 
     sigma1_sq = conv2d(input * input, kernel, groups=channel) - mu1_sq
@@ -40,7 +40,7 @@ def _ssim(input, target, max_val, k1, k2, channel, kernel):
 
 
 @weak_script
-def ssim_loss(input, target, max_val, filter_size=11, k1=0.01, k2=0.03,
+def ssim_loss(input, target, max_val=None, filter_size=11, k1=0.01, k2=0.03,
               sigma=1.5, size_average=None, reduce=None, reduction='mean'):
     # type: (Tensor, Tensor, float, int, float, float, float, Optional[bool], Optional[bool], str) -> Tensor
     r"""ssim_loss(input, target, max_val, filter_size, k1, k2,
@@ -55,6 +55,15 @@ def ssim_loss(input, target, max_val, filter_size=11, k1=0.01, k2=0.03,
 
     if input.device != target.device:
         raise RuntimeError(f'The input device {input.device} and target device {target.device} do not match.')
+
+    true_max_val = target.max() - target.min()
+
+    if max_val is None:
+        max_val = true_max_val
+
+    if true_max_val > max_val:
+        raise UserWarning(f'True maximum value range {float(true_max_val)} is greater than '
+                          f'the given value range {float(max_val)}.')
 
     dim = input.dim()
     if dim == 2:  # Expand dims if the inputs have too few of them. This does not copy data.

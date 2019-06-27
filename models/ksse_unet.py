@@ -2,17 +2,14 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-# Terrible coding style. Reformat everything later.
-# Everything is wrong. Just start over...
-
 
 class KSSELayer(nn.Module):
     def __init__(self, in_chans, out_chans, ext_chans, min_ext_size=1, max_ext_size=17, use_bias=True):
         super().__init__()
         self.extractors = nn.ModuleList()
-        for size in range(min_ext_size, max_ext_size+1, 2):
+        for dilation in range(min_ext_size // 2, (max_ext_size+1) // 2):
             conv = nn.Conv2d(in_channels=in_chans, out_channels=ext_chans, kernel_size=3,
-                             stride=1, dilation=size // 2, padding=size // 2, bias=use_bias)
+                             stride=1, dilation=(dilation+1) // 2, padding=dilation // 2, bias=use_bias)
             self.extractors.append(conv)
 
         self.relu = nn.ReLU()
