@@ -322,16 +322,6 @@ class InputSliceTransformK2K:
 
             scaling = torch.std(masked_kspace)  # Pseudo-standard deviation for normalization.
             masked_kspace *= (torch.tensor(1) / scaling)  # Standardization of CNN inputs.
-
-            # # Attempting weird standardization method.
-            # clip_val = 6
-            # masked_kspace = torch.clamp(masked_kspace, min=-clip_val, max=clip_val)
-            # second_scaling = torch.std(masked_kspace)  # Do standard deviation again to increase values.
-            # masked_kspace *= (torch.tensor(1) / second_scaling)
-            # scaling = scaling * second_scaling  # Necessary for outputs.
-            #
-            # # End of new stuff.
-
             masked_kspace = k_slice_to_chw(masked_kspace)
 
             margin = masked_kspace.size(-1) % self.divisor

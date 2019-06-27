@@ -5,9 +5,9 @@ from pathlib import Path
 
 from utils.run_utils import initialize, save_dict_as_json, get_logger, create_arg_parser
 from data.pre_processing import KInputSliceTransform, InputSliceTransformK2C, \
-    WeightedInputSliceK2K, WeightedInputSliceK2C, InputSliceTransformC2C
+    WeightedInputSliceK2K, WeightedInputSliceK2C, InputSliceTransformC2C, InputSliceTransformK2K
 from data.post_processing import OutputReplaceTransformK2C, \
-    WeightedOutputReplaceK2K, WeightedOutputReplaceK2C, OutputTransformC2C
+    WeightedOutputReplaceK2K, WeightedOutputReplaceK2C, OutputTransformC2C, OutputBatchReplaceTransformK2K
 from utils.train_utils import create_data_loaders
 from train.subsample import MaskFunc
 from train.processing import SingleBatchOutputTransform, OutputBatchTransform
@@ -18,6 +18,7 @@ from train.model_trainers.model_trainer_C2C import ModelTrainerC2C
 from train.metrics import CustomL1Loss
 from models.unet_model import NewUnetModel
 from models.new_unet_model import Unet
+from models.ksse_unet import UnetKSSE
 
 
 # Try out SSIM and MS-SSIM as loss functions. They appear to be effective in getting fine-grained features,
@@ -124,33 +125,7 @@ def train_k2i():
     trainer.train_model()
 
 
-def train_k2k():
-    defaults = dict(
-        batch_size=1,  # This MUST be 1 for now.
-        sample_rate=1,  # Mostly for debugging purposes.
-        num_workers=2,
-        init_lr=1E-3,
-        log_dir='./logs',
-        ckpt_dir='./checkpoints',
-        gpu=1,  # Set to None for CPU mode.
-        num_epochs=20,
-        max_to_keep=2,
-        verbose=False,
-        save_best_only=True,
-        data_root='/media/veritas/D/FastMRI',  # Using compressed dataset for better I/O performance.
-        challenge='multicoil',
-        center_fractions=[0.08, 0.04],
-        accelerations=[4, 8],
-        max_images=6,  # Maximum number of images to save.
-        chans=32,
-        num_pool_layers=4,
-        pin_memory=False,
-        add_graph=False
-    )
-
-    # Replace with a proper argument parsing function later.
-    args = create_arg_parser(**defaults).parse_args()
-
+def train_k2k(args):
     if args.batch_size > 1:
         raise NotImplementedError('K2K for batch size greater than 1 not implemented yet.')
 
@@ -208,10 +183,10 @@ def train_k2k():
 
     mask_func = MaskFunc(args.center_fractions, args.accelerations)
 
-    input_slice_train_transform = WeightedInputSliceK2K(
+    input_slice_train_transform = InputSliceTransformK2K(
         mask_func=mask_func, challenge=args.challenge, device=args.device, use_seed=False, divisor=divisor)
 
-    input_slice_val_transform = WeightedInputSliceK2K(
+    input_slice_val_transform = InputSliceTransformK2K(
         mask_func=mask_func, challenge=args.challenge, device=args.device, use_seed=True, divisor=divisor)
 
     # DataLoaders
@@ -221,14 +196,14 @@ def train_k2k():
     # Loss Function and output post-processing functions.
     if args.batch_size == 1:
         loss_func = nn.MSELoss(reduction='sum')
-        output_batch_transform = WeightedOutputReplaceK2K(log_amp_scale=1)  # Send log_scale to args later.
+        output_batch_transform = OutputBatchReplaceTransformK2K()  # Send log_scale to args later.
     else:
         raise RuntimeError('Invalid batch size.')
 
     # Define model.
     data_chans = 2 if args.challenge == 'singlecoil' else 30  # Multicoil has 15 coils with 2 for real/imag
-    model = NewUnetModel(in_chans=data_chans, out_chans=data_chans, chans=args.chans,
-                         num_pool_layers=args.num_pool_layers).to(device)
+    model = UnetKSSE(in_chans=data_chans, out_chans=data_chans, chans=args.chans, num_pool_layers=args.num_pool_layers,
+                     min_ext_size=1, max_ext_size=17, use_ext_bias=True, use_res_out=False).to(device)
 
     optimizer = optim.Adam(params=model.parameters(), lr=args.init_lr)
 
@@ -238,35 +213,7 @@ def train_k2k():
     trainer.train_model()
 
 
-def train_k2c():
-    defaults = dict(
-        batch_size=1,  # This MUST be 1 for now.
-        sample_rate=1,  # Mostly for debugging purposes.
-        num_workers=2,
-        init_lr=1E-4,
-        log_dir='./logs',
-        ckpt_dir='./checkpoints',
-        gpu=1,  # Set to None for CPU mode.
-        num_epochs=50,
-        max_to_keep=1,
-        verbose=False,
-        save_best_only=True,
-        data_root='/media/veritas/D/FastMRI',  # Using compressed dataset for better I/O performance and chunking.
-        challenge='multicoil',
-        center_fractions=[0.08, 0.04],
-        accelerations=[4, 8],
-        max_images=8,  # Maximum number of images to save.
-        chans=32,
-        num_pool_layers=4,
-        pin_memory=False,
-        add_graph=False,
-        prev_model_ckpt='',
-        apply_weighting=False
-    )
-
-    # Replace with a proper argument parsing function later.
-    args = create_arg_parser(**defaults).parse_args()
-
+def train_k2c(args):
     if args.batch_size > 1:
         raise NotImplementedError('K2C for batch size greater than 1 not implemented yet.')
 
@@ -353,9 +300,10 @@ def train_k2c():
 
     # Define model.
     data_chans = 2 if args.challenge == 'singlecoil' else 30  # Multicoil has 15 coils with 2 for real/imag
-    model = NewUnetModel(in_chans=data_chans, out_chans=data_chans, chans=args.chans,
-                         num_pool_layers=args.num_pool_layers).to(device)
-
+    # model = NewUnetModel(in_chans=data_chans, out_chans=data_chans, chans=args.chans,
+    #                      num_pool_layers=args.num_pool_layers).to(device)
+    model = UnetKSSE(in_chans=data_chans, out_chans=data_chans, chans=args.chans, num_pool_layers=args.num_pool_layers,
+                     min_ext_size=3, max_ext_size=9, use_ext_bias=True).to(device)
     optimizer = optim.Adam(params=model.parameters(), lr=args.init_lr)
 
     trainer = ModelTrainerK2C(args, model=model, optimizer=optimizer, train_loader=train_loader, val_loader=val_loader,
@@ -480,4 +428,54 @@ def train_c2c():
 
 
 if __name__ == '__main__':
-    train_c2c()
+    # defaults = dict(
+    #     batch_size=1,  # This MUST be 1 for now.
+    #     sample_rate=1,  # Mostly for debugging purposes.
+    #     num_workers=3,
+    #     init_lr=1E-3,
+    #     log_dir='./logs',
+    #     ckpt_dir='./checkpoints',
+    #     gpu=0,  # Set to None for CPU mode.
+    #     num_epochs=10,
+    #     max_to_keep=1,
+    #     verbose=False,
+    #     save_best_only=True,
+    #     data_root='/media/veritas/D/FastMRI',  # Using compressed dataset for better I/O performance.
+    #     challenge='multicoil',
+    #     center_fractions=[0.08, 0.04],
+    #     accelerations=[4, 8],
+    #     max_images=8,  # Maximum number of images to save.
+    #     chans=32,
+    #     num_pool_layers=4,
+    #     pin_memory=False,
+    #     add_graph=False
+    # )
+
+    defaults = dict(
+        batch_size=1,  # This MUST be 1 for now.
+        sample_rate=1,  # Mostly for debugging purposes.
+        num_workers=2,
+        init_lr=1E-3,
+        log_dir='./logs',
+        ckpt_dir='./checkpoints',
+        gpu=1,  # Set to None for CPU mode.
+        num_epochs=30,
+        max_to_keep=1,
+        verbose=False,
+        save_best_only=True,
+        data_root='/media/veritas/D/FastMRI',  # Using compressed dataset for better I/O performance and chunking.
+        challenge='multicoil',
+        center_fractions=[0.08, 0.04],
+        accelerations=[4, 8],
+        max_images=8,  # Maximum number of images to save.
+        chans=32,
+        num_pool_layers=4,
+        pin_memory=False,
+        add_graph=False,
+        prev_model_ckpt='',
+        apply_weighting=False
+    )
+
+    # Replace with a proper argument parsing function later.
+    arg = create_arg_parser(**defaults).parse_args()
+    train_k2c(arg)
