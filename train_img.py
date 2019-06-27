@@ -9,7 +9,6 @@ from utils.train_utils import create_custom_data_loaders
 from train.subsample import MaskFunc
 from data.input_transforms import InputTransformK
 from data.output_transforms import OutputReplaceTransformK
-from metrics.custom_losses import CSSIM
 
 
 from models.ks_unet import UnetKS
@@ -74,7 +73,7 @@ def train_img(args):
     train_loader, val_loader = create_custom_data_loaders(args, train_transform, val_transform)
 
     losses = dict(
-        c_img_loss=nn.MSELoss(reduction='sum'),
+        cmg_loss=nn.MSELoss(reduction='sum'),
         img_loss=nn.L1Loss(reduction='sum')
     )
 
@@ -114,19 +113,18 @@ if __name__ == '__main__':
         init_lr=1E-3,
         gpu=1,  # Set to None for CPU mode.
         max_to_keep=0,
-        img_lambda=0.0001,
+        img_lambda=1E-5,
 
         start_slice=10,
         min_ext_size=3,
         max_ext_size=15,
 
         # Variables that change frequently.
-        sample_rate=0.1,
-        num_epochs=2,
+        sample_rate=1,
+        num_epochs=10,
         verbose=False,
-        use_slice_metrics=True,
-        prev_model_ckpt='',
-
+        use_slice_metrics=False,
+        # prev_model_ckpt='',
     )
     options = create_arg_parser(**settings).parse_args()
     train_img(options)
