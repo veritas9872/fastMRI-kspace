@@ -31,9 +31,10 @@ class InputTransformK:
             c_img_target = ifft2(kspace_target)
             img_target = complex_abs(c_img_target)
 
-            targets = {'kspace_target': kspace_target,
-                       'c_img_target': c_img_target,
-                       'img_target': img_target}
+            # Use plurals to reduce confusion.
+            targets = {'kspace_targets': kspace_target,
+                       'c_img_targets': c_img_target,
+                       'img_targets': img_target}
 
             # Apply mask
             seed = None if not self.use_seed else tuple(map(ord, file_name))
@@ -41,9 +42,10 @@ class InputTransformK:
 
             k_scale = torch.std(masked_kspace)
 
-            extra_params = {'k_scale': k_scale, 'mask': mask}
+            extra_params = {'k_scales': k_scale, 'masks': mask}
 
-            masked_kspace = kspace_to_nchw(masked_kspace / k_scale)  # Assumes single batch output.
+            masked_kspace /= k_scale
+            masked_kspace = kspace_to_nchw(masked_kspace)  # Assumes single batch output.
 
             margin = masked_kspace.size(-1) % self.divisor
             if margin > 0:

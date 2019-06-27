@@ -15,7 +15,7 @@ class CSSIM(nn.Module):  # Complementary SSIM
         self.sigma = sigma
         self.reduction = reduction
 
-    def forward(self, input, target, max_val=None):
+    def forward(self, input, target, max_val=0.0002):
         return 1 - ssim_loss(input, target, max_val=max_val, filter_size=self.filter_size, k1=self.k1, k2=self.k2,
                              sigma=self.sigma, reduction=self.reduction)
 

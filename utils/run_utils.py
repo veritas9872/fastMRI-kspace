@@ -36,9 +36,6 @@ class CustomJSONEncoder(json.JSONEncoder):
     """
     Custom JSON Encoder designed to return the string of an object if it cannot be serialized.
     """
-    def __init__(self):
-        super().__init__()
-
     def default(self, o):
         return str(o)
 

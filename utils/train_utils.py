@@ -168,7 +168,7 @@ def single_collate_fn(batch):  # Returns `targets` as a 4D Tensor.
 
 
 def single_triplet_collate_fn(batch):
-    return batch[0][0], batch[0][0], batch[0][2]
+    return batch[0][0], batch[0][1], batch[0][2]
 
 
 def multi_collate_fn(batch):

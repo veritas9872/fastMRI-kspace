@@ -4,6 +4,8 @@ from torch.nn.modules.loss import _Loss
 from torch._jit_internal import weak_module, weak_script_method, weak_script
 from torch import nn
 
+# TODO: SSIM Blew up somewhere, though I don't know where. NaN values resulted. Fix this!
+
 
 def _fspecial_gaussian(size, channel, sigma, device):
     # Changed this part to initialize on GPU, not on CPU.

@@ -3,9 +3,8 @@ from torch import nn, optim
 
 from pathlib import Path
 
-from utils.run_utils import initialize, save_dict_as_json, get_logger
+from utils.run_utils import initialize, save_dict_as_json, get_logger, create_arg_parser
 from utils.train_utils import create_custom_data_loaders
-from utils.arguments import Args
 
 from train.subsample import MaskFunc
 from data.input_transforms import InputTransformK
@@ -13,7 +12,7 @@ from data.output_transforms import OutputReplaceTransformK
 from metrics.custom_losses import CSSIM
 
 
-from models.ksse_unet import UnetKSSE
+from models.ks_unet import UnetKS
 from train.model_trainers.model_trainer_IMG import ModelTrainerIMG
 
 
@@ -62,7 +61,7 @@ def train_img(args):
 
     save_dict_as_json(vars(args), log_dir=log_path, save_name=run_name)
 
-    # Input transforms. These are on a slice basis.
+    # Input transforms. These are on a per-slice basis.
     # UNET architecture requires that all inputs be dividable by some power of 2.
     divisor = 2 ** args.num_pool_layers
 
@@ -76,15 +75,16 @@ def train_img(args):
 
     losses = dict(
         c_img_loss=nn.MSELoss(reduction='sum'),
-        img_loss=CSSIM(filter_size=7)
+        img_loss=nn.L1Loss(reduction='sum')
     )
 
     output_transform = OutputReplaceTransformK()
 
     data_chans = 2 if args.challenge == 'singlecoil' else 30  # Multicoil has 15 coils with 2 for real/imag
 
-    model = UnetKSSE(in_chans=data_chans, out_chans=data_chans, chans=args.chans, num_pool_layers=args.num_pool_layers,
-                     min_ext_size=1, max_ext_size=15, use_ext_bias=True, use_res_block=True).to(device)
+    model = UnetKS(in_chans=data_chans, out_chans=data_chans, ext_chans=args.chans, chans=args.chans,
+                   num_pool_layers=args.num_pool_layers, min_ext_size=args.min_ext_size, max_ext_size=args.max_ext_size,
+                   use_ext_bias=True).to(device)
 
     optimizer = optim.Adam(model.parameters(), lr=args.init_lr)
 
@@ -93,6 +93,38 @@ def train_img(args):
 
 
 if __name__ == '__main__':
-    overrides = {}
-    options = Args(**overrides).parse_args()
+    settings = dict(
+        # Variables that almost never change.
+        challenge='multicoil',
+        data_root='/media/veritas/D/FastMRI',
+        log_root='./logs',
+        ckpt_root='./checkpoints',
+        batch_size=1,  # This MUST be 1 for now.
+        chans=32,
+        num_pool_layers=4,
+        save_best_only=True,
+        pin_memory=False,
+        center_fractions=[0.08, 0.04],
+        accelerations=[4, 8],
+        smoothing_factor=8,
+
+        # Variables that occasionally change.
+        max_images=8,  # Maximum number of images to save.
+        num_workers=3,
+        init_lr=1E-3,
+        gpu=1,  # Set to None for CPU mode.
+        max_to_keep=0,
+
+        # Variables that change frequently.
+        sample_rate=0.01,
+        num_epochs=2,
+        verbose=True,
+        prev_model_ckpt='',
+        img_lambda=0.001,
+        use_slice_metrics=True,
+        start_slice=10,
+        min_ext_size=3,
+        max_ext_size=15
+    )
+    options = create_arg_parser(**settings).parse_args()
     train_img(options)
