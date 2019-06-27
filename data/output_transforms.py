@@ -30,10 +30,10 @@ class OutputReplaceTransformK(nn.Module):
 
         kspace_recons = kspace_recons * (1 - extra_params['masks']) + targets['kspace_targets'] * extra_params['masks']
 
-        c_img_recons = ifft2(kspace_recons)
+        cmg_recons = ifft2(kspace_recons)
 
-        img_recons = complex_abs(c_img_recons)
+        img_recons = complex_abs(cmg_recons)
 
-        recons = {'kspace_recons': kspace_recons, 'c_img_recons': c_img_recons, 'img_recons': img_recons}
+        recons = {'kspace_recons': kspace_recons, 'cmg_recons': cmg_recons, 'img_recons': img_recons}
 
         return recons

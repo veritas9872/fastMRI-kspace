@@ -13,6 +13,8 @@ from utils.train_utils import CheckpointManager, make_grid_triplet, make_k_grid
 from metrics.my_ssim import ssim_loss
 from metrics.custom_losses import psnr_loss, nmse_loss
 
+# TODO: Refactor all cmg (complex image) to cmg for greater brevity.
+
 
 class ModelTrainerIMG:
     """
@@ -119,7 +121,7 @@ class ModelTrainerIMG:
         else:
             data_loader = tqdm(enumerate(self.train_loader, start=1), total=len(self.train_loader.dataset))
 
-        # 'targets' is a dictionary containing k-space targets, c_img_targets, and img_targets.
+        # 'targets' is a dictionary containing k-space targets, cmg_targets, and img_targets.
         for step, (inputs, targets, extra_params) in data_loader:
             # 'recons' is a dictionary containing k-space, complex image, and real image reconstructions.
             recons, step_loss, step_metrics = self._train_step(inputs, targets, extra_params)
@@ -145,12 +147,12 @@ class ModelTrainerIMG:
         recons = self.output_transform(outputs, targets, extra_params)
 
         # Expects a single loss. No loss decomposition implemented yet.
-        c_img_loss = self.losses['c_img_loss'](recons['c_img_recons'], targets['c_img_targets'])
+        cmg_loss = self.losses['cmg_loss'](recons['cmg_recons'], targets['cmg_targets'])
         img_loss = self.losses['img_loss'](recons['img_recons'], targets['img_targets'])
-        step_loss = c_img_loss + self.img_lambda * img_loss
+        step_loss = cmg_loss + self.img_lambda * img_loss
         step_loss.backward()
         self.optimizer.step()
-        step_metrics = {'c_img_loss': c_img_loss, 'img_loss': img_loss}
+        step_metrics = {'cmg_loss': cmg_loss, 'img_loss': img_loss}
         return recons, step_loss, step_metrics
 
     def _val_epoch(self, epoch):
@@ -165,7 +167,7 @@ class ModelTrainerIMG:
         else:
             data_loader = tqdm(enumerate(self.val_loader, start=1), total=len(self.val_loader.dataset))
 
-        # 'targets' is a dictionary containing k-space targets, c_img_targets, and img_targets.
+        # 'targets' is a dictionary containing k-space targets, cmg_targets, and img_targets.
         for step, (inputs, targets, extra_params) in data_loader:
             # 'recons' is a dictionary containing k-space, complex image, and real image reconstructions.
             recons, step_loss, step_metrics = self._val_step(inputs, targets, extra_params)
@@ -200,10 +202,10 @@ class ModelTrainerIMG:
     def _val_step(self, inputs, targets, extra_params):
         outputs = self.model(inputs)
         recons = self.output_transform(outputs, targets, extra_params)
-        c_img_loss = self.losses['c_img_loss'](recons['c_img_recons'], targets['c_img_targets'])
+        cmg_loss = self.losses['cmg_loss'](recons['cmg_recons'], targets['cmg_targets'])
         img_loss = self.losses['img_loss'](recons['img_recons'], targets['img_targets'])
-        step_loss = c_img_loss + self.img_lambda * img_loss
-        step_metrics = {'c_img_loss': c_img_loss, 'img_loss': img_loss}
+        step_loss = cmg_loss + self.img_lambda * img_loss
+        step_metrics = {'cmg_loss': cmg_loss, 'img_loss': img_loss}
         return recons, step_loss, step_metrics
 
     @staticmethod
@@ -259,5 +261,5 @@ class ModelTrainerIMG:
         self.writer.add_scalar(f'{mode}_epoch_loss', scalar_value=epoch_loss, global_step=epoch)
 
         for key, value in epoch_metrics.items():
-            self.logger.info(f'Epoch {epoch:03d} {mode}. {key}: {value}')
+            self.logger.info(f'Epoch {epoch:03d} {mode}. {key}: {value:.4e}')
             self.writer.add_scalar(f'{mode}_epoch_{key}', scalar_value=value, global_step=epoch)

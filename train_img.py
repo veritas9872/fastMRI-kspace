@@ -114,17 +114,19 @@ if __name__ == '__main__':
         init_lr=1E-3,
         gpu=1,  # Set to None for CPU mode.
         max_to_keep=0,
+        img_lambda=0.0001,
 
-        # Variables that change frequently.
-        sample_rate=0.01,
-        num_epochs=2,
-        verbose=True,
-        prev_model_ckpt='',
-        img_lambda=0.001,
-        use_slice_metrics=True,
         start_slice=10,
         min_ext_size=3,
-        max_ext_size=15
+        max_ext_size=15,
+
+        # Variables that change frequently.
+        sample_rate=0.1,
+        num_epochs=2,
+        verbose=False,
+        use_slice_metrics=True,
+        prev_model_ckpt='',
+
     )
     options = create_arg_parser(**settings).parse_args()
     train_img(options)

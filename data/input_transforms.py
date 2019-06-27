@@ -28,12 +28,12 @@ class InputTransformK:
 
         with torch.no_grad():
             kspace_target = to_tensor(k_slice).to(device=self.device).unsqueeze(dim=0)
-            c_img_target = ifft2(kspace_target)
-            img_target = complex_abs(c_img_target)
+            cmg_target = ifft2(kspace_target)
+            img_target = complex_abs(cmg_target)
 
             # Use plurals to reduce confusion.
             targets = {'kspace_targets': kspace_target,
-                       'c_img_targets': c_img_target,
+                       'cmg_targets': cmg_target,
                        'img_targets': img_target}
 
             # Apply mask
