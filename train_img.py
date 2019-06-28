@@ -113,7 +113,7 @@ if __name__ == '__main__':
         init_lr=1E-3,
         gpu=1,  # Set to None for CPU mode.
         max_to_keep=0,
-        img_lambda=1E-5,
+        img_lambda=1E-4,
 
         start_slice=10,
         min_ext_size=3,
