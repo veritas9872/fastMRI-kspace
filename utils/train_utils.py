@@ -7,6 +7,7 @@ from pathlib import Path
 
 from data.mri_data import SliceData, CustomSliceData
 from data.data_transforms import complex_abs, ifft2
+from data.input_transforms import Prefetch2Device
 
 
 class CheckpointManager:
@@ -171,6 +172,10 @@ def single_triplet_collate_fn(batch):
     return batch[0][0], batch[0][1], batch[0][2]
 
 
+def single_batch_collate_fn(batch):
+    return batch[0]
+
+
 def multi_collate_fn(batch):
     tensors = list()
     targets = list()
@@ -234,13 +239,14 @@ def create_data_loaders(args, train_transform, val_transform):
     return train_loader, val_loader
 
 
-def create_custom_datasets(args, train_transform, val_transform):
-    assert callable(train_transform) and callable(val_transform), 'Transforms should be callable functions.'
+def create_custom_datasets(args, transform=None):
+
+    transform = Prefetch2Device(device=args.device) if transform is None else transform
 
     # Generating Datasets.
     train_dataset = CustomSliceData(
         root=Path(args.data_root) / f'{args.challenge}_train',
-        transform=train_transform,
+        transform=transform,
         challenge=args.challenge,
         sample_rate=args.sample_rate,
         start_slice=args.start_slice,
@@ -249,7 +255,7 @@ def create_custom_datasets(args, train_transform, val_transform):
 
     val_dataset = CustomSliceData(
         root=Path(args.data_root) / f'{args.challenge}_val',
-        transform=val_transform,
+        transform=transform,
         challenge=args.challenge,
         sample_rate=args.sample_rate,
         start_slice=args.start_slice,
@@ -258,13 +264,13 @@ def create_custom_datasets(args, train_transform, val_transform):
     return train_dataset, val_dataset
 
 
-def create_custom_data_loaders(args, train_transform, val_transform):
-    train_dataset, val_dataset = create_custom_datasets(args, train_transform, val_transform)
+def create_custom_data_loaders(args, transform=None):
+    train_dataset, val_dataset = create_custom_datasets(args, transform)
 
     if args.batch_size > 1:
         raise NotImplementedError('Batch size should be 1 for now.')
 
-    collate_fn = single_triplet_collate_fn
+    collate_fn = single_batch_collate_fn
 
     # Generating Data Loaders
     train_loader = DataLoader(
@@ -272,7 +278,7 @@ def create_custom_data_loaders(args, train_transform, val_transform):
         batch_size=args.batch_size,
         shuffle=True,
         num_workers=args.num_workers,
-        pin_memory=args.pin_memory,
+        pin_memory=False,
         collate_fn=collate_fn
     )
 
@@ -281,7 +287,7 @@ def create_custom_data_loaders(args, train_transform, val_transform):
         batch_size=args.batch_size,
         shuffle=False,
         num_workers=args.num_workers,
-        pin_memory=args.pin_memory,
+        pin_memory=False,
         collate_fn=collate_fn
     )
     return train_loader, val_loader

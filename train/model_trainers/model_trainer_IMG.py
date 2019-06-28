@@ -25,7 +25,7 @@ class ModelTrainerIMG:
     """
 
     def __init__(self, args, model, optimizer, train_loader, val_loader,
-                 output_transform, losses, scheduler=None):
+                 input_train_transform, input_val_transform, output_transform, losses, scheduler=None):
 
         multiprocessing.set_start_method(method='spawn')
 
@@ -37,8 +37,10 @@ class ModelTrainerIMG:
         assert isinstance(train_loader, DataLoader) and isinstance(val_loader, DataLoader), \
             '`train_loader` and `val_loader` must be Pytorch DataLoader objects.'
 
+        assert callable(input_train_transform) and callable(input_val_transform), \
+            'input_transforms must be callable functions.'
         # I think this would be best practice.
-        assert isinstance(output_transform, nn.Module), '`post_processing_func` must be a Pytorch Module.'
+        assert isinstance(output_transform, nn.Module), '`output_transform` must be a Pytorch Module.'
 
         # 'losses' is expected to be a dictionary.
         losses = nn.ModuleDict(losses)
@@ -68,6 +70,8 @@ class ModelTrainerIMG:
         self.optimizer = optimizer
         self.train_loader = train_loader
         self.val_loader = val_loader
+        self.input_train_transform = input_train_transform
+        self.input_val_transform = input_val_transform
         self.output_transform = output_transform
         self.losses = losses
         self.scheduler = scheduler
@@ -76,7 +80,7 @@ class ModelTrainerIMG:
         self.num_epochs = args.num_epochs
         self.smoothing_factor = args.smoothing_factor
         self.use_slice_metrics = args.use_slice_metrics
-        self.img_lambda = args.img_lambda
+        self.img_lambda = torch.tensor(args.img_lambda, dtype=torch.float32, device=args.device)
         self.writer = SummaryWriter(str(args.log_path))
 
     def train_model(self):
@@ -118,11 +122,13 @@ class ModelTrainerIMG:
 
         if self.verbose:
             data_loader = enumerate(self.train_loader, start=1)
-        else:
+        else:  # tqdm has to be on the outermost iterator to function properly.
             data_loader = tqdm(enumerate(self.train_loader, start=1), total=len(self.train_loader.dataset))
 
         # 'targets' is a dictionary containing k-space targets, cmg_targets, and img_targets.
-        for step, (inputs, targets, extra_params) in data_loader:
+        for step, data in data_loader:
+            inputs, targets, extra_params = self.input_train_transform(*data)
+
             # 'recons' is a dictionary containing k-space, complex image, and real image reconstructions.
             recons, step_loss, step_metrics = self._train_step(inputs, targets, extra_params)
             epoch_loss.append(step_loss.detach())  # Perhaps not elegant, but underflow makes this necessary.
@@ -168,7 +174,8 @@ class ModelTrainerIMG:
             data_loader = tqdm(enumerate(self.val_loader, start=1), total=len(self.val_loader.dataset))
 
         # 'targets' is a dictionary containing k-space targets, cmg_targets, and img_targets.
-        for step, (inputs, targets, extra_params) in data_loader:
+        for step, data in data_loader:
+            inputs, targets, extra_params = self.input_val_transform(*data)
             # 'recons' is a dictionary containing k-space, complex image, and real image reconstructions.
             recons, step_loss, step_metrics = self._val_step(inputs, targets, extra_params)
             epoch_loss.append(step_loss.detach())
@@ -214,9 +221,10 @@ class ModelTrainerIMG:
         img_recons = img_recons.detach()  # Just in case.
         img_targets = img_targets.detach()
 
-        slice_ssim = ssim_loss(img_recons, img_targets)
-        slice_nmse = nmse_loss(img_recons, img_targets)
+        max_range = img_targets.max() - img_targets.min()
+        slice_ssim = ssim_loss(img_recons, img_targets, max_val=max_range)
         slice_psnr = psnr_loss(img_recons, img_targets)
+        slice_nmse = nmse_loss(img_recons, img_targets)
 
         return {'slice_ssim': slice_ssim, 'slice_nmse': slice_nmse, 'slice_psnr': slice_psnr}
 

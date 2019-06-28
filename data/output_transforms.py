@@ -7,6 +7,11 @@ from data.data_transforms import nchw_to_kspace, ifft2, complex_abs
 class OutputReplaceTransformK(nn.Module):
     """
     Outputs are expected to be k-space data that need reshaping and conversion to the image domain.
+    Inputs and targets are expected to be scaled already.
+    Currently, the implementation expects only 1 batch.
+    Also, I removed rescaling as the loss needs to be calculated on the standardized values for data scale invariance.
+    Final reconstructions can be obtained by dividing by the k_scale value since
+    the Fourier transform and its relatives are all linear functions.
     """
     def __init__(self):
         super().__init__()
@@ -20,10 +25,9 @@ class OutputReplaceTransformK(nn.Module):
         left = (kspace_outputs.size(-1) - targets['kspace_targets'].size(-2)) // 2
         right = left + targets['kspace_targets'].size(-2)
 
-        # Cropping width dimension by pad. Multiply by scales to restore the original scaling.
-        kspace_outputs = kspace_outputs[..., left:right] * extra_params['k_scales']
+        # Cropping width dimension by pad. # Multiply by scales to restore the original scaling. --> Not rescaling!!!
+        kspace_outputs = kspace_outputs[..., left:right]  # * extra_params['k_scales']
 
-        # Processing to k-space form. This is where the batch_size == 1 is important.
         kspace_recons = nchw_to_kspace(kspace_outputs)
 
         assert kspace_recons.shape == targets['kspace_targets'].shape, 'Reconstruction and target sizes are different.'
@@ -36,4 +40,5 @@ class OutputReplaceTransformK(nn.Module):
 
         recons = {'kspace_recons': kspace_recons, 'cmg_recons': cmg_recons, 'img_recons': img_recons}
 
-        return recons
+        return recons  # Returning scaled reconstructions. Not rescaled.
+

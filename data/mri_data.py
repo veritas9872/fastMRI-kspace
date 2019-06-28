@@ -103,9 +103,11 @@ class CustomSliceData(Dataset):
     def __getitem__(self, idx):
         file_path, slice_num = self.examples[idx]
         with h5py.File(file_path, mode='r') as data:
+            attrs = dict(data.attrs)
             k_slice = data['kspace'][slice_num]
             if (self.recons_key in data) and self.use_gt:
                 target_slice = data[self.recons_key][slice_num]
             else:
                 target_slice = None
-            return self.transform(k_slice, target_slice, data.attrs, file_path.name, slice_num)
+
+        return self.transform(k_slice, target_slice, attrs, file_path.name, slice_num)
