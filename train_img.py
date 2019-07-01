@@ -96,6 +96,8 @@ def train_img(args):
 
     trainer = ModelTrainerIMG(args, model, optimizer, train_loader, val_loader,
                               input_train_transform, input_val_transform, output_transform, losses, scheduler)
+
+    # TODO: Implement logging of model, losses, transforms, etc.
     trainer.train_model()
 
 
@@ -116,7 +118,7 @@ if __name__ == '__main__':
 
         # Variables that occasionally change.
         max_images=8,  # Maximum number of images to save.
-        num_workers=2,
+        num_workers=1,
         init_lr=1E-3,
         gpu=1,  # Set to None for CPU mode.
         max_to_keep=1,
@@ -127,10 +129,10 @@ if __name__ == '__main__':
         max_ext_size=15,
 
         # Variables that change frequently.
-        sample_rate=1,
+        sample_rate=0.1,
         num_epochs=50,
         verbose=False,
-        use_slice_metrics=True,
+        use_slice_metrics=True,  # Using slice metrics causes a 30% increase in training time.
         lr_red_epoch=40,
         lr_red_rate=0.1,
         # prev_model_ckpt='',

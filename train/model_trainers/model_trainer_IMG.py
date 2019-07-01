@@ -13,8 +13,6 @@ from utils.train_utils import CheckpointManager, make_grid_triplet, make_k_grid
 from metrics.my_ssim import ssim_loss
 from metrics.custom_losses import psnr_loss, nmse_loss
 
-# TODO: Refactor all cmg (complex image) to cmg for greater brevity.
-
 
 class ModelTrainerIMG:
     """
@@ -127,7 +125,8 @@ class ModelTrainerIMG:
 
         # 'targets' is a dictionary containing k-space targets, cmg_targets, and img_targets.
         for step, data in data_loader:
-            inputs, targets, extra_params = self.input_train_transform(*data)
+            with torch.no_grad():  # Data pre-processing should be done without gradients.
+                inputs, targets, extra_params = self.input_train_transform(*data)
 
             # 'recons' is a dictionary containing k-space, complex image, and real image reconstructions.
             recons, step_loss, step_metrics = self._train_step(inputs, targets, extra_params)
@@ -152,7 +151,7 @@ class ModelTrainerIMG:
         outputs = self.model(inputs)
         recons = self.output_transform(outputs, targets, extra_params)
 
-        # Expects a single loss. No loss decomposition implemented yet.
+        # Expects a single loss. No loss decomposition within domain implemented yet.
         cmg_loss = self.losses['cmg_loss'](recons['cmg_recons'], targets['cmg_targets'])
         img_loss = self.losses['img_loss'](recons['img_recons'], targets['img_targets'])
         step_loss = cmg_loss + self.img_lambda * img_loss
@@ -223,7 +222,7 @@ class ModelTrainerIMG:
 
         max_range = img_targets.max() - img_targets.min()
         slice_ssim = ssim_loss(img_recons, img_targets, max_val=max_range)
-        slice_psnr = psnr_loss(img_recons, img_targets)
+        slice_psnr = psnr_loss(img_recons, img_targets, data_range=max_range)
         slice_nmse = nmse_loss(img_recons, img_targets)
 
         return {'slice_ssim': slice_ssim, 'slice_nmse': slice_nmse, 'slice_psnr': slice_psnr}

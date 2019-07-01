@@ -18,11 +18,14 @@ class DilatedSignalExtractor(nn.Module):
             conv = nn.Conv2d(in_chans, ext_chans, kernel_size=3, padding=dil, dilation=dil, bias=use_bias)
             self.ext_layers.append(conv)
 
+        self.relu = nn.ReLU()
         self.conv1x1 = nn.Conv2d(in_channels=ext_chans * len(self.ext_layers), out_channels=out_chans, kernel_size=1)
 
     def forward(self, tensor):
         outputs = torch.cat([ext(tensor) for ext in self.ext_layers], dim=1)
+        outputs = self.relu(outputs)
         outputs = self.conv1x1(outputs)
+        outputs = self.relu(outputs)
         return outputs
 
 
