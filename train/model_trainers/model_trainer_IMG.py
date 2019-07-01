@@ -118,10 +118,9 @@ class ModelTrainerIMG:
         epoch_loss = list()  # Appending values to list due to numerical underflow.
         epoch_metrics = defaultdict(list)
 
-        if self.verbose:
-            data_loader = enumerate(self.train_loader, start=1)
-        else:  # tqdm has to be on the outermost iterator to function properly.
-            data_loader = tqdm(enumerate(self.train_loader, start=1), total=len(self.train_loader.dataset))
+        data_loader = enumerate(self.train_loader, start=1)
+        if not self.verbose:  # tqdm has to be on the outermost iterator to function properly.
+            data_loader = tqdm(data_loader, total=len(self.train_loader.dataset))
 
         # 'targets' is a dictionary containing k-space targets, cmg_targets, and img_targets.
         for step, data in data_loader:
@@ -167,10 +166,9 @@ class ModelTrainerIMG:
         epoch_loss = list()
         epoch_metrics = defaultdict(list)
 
-        if self.verbose:
-            data_loader = enumerate(self.val_loader, start=1)
-        else:
-            data_loader = tqdm(enumerate(self.val_loader, start=1), total=len(self.val_loader.dataset))
+        data_loader = enumerate(self.val_loader, start=1)
+        if not self.verbose:
+            data_loader = tqdm(data_loader, total=len(self.val_loader.dataset))
 
         # 'targets' is a dictionary containing k-space targets, cmg_targets, and img_targets.
         for step, data in data_loader:
