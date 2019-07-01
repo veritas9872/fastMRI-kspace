@@ -110,16 +110,21 @@ class TrainPreProcessK:
             masked_kspace, mask = apply_mask(kspace_target, self.mask_func, seed)
 
             k_scale = torch.std(masked_kspace)
+            k_scaling = torch.tensor(1) / k_scale
 
-            masked_kspace *= (torch.tensor(1) / k_scale)  # Multiplication is faster than division.
+            masked_kspace *= k_scaling  # Multiplication is faster than division.
             masked_kspace = kspace_to_nchw(masked_kspace)
 
             extra_params = {'k_scales': k_scale, 'masks': mask}
 
             # Target must be on the same scale as the inputs for scale invariance of data.
-            kspace_target *= (torch.tensor(1) / k_scale)
-            cmg_target = ifft2(kspace_target)  # Recall that the Fourier transform is a linear transform.
+            # kspace_target *= (torch.tensor(1) / k_scale)
+
+            # Recall that the Fourier transform is a linear transform.
+            # Performing scaling after ifft for numerical stability
+            cmg_target = ifft2(kspace_target) * k_scaling
             img_target = complex_abs(cmg_target)
+            kspace_target *= k_scaling
 
             # Use plurals as keys to reduce confusion.
             targets = {'kspace_targets': kspace_target, 'cmg_targets': cmg_target, 'img_targets': img_target}

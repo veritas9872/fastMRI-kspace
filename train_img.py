@@ -118,18 +118,18 @@ if __name__ == '__main__':
 
         # Variables that occasionally change.
         max_images=8,  # Maximum number of images to save.
-        num_workers=1,
+        num_workers=4,
         init_lr=1E-3,
         gpu=1,  # Set to None for CPU mode.
         max_to_keep=1,
-        img_lambda=1,
+        img_lambda=100,
 
         start_slice=10,
         min_ext_size=3,
         max_ext_size=15,
 
         # Variables that change frequently.
-        sample_rate=0.1,
+        sample_rate=0.025,
         num_epochs=50,
         verbose=False,
         use_slice_metrics=True,  # Using slice metrics causes a 30% increase in training time.
