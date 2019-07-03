@@ -34,14 +34,14 @@ class ChannelAttention(nn.Module):
         super().__init__()
         self.gap = nn.AdaptiveAvgPool2d(1)
         self.gmp = nn.AdaptiveMaxPool2d(1)
-        self.softmax = nn.Softmax()
+        self.sigmoid = nn.Sigmoid()
 
     def forward(self, tensor):
         gap = self.gap(tensor)
         gmp = self.gmp(tensor)
 
         # Maybe batch-norm the two pooling types to make their scales more similar.
-        att = self.softmax(gap + gmp)
+        att = self.sigmoid(gap + gmp)
         return tensor * att
 
 
