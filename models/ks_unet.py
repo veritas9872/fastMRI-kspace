@@ -29,6 +29,22 @@ import torch.nn.functional as F
 #         return outputs
 
 
+class ChannelAttention(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.gap = nn.AdaptiveAvgPool2d(1)
+        self.gmp = nn.AdaptiveMaxPool2d(1)
+        self.softmax = nn.Softmax()
+
+    def forward(self, tensor):
+        gap = self.gap(tensor)
+        gmp = self.gmp(tensor)
+
+        # Maybe batch-norm the two pooling types to make their scales more similar.
+        att = self.softmax(gap + gmp)
+        return tensor * att
+
+
 class AsymmetricSignalExtractor(nn.Module):
     def __init__(self, in_chans, out_chans, ext_chans, min_ext_size, max_ext_size, use_bias=True):
         super().__init__()

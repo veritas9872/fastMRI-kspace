@@ -249,7 +249,7 @@ class Trainer(object):
     def train_model(self):
         torch.multiprocessing.set_start_method("spawn")
         summary(model=self.model, input1_size=(30, 640, 384), input2_size=(15, 640, 378),
-                batch_size=self.args.batch_size, device=self.device, disp_func=self.logger.info)
+                batch_size=self.args.batch_size, device=self.device, display_func=self.logger.info)
         self.logger.info('Beginning Training loop')
         for epoch in range(1, self.args.num_epochs + 1):  # 1 based indexing
             # Training

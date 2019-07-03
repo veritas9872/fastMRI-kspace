@@ -188,6 +188,9 @@ class ModelTrainerIMG:
 
             # Save images to TensorBoard.
             # Condition ensures that self.display_interval != 0 and that the step is right for display.
+
+            # This numbering scheme seems to have issues for certain numbers.
+            # Please check cases when there is no remainder.
             if self.display_interval and (step % self.display_interval == 0):
                 img_recon_grid, img_target_grid, img_delta_grid = \
                     make_grid_triplet(recons['img_recons'], targets['img_targets'])

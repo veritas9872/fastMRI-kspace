@@ -18,7 +18,7 @@ from metrics.custom_losses import CSSIM
 def train_img(args):
 
     # Maybe move this to args later.
-    train_method = 'IMG'
+    train_method = 'K2CI'
 
     # Creating checkpoint and logging directories, as well as the run name.
     ckpt_path = Path(args.ckpt_root)
@@ -120,13 +120,13 @@ if __name__ == '__main__':
         max_images=8,  # Maximum number of images to save.
         num_workers=1,
         init_lr=1E-4,
-        gpu=1,  # Set to None for CPU mode.
+        gpu=0,  # Set to None for CPU mode.
         max_to_keep=1,
         img_lambda=100,
 
         start_slice=10,
         min_ext_size=3,  # 1x1 extractor is included by default.
-        max_ext_size=15,  # This trial is running with max 15 extractors!!!
+        max_ext_size=11,  # This trial is running with max 11 extractors!!!
 
         # Variables that change frequently.
         sample_rate=0.02,
@@ -135,7 +135,7 @@ if __name__ == '__main__':
         use_slice_metrics=True,  # Using slice metrics causes a 30% increase in training time.
         lr_red_epoch=40,
         lr_red_rate=0.1,
-        use_ext_bias=True,
+        use_ext_bias=True
         # prev_model_ckpt='',
     )
     options = create_arg_parser(**settings).parse_args()

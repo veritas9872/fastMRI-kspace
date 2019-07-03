@@ -5,7 +5,7 @@ from collections import OrderedDict
 import numpy as np
 
 
-def summary(model, input1_size, input2_size, batch_size=-1, device="cuda", disp_func=print):
+def summary(model, input1_size, input2_size, batch_size=-1, device="cuda", display_func=print):
 
     def register_hook(module):
 
@@ -47,7 +47,6 @@ def summary(model, input1_size, input2_size, batch_size=-1, device="cuda", disp_
     if isinstance(input2_size, tuple):
         input2_size = [input2_size]
 
-
     # batch_size of 2 for batchnorm
     x = [torch.rand(batch_size, *in_size).to(device=device, dtype=torch.float) for in_size in input1_size]
     x2 = [torch.rand(batch_size, *in_size).to(device=device, dtype=torch.float) for in_size in input2_size]
@@ -67,11 +66,11 @@ def summary(model, input1_size, input2_size, batch_size=-1, device="cuda", disp_
     # remove these hooks
     for h in hooks:
         h.remove()
-    disp_func('Model : '+str(model.__class__).split("'")[-2])
-    disp_func("----------------------------------------------------------------")
+    display_func('Model : ' + str(model.__class__).split("'")[-2])
+    display_func("----------------------------------------------------------------")
     line_new = "{:>20}  {:>25} {:>15}".format("Layer (type)", "Output Shape", "Param #")
-    disp_func(line_new)
-    disp_func("================================================================")
+    display_func(line_new)
+    display_func("================================================================")
     total_params = 0
     total_output = 0
     trainable_params = 0
@@ -87,7 +86,7 @@ def summary(model, input1_size, input2_size, batch_size=-1, device="cuda", disp_
         if "trainable" in summary[layer]:
             if summary[layer]["trainable"]:
                 trainable_params += summary[layer]["nb_params"]
-        disp_func(line_new)
+        display_func(line_new)
 
     # assume 4 bytes/number (float on cuda).
     total_input_size = abs(np.prod(input1_size) * batch_size * 4. / (1024 ** 2.))
@@ -95,14 +94,14 @@ def summary(model, input1_size, input2_size, batch_size=-1, device="cuda", disp_
     total_params_size = abs(total_params * 4. / (1024 ** 2.))
     total_size = total_params_size + total_output_size + total_input_size
 
-    disp_func("================================================================")
-    disp_func("Total params: {0:,}".format(total_params))
-    disp_func("Trainable params: {0:,}".format(trainable_params))
-    disp_func("Non-trainable params: {0:,}".format(total_params - trainable_params))
-    disp_func("----------------------------------------------------------------")
-    disp_func("Input size (MB): %0.2f" % total_input_size)
-    disp_func("Forward/backward pass size (MB): %0.2f" % total_output_size)
-    disp_func("Params size (MB): %0.2f" % total_params_size)
-    disp_func("Estimated Total Size (MB): %0.2f" % total_size)
-    disp_func("----------------------------------------------------------------")
+    display_func("================================================================")
+    display_func("Total params: {0:,}".format(total_params))
+    display_func("Trainable params: {0:,}".format(trainable_params))
+    display_func("Non-trainable params: {0:,}".format(total_params - trainable_params))
+    display_func("----------------------------------------------------------------")
+    display_func("Input size (MB): %0.2f" % total_input_size)
+    display_func("Forward/backward pass size (MB): %0.2f" % total_output_size)
+    display_func("Params size (MB): %0.2f" % total_params_size)
+    display_func("Estimated Total Size (MB): %0.2f" % total_size)
+    display_func("----------------------------------------------------------------")
     return summary
