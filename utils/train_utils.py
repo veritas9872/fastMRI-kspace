@@ -89,7 +89,7 @@ class CheckpointManager:
             raise TypeError('Mode must be either `min` or `max`')
 
         save_path = None
-        if is_best or not self.save_best_only:
+        if (is_best or not self.save_best_only) and (self.max_to_keep > 0):
             save_path = self._save(ckpt_name, **save_kwargs)
 
         if verbose:
