@@ -1,32 +1,7 @@
 import torch
 from torch import nn
 import torch.nn.functional as F
-
-
-# class DilatedSignalExtractor(nn.Module):
-#     def __init__(self, in_chans, out_chans, ext_chans, min_ext_size, max_ext_size, use_bias=True):
-#         super().__init__()
-#         assert isinstance(min_ext_size, int) and isinstance(max_ext_size, int), 'Extractor sizes must be integers.'
-#         assert 3 <= min_ext_size <= max_ext_size, 'Invalid extractor sizes.'
-#         assert (min_ext_size // 2) and (max_ext_size // 2), 'Extractor sizes must be odd numbers.'
-#
-#         min_dil = min_ext_size // 2
-#         max_dil = max_ext_size // 2
-#
-#         self.ext_layers = nn.ModuleList()
-#         for dil in range(min_dil, max_dil + 1):
-#             conv = nn.Conv2d(in_chans, ext_chans, kernel_size=3, padding=dil, dilation=dil, bias=use_bias)
-#             self.ext_layers.append(conv)
-#
-#         self.relu = nn.ReLU()
-#         self.conv1x1 = nn.Conv2d(in_channels=ext_chans * len(self.ext_layers), out_channels=out_chans, kernel_size=1)
-#
-#     def forward(self, tensor):
-#         outputs = torch.cat([ext(tensor) for ext in self.ext_layers], dim=1)
-#         outputs = self.relu(outputs)
-#         outputs = self.conv1x1(outputs)
-#         outputs = self.relu(outputs)
-#         return outputs
+import math
 
 
 class AsymmetricSignalExtractor(nn.Module):
@@ -79,6 +54,41 @@ class ConvBlock(nn.Module):
         return self.layers(tensor)
 
 
+class CCAMBlock(nn.Module):
+    def __init__(self, in_chans, pool_size):
+        super().__init__()
+        self.in_chans = in_chans
+
+        self.avgpool = nn.AvgPool2d(pool_size)
+        # print(f'in_chans: {in_chans}')
+        self.MLP1 = nn.Linear(in_chans, int(in_chans / 16))
+        self.MLP2 = nn.Linear(int(in_chans / 16), in_chans)
+        self.activ = nn.Sigmoid()
+
+    # self.layers = nn.Sequential(
+    #     nn.AvgPool2d(pool_size),
+    #     nn.Linear(in_chans, int(in_chans / 2)),
+    #     nn.Linear(int(in_chans / 2), in_chans),
+    #     nn.Sigmoid()
+    # )
+    def forward(self, tensor):
+        # print(f'1 shape:{tensor.shape}')
+        y = self.avgpool(tensor)
+        y = y.view(tensor.shape[0], 1, 1, -1)
+        # print(f'2 shape:{y.shape}')
+        y = self.MLP1(y)
+        # print(f'3 shape:{y.shape}')
+        y = self.MLP2(y)
+        # print(f'4 shape:{y.shape}')
+        y = self.activ(y)
+        # print(f'5 shape:{y.shape}')
+        y = y.view(y.shape[0], -1, 1, 1)
+        y = torch.mul(tensor, y)
+        # print(f'final shape: {y.shape}')
+
+        return y
+
+
 class Bilinear(nn.Module):
     def __init__(self):
         super().__init__()
@@ -87,7 +97,7 @@ class Bilinear(nn.Module):
         return F.interpolate(tensor, scale_factor=2, mode='bilinear', align_corners=False)
 
 
-class UnetKS(nn.Module):
+class UnetKSA(nn.Module):
     def __init__(self, in_chans, out_chans, ext_chans, chans, num_pool_layers,
                  min_ext_size, max_ext_size, use_ext_bias=True):
 
@@ -101,6 +111,7 @@ class UnetKS(nn.Module):
             in_chans=in_chans, out_chans=chans, ext_chans=ext_chans,
             min_ext_size=min_ext_size, max_ext_size=max_ext_size, use_bias=use_ext_bias)
 
+        self.ccam1 = CCAMBlock(chans, (640, 368))
         self.pool = nn.AvgPool2d(2)
         self.interp = Bilinear()
 
@@ -109,7 +120,10 @@ class UnetKS(nn.Module):
 
         for n in range(num_pool_layers - 1):
             conv = ConvBlock(in_chans=ch, out_chans=ch * 2)
+            # down_ccam = CCAMBlock(ch * 2, (math.floor(640 / (n+2)), math.floor(368 / (n+2))))
             self.down_sample_layers.append(conv)
+            # if n < 2:
+            #     self.down_sample_layers.append(down_ccam)
             ch *= 2
 
         self.conv_mid = ConvBlock(in_chans=ch, out_chans=ch)
@@ -128,6 +142,7 @@ class UnetKS(nn.Module):
     def forward(self, tensor):
         stack = list()
         output = self.extractor(tensor)
+        output = self.ccam1(output)
         stack.append(output)
         output = self.pool(output)
 

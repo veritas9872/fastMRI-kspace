@@ -1,6 +1,6 @@
 import torch
 from torch import nn, optim
-
+from torchsummary import summary
 from pathlib import Path
 
 from utils.run_utils import initialize, save_dict_as_json, get_logger, create_arg_parser
@@ -11,6 +11,7 @@ from data.input_transforms import Prefetch2Device, TrainPreProcessK
 from data.output_transforms import OutputReplaceTransformK
 
 from models.ks_unet import UnetKS
+from models.ks_attention_unet import UnetKSA
 from train.model_trainers.model_trainer_IMG import ModelTrainerIMG
 from metrics.custom_losses import CSSIM
 
@@ -69,7 +70,7 @@ def train_img(args):
     data_prefetch = Prefetch2Device(device)
 
     input_train_transform = TrainPreProcessK(mask_func, args.challenge, args.device, use_seed=False, divisor=divisor)
-    input_val_transform = TrainPreProcessK(mask_func, args.challenge, args.device, use_seed=False, divisor=divisor)
+    input_val_transform = TrainPreProcessK(mask_func, args.challenge, args.device, use_seed=True, divisor=divisor)
 
     # train_transform = InputTransformK(mask_func, args.challenge, args.device, use_seed=False, divisor=divisor)
     # val_transform = InputTransformK(mask_func, args.challenge, args.device, use_seed=True, divisor=divisor)
@@ -79,16 +80,23 @@ def train_img(args):
 
     losses = dict(
         cmg_loss=nn.MSELoss(reduction='mean'),
-        img_loss=CSSIM(filter_size=7)
+        img_loss1=CSSIM(filter_size=7),
+        img_loss2=nn.L1Loss(reduction='mean')
     )
 
     output_transform = OutputReplaceTransformK()
 
     data_chans = 2 if args.challenge == 'singlecoil' else 30  # Multicoil has 15 coils with 2 for real/imag
 
-    model = UnetKS(in_chans=data_chans, out_chans=data_chans, ext_chans=args.chans, chans=args.chans,
+    # model = UnetKS(in_chans=data_chans, out_chans=data_chans, ext_chans=args.chans, chans=args.chans,
+    #                num_pool_layers=args.num_pool_layers, min_ext_size=args.min_ext_size, max_ext_size=args.max_ext_size,
+    #                use_ext_bias=True).to(device)
+
+    model = UnetKSA(in_chans=data_chans, out_chans=data_chans, ext_chans=args.chans, chans=args.chans,
                    num_pool_layers=args.num_pool_layers, min_ext_size=args.min_ext_size, max_ext_size=args.max_ext_size,
                    use_ext_bias=True).to(device)
+
+    # summary(model, input_size=(30, 640, 368))
 
     optimizer = optim.Adam(model.parameters(), lr=args.init_lr)
 
@@ -105,31 +113,32 @@ if __name__ == '__main__':
     settings = dict(
         # Variables that almost never change.
         challenge='multicoil',
-        data_root='/media/veritas/D/FastMRI',
+        data_root='/media/harry/mri/fastMRI_data',
         log_root='./logs',
         ckpt_root='./checkpoints',
         batch_size=1,  # This MUST be 1 for now.
         chans=32,
         num_pool_layers=4,
         save_best_only=True,
-        center_fractions=[0.08, 0.04],
-        accelerations=[4, 8],
+        center_fractions=[0.16, 0.08],
+        accelerations=[2, 4],
         smoothing_factor=8,
 
         # Variables that occasionally change.
-        max_images=8,  # Maximum number of images to save.
-        num_workers=4,
-        init_lr=1E-3,
-        gpu=1,  # Set to None for CPU mode.
+        max_images=6,  # Maximum number of images to save.
+        num_workers=1,
+        init_lr=1E-4,
+        gpu=0,  # Set to None for CPU mode.
         max_to_keep=1,
-        img_lambda=100,
+        img_lambda1=10,
+        img_lambda2=1,
 
         start_slice=10,
         min_ext_size=3,
-        max_ext_size=15,
+        max_ext_size=11,
 
         # Variables that change frequently.
-        sample_rate=0.025,
+        sample_rate=0.1,
         num_epochs=50,
         verbose=False,
         use_slice_metrics=True,  # Using slice metrics causes a 30% increase in training time.
