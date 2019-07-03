@@ -5,7 +5,6 @@ from pathlib import Path
 
 from utils.run_utils import initialize, save_dict_as_json, get_logger, create_arg_parser
 from utils.train_utils import create_custom_data_loaders
-from utils.modelsummary import summary
 
 from train.subsample import MaskFunc
 from data.input_transforms import Prefetch2Device, TrainPreProcessK
@@ -13,7 +12,8 @@ from data.output_transforms import OutputReplaceTransformK
 
 from models.ase_unet import UnetASE
 from train.model_trainers.model_trainer_K2CI import ModelTrainerK2CI
-# from metrics.custom_losses import CSSIM
+from metrics.custom_losses import CSSIM
+from metrics.combination_losses import L1CSSIM7
 
 
 def train_img(args):
@@ -77,7 +77,7 @@ def train_img(args):
 
     losses = dict(
         cmg_loss=nn.MSELoss(reduction='mean'),
-        img_loss=nn.L1Loss(reduction='mean')
+        img_loss=L1CSSIM7(reduction='mean', alpha=0.5)
     )
 
     output_transform = OutputReplaceTransformK()
@@ -102,6 +102,9 @@ def train_img(args):
 
 
 if __name__ == '__main__':
+    project_name = 'fastMRI-kspace'
+    assert Path.cwd().name == project_name, f'Current working directory set at {Path.cwd()}, not {project_name}!'
+
     settings = dict(
         # Variables that almost never change.
         challenge='multicoil',
@@ -119,18 +122,17 @@ if __name__ == '__main__':
         # Variables that occasionally change.
         max_images=6,  # Maximum number of images to save.
         num_workers=1,
-        init_lr=2E-4,
+        init_lr=1.E-3,
         gpu=1,  # Set to None for CPU mode.
         max_to_keep=0,
-        img_lambda=32,
-
         start_slice=10,
-        min_ext_size=1,
-        max_ext_size=11,
 
         # Variables that change frequently.
         sample_rate=0.02,
+        img_lambda=32,
         num_epochs=10,
+        min_ext_size=1,
+        max_ext_size=11,
         verbose=False,
         use_slice_metrics=True,  # Using slice metrics causes a 30% increase in training time.
         lr_red_epoch=20,

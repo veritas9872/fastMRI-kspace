@@ -99,7 +99,7 @@ class UnetASE(nn.Module):
 
         self.pool = nn.AvgPool2d(2)
         self.interp = Bilinear()
-
+        self.input_att = ChannelAttention()
         self.down_sample_layers = nn.ModuleList()
         ch = chans
 
@@ -124,6 +124,8 @@ class UnetASE(nn.Module):
     def forward(self, tensor):
         stack = list()
         output = self.extractor(tensor)
+        # Added channel attention to input layer after feature extraction, compression, and ReLU.
+        output = self.input_att(output)
         stack.append(output)
         output = self.pool(output)
 
