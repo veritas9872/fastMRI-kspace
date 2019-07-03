@@ -11,14 +11,14 @@ For most systems, File I/O is the bottleneck for training speed.
 """
 
 
-def check_chunk_size(kspace, chunk, file):
+def check_chunk_size(data, chunk, file):
     mb = 2 ** 20  # megabyte
-    chunk_bytes = np.prod(chunk) * kspace.itemsize
+    chunk_bytes = np.prod(chunk) * data.itemsize
     if chunk_bytes > mb:
         warnings.warn(f'kspace chunk size for {file} is greater than 1MB. '
                       f'Specified chunk size is {chunk_bytes} for chunk configuration of {chunk}'
                       f'Please reconsider chunk size configurations. '
-                      f'A chunk size greater than 1MB cannot utilize HDF5 caching.')
+                      f'A chunk size greater than 1MB cannot utilize HDF5 caching by default.')
 
 
 def make_compressed_dataset(data_folder, save_dir, **save_params):
@@ -89,7 +89,7 @@ if __name__ == '__main__':
     val_dir = '/media/veritas/E/fastMRI/multicoil_val'
     test_dir = '/media/veritas/E/fastMRI/multicoil_test'
 
-    data_root = '/media/veritas/F/newCompFastMRI'  # Compressed Fast MRI Dataset
+    data_root = '/media/veritas/D/FastMRI'  # Compressed Fast MRI Dataset
     data_path_ = Path(data_root)
 
     # For floating point values, I have found that gzip level 1 and 9 give almost the same compression.
@@ -99,12 +99,13 @@ if __name__ == '__main__':
     # when used with the shuffle filter. They both reduce the data by about half.
     # The differences are not great enough to justify the extra computational cost of higher gzip levels.
     # The differences do justify using gzip over lzf, however.
-    gzip = dict(compression='gzip', compression_opts=1, shuffle=True, fletcher32=True)
+    kwargs = dict(compression='gzip', compression_opts=1, shuffle=True, fletcher32=False)
+    # kwargs = dict(compression='lzf', shuffle=True)
 
     # Use compression if storing on hard drive, not SSD.
-    make_compressed_dataset(train_dir, data_root, **gzip)
-    make_compressed_dataset(val_dir, data_root, **gzip)
-    make_compressed_dataset(test_dir, data_root, **gzip)
+    make_compressed_dataset(train_dir, data_root, **kwargs)
+    make_compressed_dataset(val_dir, data_root, **kwargs)
+    make_compressed_dataset(test_dir, data_root, **kwargs)
 
     # check_same(train_dir, data_path_ / 'new_singlecoil_train')
     # check_same(val_dir, data_path_ / 'new_singlecoil_val')

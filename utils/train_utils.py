@@ -5,8 +5,9 @@ import torch.nn.functional as F
 
 from pathlib import Path
 
-from data.mri_data import SliceData
-from data.data_transforms import complex_abs
+from data.mri_data import SliceData, CustomSliceData
+from data.data_transforms import complex_abs, ifft2
+from data.input_transforms import Prefetch2Device
 
 
 class CheckpointManager:
@@ -107,9 +108,11 @@ class CheckpointManager:
         save_dict = torch.load(load_dir)
 
         self.model.load_state_dict(save_dict['model_state_dict'])
+        print(f'Loaded model parameters from {load_dir}')
 
         if load_optimizer:
             self.optimizer.load_state_dict(save_dict['optimizer_state_dict'])
+            print(f'Loaded optimizer parameters from {load_dir}')
 
     def load_latest(self, load_root):
         load_root = Path(load_root)
@@ -145,8 +148,7 @@ def create_datasets(args, train_transform, val_transform):
         transform=train_transform,
         challenge=args.challenge,
         sample_rate=args.sample_rate,
-        use_gt=False,
-        converted=args.converted
+        use_gt=False
     )
 
     val_dataset = SliceData(
@@ -154,8 +156,7 @@ def create_datasets(args, train_transform, val_transform):
         transform=val_transform,
         challenge=args.challenge,
         sample_rate=args.sample_rate,
-        use_gt=False,
-        converted=args.converted
+        use_gt=False
     )
     return train_dataset, val_dataset
 
@@ -164,8 +165,15 @@ def single_collate_fn(batch):  # Returns `targets` as a 4D Tensor.
     """
     hack for single batch case.
     """
-    temp = batch[0]
-    return temp[0].unsqueeze(0), temp[1].unsqueeze(0), temp[2]
+    return batch[0][0].unsqueeze(0), batch[0][1].unsqueeze(0), batch[0][2]
+
+
+def single_triplet_collate_fn(batch):
+    return batch[0][0], batch[0][1], batch[0][2]
+
+
+def single_batch_collate_fn(batch):
+    return batch[0]
 
 
 def multi_collate_fn(batch):
@@ -231,46 +239,98 @@ def create_data_loaders(args, train_transform, val_transform):
     return train_loader, val_loader
 
 
-def make_grid_triplet(image_recons, targets):
+def create_custom_datasets(args, transform=None):
+
+    transform = Prefetch2Device(device=args.device) if transform is None else transform
+
+    # Generating Datasets.
+    train_dataset = CustomSliceData(
+        root=Path(args.data_root) / f'{args.challenge}_train',
+        transform=transform,
+        challenge=args.challenge,
+        sample_rate=args.sample_rate,
+        start_slice=args.start_slice,
+        use_gt=False
+    )
+
+    val_dataset = CustomSliceData(
+        root=Path(args.data_root) / f'{args.challenge}_val',
+        transform=transform,
+        challenge=args.challenge,
+        sample_rate=args.sample_rate,
+        start_slice=args.start_slice,
+        use_gt=False
+    )
+    return train_dataset, val_dataset
+
+
+def create_custom_data_loaders(args, transform=None):
+    train_dataset, val_dataset = create_custom_datasets(args, transform)
+
+    if args.batch_size > 1:
+        raise NotImplementedError('Batch size should be 1 for now.')
+
+    collate_fn = single_batch_collate_fn
+
+    # Generating Data Loaders
+    train_loader = DataLoader(
+        dataset=train_dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=args.num_workers,
+        pin_memory=False,
+        collate_fn=collate_fn
+    )
+
+    val_loader = DataLoader(
+        dataset=val_dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        pin_memory=False,
+        collate_fn=collate_fn
+    )
+    return train_loader, val_loader
+
+
+def make_grid_triplet(image_recons, image_targets):
 
     # Simple hack. Just use the first element if the input is a list for batching implementation.
-    if isinstance(image_recons, list) and isinstance(targets, list):
+    if isinstance(image_recons, list) and isinstance(image_targets, list):
         # Recall that in the mini-batched implementation, the outputs are lists of 3D Tensors.
         image_recons = image_recons[0].unsqueeze(dim=0)
-        targets = targets[0].unsqueeze(dim=0)
+        image_targets = image_targets[0].unsqueeze(dim=0)
 
     if image_recons.size(0) > 1:
         raise NotImplementedError('Mini-batch size greater than 1 has not been implemented yet.')
 
-    assert image_recons.size() == targets.size()
+    assert image_recons.size() == image_targets.size()
 
-    large = torch.max(targets)
-    small = torch.min(targets)
+    large = torch.max(image_targets)
+    small = torch.min(image_targets)
     diff = large - small
 
     # Scaling to 0~1 range.
-    image_recons = (image_recons.clamp(min=small, max=large) - small) / diff
-    targets = (targets - small) / diff
+    image_recons = (image_recons.clamp(min=small, max=large) - small) * (torch.tensor(1) / diff)
+    image_targets = (image_targets - small) * (torch.tensor(1) / diff)
 
     # Send to CPU if necessary. Assumes batch size of 1.
-    image_recons = image_recons.detach().cpu().squeeze(dim=0)
-    targets = targets.detach().cpu().squeeze(dim=0)
+    image_recons = image_recons.detach().squeeze(dim=0)
+    image_targets = image_targets.detach().squeeze(dim=0)
 
     if image_recons.size(0) == 15:
         image_recons = torch.cat(torch.chunk(image_recons.view(-1, image_recons.size(-1)), chunks=5, dim=0), dim=1)
-        targets = torch.cat(torch.chunk(targets.view(-1, targets.size(-1)), chunks=5, dim=0), dim=1)
-    elif image_recons.size(0) == 1:
-        image_recons = image_recons.squeeze()
-        targets = targets.squeeze()
-    else:
-        raise ValueError('Invalid dimensions!')
+        image_targets = torch.cat(torch.chunk(image_targets.view(-1, image_targets.size(-1)), chunks=5, dim=0), dim=1)
 
-    deltas = targets - image_recons
+    image_recons = image_recons.squeeze().cpu()
+    image_targets = image_targets.squeeze().cpu()
 
-    return image_recons, targets, deltas
+    deltas = image_targets - image_recons
+
+    return image_recons, image_targets, deltas
 
 
-def make_k_grid(kspace_recons):
+def make_k_grid(kspace_recons, smoothing_factor=8):
     """
     Function for making k-space visualizations for Tensorboard.
     """
@@ -281,12 +341,29 @@ def make_k_grid(kspace_recons):
     if kspace_recons.size(0) > 1:
         raise NotImplementedError('Mini-batch size greater than 1 has not been implemented yet.')
 
-    kspace_recons = torch.log10(complex_abs(kspace_recons)).cpu().squeeze(dim=0)
+    # Assumes that the smallest values will be close enough to 0 as to not matter much.
+    kspace_view = complex_abs(kspace_recons.detach()).squeeze(dim=0)
+    # Scaling & smoothing.
+    # smoothing_factor converted to float32 tensor. expm1 and log1p require float32 tensors.
+    # They cannot accept python integers.
+    sf = torch.tensor(smoothing_factor, dtype=torch.float32)
+    kspace_view *= torch.expm1(sf) / kspace_view.max()
+    kspace_view = torch.log1p(kspace_view)  # Adds 1 to input for natural log.
+    kspace_view /= kspace_view.max()  # Normalization to 0~1 range.
 
-    if kspace_recons.size(0) == 15:
-        kspace_recons = \
-            torch.cat(torch.chunk(kspace_recons.view(-1, kspace_recons.size(-1)), chunks=5, dim=0), dim=1)
+    if kspace_view.size(0) == 15:
+        kspace_view = torch.cat(torch.chunk(kspace_view.view(-1, kspace_view.size(-1)), chunks=5, dim=0), dim=1)
 
-    kspace_recons = kspace_recons.squeeze()
-    return kspace_recons
+    return kspace_view.squeeze().cpu()
 
+
+def visualize_from_kspace(kspace_recons, kspace_targets, smoothing_factor=4):
+    """
+    Assumes that all values are on the same scale and have the same shape.
+    """
+    image_recons = complex_abs(ifft2(kspace_recons))
+    image_targets = complex_abs(ifft2(kspace_targets))
+    image_recons, image_targets, image_deltas = make_grid_triplet(image_recons, image_targets)
+    kspace_targets = make_k_grid(kspace_targets, smoothing_factor)
+    kspace_recons = make_k_grid(kspace_recons, smoothing_factor)
+    return kspace_recons, kspace_targets, image_recons, image_targets, image_deltas

@@ -11,7 +11,7 @@ from utils.train_utils import CheckpointManager, make_grid_triplet, make_k_grid
 from utils.run_utils import get_logger
 
 
-class ModelTrainerK:
+class ModelTrainerK2I:
     """
     Model Trainer for K-space learning.
     Please note a bit of terminology.
@@ -103,7 +103,7 @@ class ModelTrainerK:
 
             if self.scheduler is not None:
                 if self.metric_scheduler:  # If the scheduler is a metric based scheduler, include metrics.
-                    self.scheduler.step(metrics=val_epoch_metrics)
+                    self.scheduler.step(metrics=val_epoch_loss)
                 else:
                     self.scheduler.step()
 
