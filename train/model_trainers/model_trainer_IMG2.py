@@ -209,9 +209,10 @@ class ModelTrainerIMG:
         outputs = self.model(inputs)
         recons = self.output_transform(outputs, targets, extra_params)
         cmg_loss = self.losses['cmg_loss'](recons['cmg_recons'], targets['cmg_targets'])
-        img_loss = self.losses['img_loss'](recons['img_recons'], targets['img_targets'])
-        step_loss = cmg_loss + self.img_lambda * img_loss
-        step_metrics = {'cmg_loss': cmg_loss, 'img_loss': img_loss}
+        img_loss1 = self.losses['img_loss1'](recons['img_recons'], targets['img_targets'])
+        img_loss2 = self.losses['img_loss2'](recons['img_recons'], targets['img_targets'])
+        step_loss = cmg_loss + self.img_lambda1 * img_loss1 + self.img_lambda2 * img_loss2
+        step_metrics = {'cmg_loss': cmg_loss, 'img_loss1': img_loss1, 'img_loss2': img_loss2}
         return recons, step_loss, step_metrics
 
     @staticmethod

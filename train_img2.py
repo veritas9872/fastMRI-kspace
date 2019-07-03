@@ -80,7 +80,8 @@ def train_img(args):
 
     losses = dict(
         cmg_loss=nn.MSELoss(reduction='mean'),
-        img_loss=CSSIM(filter_size=7)
+        img_loss1=CSSIM(filter_size=7),
+        img_loss2=nn.L1Loss(reduction='mean')
     )
 
     output_transform = OutputReplaceTransformK()
@@ -129,7 +130,8 @@ if __name__ == '__main__':
         init_lr=1E-4,
         gpu=0,  # Set to None for CPU mode.
         max_to_keep=1,
-        img_lambda=10,
+        img_lambda1=10,
+        img_lambda2=1,
 
         start_slice=10,
         min_ext_size=3,
