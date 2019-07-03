@@ -5,6 +5,15 @@ import time
 import json
 
 
+def clean_empty_dirs(ckpt_root, log_root):
+    ckpt_root = Path(ckpt_root)
+    log_root = Path(log_root)
+
+    assert ckpt_root.exists() and log_root.exists(), 'The given root directories do not exist.'
+
+
+
+
 def initialize(ckpt_dir):
     ckpt_path = Path(ckpt_dir)  # If a string is entered, convert to Path object.
     if not ckpt_path.exists():

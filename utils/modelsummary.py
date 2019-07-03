@@ -63,6 +63,10 @@ def summary(model, input1_size, input2_size, batch_size=-1, device="cuda", displ
     # disp_func(x.shape)
     model(*x, *x2)
 
+    # Delete unnecessary tensors. Adding this just in case.
+    x.clear()
+    x2.clear()
+
     # remove these hooks
     for h in hooks:
         h.remove()

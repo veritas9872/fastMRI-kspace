@@ -5,14 +5,15 @@ from pathlib import Path
 
 from utils.run_utils import initialize, save_dict_as_json, get_logger, create_arg_parser
 from utils.train_utils import create_custom_data_loaders
+from utils.modelsummary import summary
 
 from train.subsample import MaskFunc
 from data.input_transforms import Prefetch2Device, TrainPreProcessK
 from data.output_transforms import OutputReplaceTransformK
 
-from models.ks_unet import UnetKS
-from train.model_trainers.model_trainer_IMG import ModelTrainerIMG
-from metrics.custom_losses import CSSIM
+from models.ase_unet import UnetASE
+from train.model_trainers.model_trainer_K2CI import ModelTrainerK2CI
+# from metrics.custom_losses import CSSIM
 
 
 def train_img(args):
@@ -71,34 +72,33 @@ def train_img(args):
     input_train_transform = TrainPreProcessK(mask_func, args.challenge, args.device, use_seed=False, divisor=divisor)
     input_val_transform = TrainPreProcessK(mask_func, args.challenge, args.device, use_seed=True, divisor=divisor)
 
-    # train_transform = InputTransformK(mask_func, args.challenge, args.device, use_seed=False, divisor=divisor)
-    # val_transform = InputTransformK(mask_func, args.challenge, args.device, use_seed=True, divisor=divisor)
-
     # DataLoaders
     train_loader, val_loader = create_custom_data_loaders(args, transform=data_prefetch)
 
     losses = dict(
         cmg_loss=nn.MSELoss(reduction='mean'),
-        img_loss=CSSIM(filter_size=7)
+        img_loss=nn.L1Loss(reduction='mean')
     )
 
     output_transform = OutputReplaceTransformK()
 
     data_chans = 2 if args.challenge == 'singlecoil' else 30  # Multicoil has 15 coils with 2 for real/imag
 
-    model = UnetKS(in_chans=data_chans, out_chans=data_chans, ext_chans=args.chans, chans=args.chans,
-                   num_pool_layers=args.num_pool_layers, min_ext_size=args.min_ext_size, max_ext_size=args.max_ext_size,
-                   use_ext_bias=args.use_ext_bias).to(device)
+    model = UnetASE(in_chans=data_chans, out_chans=data_chans, ext_chans=args.chans, chans=args.chans,
+                    num_pool_layers=args.num_pool_layers, min_ext_size=args.min_ext_size,
+                    max_ext_size=args.max_ext_size, use_ext_bias=args.use_ext_bias).to(device)
 
     optimizer = optim.Adam(model.parameters(), lr=args.init_lr)
 
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=args.lr_red_epoch, gamma=args.lr_red_rate)
 
-    trainer = ModelTrainerIMG(args, model, optimizer, train_loader, val_loader,
-                              input_train_transform, input_val_transform, output_transform, losses, scheduler)
+    trainer = ModelTrainerK2CI(args, model, optimizer, train_loader, val_loader,
+                               input_train_transform, input_val_transform, output_transform, losses, scheduler)
 
-    # TODO: Implement logging of model, losses, transforms, etc.
     trainer.train_model()
+
+    # TODO: Maybe implement automatic deletion of empty log and checkpoint files
+    #  that were created from failed or excessively short runs.
 
 
 if __name__ == '__main__':
@@ -117,23 +117,23 @@ if __name__ == '__main__':
         smoothing_factor=8,
 
         # Variables that occasionally change.
-        max_images=8,  # Maximum number of images to save.
+        max_images=6,  # Maximum number of images to save.
         num_workers=1,
-        init_lr=1E-4,
-        gpu=0,  # Set to None for CPU mode.
-        max_to_keep=1,
-        img_lambda=100,
+        init_lr=2E-4,
+        gpu=1,  # Set to None for CPU mode.
+        max_to_keep=0,
+        img_lambda=32,
 
         start_slice=10,
-        min_ext_size=3,  # 1x1 extractor is included by default.
-        max_ext_size=11,  # This trial is running with max 11 extractors!!!
+        min_ext_size=1,
+        max_ext_size=11,
 
         # Variables that change frequently.
         sample_rate=0.02,
-        num_epochs=50,
+        num_epochs=10,
         verbose=False,
         use_slice_metrics=True,  # Using slice metrics causes a 30% increase in training time.
-        lr_red_epoch=40,
+        lr_red_epoch=20,
         lr_red_rate=0.1,
         use_ext_bias=True
         # prev_model_ckpt='',
