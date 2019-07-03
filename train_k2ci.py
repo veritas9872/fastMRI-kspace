@@ -77,7 +77,8 @@ def train_img(args):
 
     losses = dict(
         cmg_loss=nn.MSELoss(reduction='mean'),
-        img_loss=L1CSSIM7(reduction='mean', alpha=0.5)
+        # img_loss=L1CSSIM7(reduction='mean', alpha=0.5)
+        img_loss=CSSIM(filter_size=7, reduction='mean')
     )
 
     output_transform = OutputReplaceTransformK()
@@ -129,9 +130,9 @@ if __name__ == '__main__':
 
         # Variables that change frequently.
         sample_rate=0.02,
-        img_lambda=32,
-        num_epochs=10,
-        min_ext_size=1,
+        img_lambda=64,
+        num_epochs=30,
+        min_ext_size=3,
         max_ext_size=11,
         verbose=False,
         use_slice_metrics=True,  # Using slice metrics causes a 30% increase in training time.
