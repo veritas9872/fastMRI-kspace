@@ -29,8 +29,9 @@ class ModelTrainerK2CI:
     def __init__(self, args, model, optimizer, train_loader, val_loader,
                  input_train_transform, input_val_transform, output_transform, losses, scheduler=None):
 
-        # Allow multiple processes to access tensors on GPU.
-        multiprocessing.set_start_method(method='spawn')
+        # Allow multiple processes to access tensors on GPU. Add checking for multiple continuous runs.
+        if multiprocessing.get_start_method(allow_none=True) is None:
+            multiprocessing.set_start_method(method='spawn')
 
         self.logger = get_logger(name=__name__, save_file=args.log_path / args.run_name)
 

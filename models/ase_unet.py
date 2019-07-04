@@ -2,48 +2,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-
-class ChannelAttention(nn.Module):
-    def __init__(self, num_chans, reduction=16, use_gap=True, use_gmp=True):
-        super().__init__()
-        self.gap = nn.AdaptiveAvgPool2d(output_size=(1, 1))  # Global Average Pooling.
-        self.gmp = nn.AdaptiveMaxPool2d(output_size=(1, 1))  # Global Maximum Pooling.
-
-        self.use_gap = use_gap
-        self.use_gmp = use_gmp
-
-        self.layer = nn.Sequential(
-            nn.Linear(in_features=num_chans, out_features=num_chans // reduction),
-            nn.ReLU(),
-            nn.Linear(in_features=num_chans // reduction, out_features=num_chans)
-        )
-
-        self.sigmoid = nn.Sigmoid()
-
-    def forward(self, tensor):
-        batch, chans, _, _ = tensor.shape
-        if self.use_gap and self.use_gmp:
-            gap = self.gap(tensor).view(batch, chans)
-            gmp = self.gmp(tensor).view(batch, chans)
-            # Maybe batch-norm the two pooling types to make their scales more similar.
-            # This might make training slower, however.
-            features = self.layer(gap) + self.layer(gmp)
-            att = self.sigmoid(features).view(batch, chans, 1, 1)
-
-        elif self.use_gap:
-            gap = self.gap(tensor).view(batch, chans)
-            features = self.layer(gap)
-            att = self.sigmoid(features).view(batch, chans, 1, 1)
-
-        elif self.use_gmp:
-            gmp = self.gmp(tensor).view(batch, chans)
-            features = self.layer(gmp)
-            att = self.sigmoid(features).view(batch, chans, 1, 1)
-
-        else:
-            att = 1
-
-        return tensor * att
+from models.attention import ChannelAttention
 
 
 class AsymmetricSignalExtractor(nn.Module):
@@ -60,12 +19,8 @@ class AsymmetricSignalExtractor(nn.Module):
             conv = nn.Conv2d(in_chans, ext_chans, kernel_size=1, bias=use_bias)
             self.ext_layers.append(conv)
 
-        # I think that 3x3 kernels do not need the 1x3, 3x1 separation.
-        if min_ext_size <= 3 <= max_ext_size:
-            conv = nn.Conv2d(in_chans, ext_chans, kernel_size=3, padding=1, bias=use_bias)
-            self.ext_layers.append(conv)
-
-        min_ext_size = max(min_ext_size, 5)
+        min_ext_size = max(min_ext_size, 3)
+        # print(f'min_ext_size: {min_ext_size}')  # For debugging
         # The cases where the maximum size is smaller than 5 will automatically be dealt with by the for-loop.
         for size in range(min_ext_size, max_ext_size + 1, 2):
             # Left-right, then up-down. This is because of the sampling pattern.
@@ -116,7 +71,7 @@ class Bilinear(nn.Module):
 
 class UnetASE(nn.Module):
     def __init__(self, in_chans, out_chans, ext_chans, chans, num_pool_layers,
-                 min_ext_size, max_ext_size, use_ext_bias=True):
+                 min_ext_size, max_ext_size, use_ext_bias=True, use_att=True):
 
         super().__init__()
         self.extractor = AsymmetricSignalExtractor(
@@ -126,6 +81,7 @@ class UnetASE(nn.Module):
         self.pool = nn.AvgPool2d(2)
         self.interp = Bilinear()
         self.input_att = ChannelAttention(num_chans=chans, reduction=16, use_gap=True, use_gmp=True)
+        self.use_att = use_att
         self.down_sample_layers = nn.ModuleList()
         ch = chans
 
@@ -151,7 +107,8 @@ class UnetASE(nn.Module):
         stack = list()
         output = self.extractor(tensor)
         # Added channel attention to input layer after feature extraction, compression, and ReLU.
-        output = self.input_att(output)
+        if self.use_att:
+            output = self.input_att(output)
         stack.append(output)
         output = self.pool(output)
 

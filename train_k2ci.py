@@ -16,6 +16,16 @@ from metrics.custom_losses import CSSIM
 from metrics.combination_losses import L1CSSIM7
 
 
+"""
+Memo: I have found that there is a great deal of variation in performance when training.
+Even under the same settings, the results can be extremely different when using small numbers of samples. 
+I believe that this is because of the large degree of variation in data quality in the dataset.
+Therefore, demonstrating that one method works better than another requires using a large portion of the dataset.
+However, this takes a lot of time...
+Using small datasets for multiple runs may also prove useful.
+"""
+
+
 def train_img(args):
 
     # Maybe move this to args later.
@@ -87,7 +97,7 @@ def train_img(args):
 
     model = UnetASE(in_chans=data_chans, out_chans=data_chans, ext_chans=args.chans, chans=args.chans,
                     num_pool_layers=args.num_pool_layers, min_ext_size=args.min_ext_size,
-                    max_ext_size=args.max_ext_size, use_ext_bias=args.use_ext_bias).to(device)
+                    max_ext_size=args.max_ext_size, use_ext_bias=args.use_ext_bias, use_att=False).to(device)
 
     optimizer = optim.Adam(model.parameters(), lr=args.init_lr)
 
@@ -123,17 +133,17 @@ if __name__ == '__main__':
         # Variables that occasionally change.
         max_images=6,  # Maximum number of images to save.
         num_workers=1,
-        init_lr=1.E-3,
+        init_lr=1E-3,
         gpu=1,  # Set to None for CPU mode.
         max_to_keep=0,
         start_slice=10,
 
         # Variables that change frequently.
-        sample_rate=0.02,
-        img_lambda=64,
-        num_epochs=30,
-        min_ext_size=3,
-        max_ext_size=11,
+        sample_rate=0.05,
+        img_lambda=8,
+        num_epochs=10,
+        min_ext_size=1,
+        max_ext_size=15,
         verbose=False,
         use_slice_metrics=True,  # Using slice metrics causes a 30% increase in training time.
         lr_red_epoch=20,
