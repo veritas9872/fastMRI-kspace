@@ -1,4 +1,5 @@
 import torch
+from torch import nn
 import torch.nn.functional as F
 
 import numpy as np
@@ -110,15 +111,12 @@ class TrainPreProcessK:
             masked_kspace, mask = apply_mask(kspace_target, self.mask_func, seed)
 
             k_scale = torch.std(masked_kspace)
-            k_scaling = torch.tensor(1) / k_scale
+            k_scaling = 1 / k_scale
 
             masked_kspace *= k_scaling  # Multiplication is faster than division.
             masked_kspace = kspace_to_nchw(masked_kspace)
 
             extra_params = {'k_scales': k_scale, 'masks': mask}
-
-            # Target must be on the same scale as the inputs for scale invariance of data.
-            # kspace_target *= (torch.tensor(1) / k_scale)
 
             # Recall that the Fourier transform is a linear transform.
             # Performing scaling after ifft for numerical stability
@@ -141,17 +139,23 @@ class TrainPreProcessK:
         return inputs, targets, extra_params
 
 
-class PartialKPreProcess:
-    def __init__(self, mask_func, challenge, device, use_seed=True, divisor=1):
+class PreProcessSemiK(nn.Module):
+    def __init__(self, mask_func, challenge, device, use_seed=True, divisor=1, direction='height'):
+        super().__init__()
         if challenge not in ('singlecoil', 'multicoil'):
             raise ValueError(f'Challenge should either be "singlecoil" or "multicoil"')
+
+        if direction not in ('height', 'width'):
+            raise ValueError('`direction` should either be `height` or `width')
+
         self.mask_func = mask_func
         self.challenge = challenge
         self.device = device
         self.use_seed = use_seed
         self.divisor = divisor
+        self.direction = direction
 
-    def __call__(self, kspace_target, target, attrs, file_name, slice_num):
+    def forward(self, kspace_target, target, attrs, file_name, slice_num):
         assert isinstance(kspace_target, torch.Tensor)
         if kspace_target.dim() == 4:  # If the collate function does not expand dimensions.
             kspace_target = kspace_target.unsqueeze(dim=0)
@@ -166,7 +170,30 @@ class PartialKPreProcess:
             seed = None if not self.use_seed else tuple(map(ord, file_name))
             masked_kspace, mask = apply_mask(kspace_target, self.mask_func, seed)
 
+            masked_semi_kspace = ifft1(masked_kspace, direction=self.direction)
+            sks_scale = torch.std(masked_semi_kspace)  # SKS: Semi-kspace.
+            sks_scaling = 1 / sks_scale
 
+            masked_semi_kspace = kspace_to_nchw(masked_semi_kspace * sks_scaling)
 
+            extra_params = {'sks_scales': sks_scale, 'masks': mask}
 
+            cmg_target = ifft2(kspace_target) * sks_scaling
+            img_target = complex_abs(cmg_target)
+            sks_target = ifft1(kspace_target, direction=self.direction) * sks_scaling
+
+            # Use plurals as keys to reduce confusion.
+            targets = {'sks_targets': sks_target, 'kspace_targets': kspace_target,
+                       'cmg_targets': cmg_target, 'img_targets': img_target}
+
+            margin = masked_semi_kspace.size(-1) % self.divisor
+            if margin > 0:
+                pad = [(self.divisor - margin) // 2, (1 + self.divisor - margin) // 2]
+            else:  # This prevents padding by half the divisor when margin=0.
+                pad = [0, 0]
+
+            # This pads at the last dimension of a tensor with 0.
+            inputs = F.pad(masked_semi_kspace, pad=pad, value=0)
+
+        return inputs, targets, extra_params
 
