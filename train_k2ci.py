@@ -123,7 +123,6 @@ if __name__ == '__main__':
         log_root='./logs',
         ckpt_root='./checkpoints',
         batch_size=1,  # This MUST be 1 for now.
-        chans=32,
         num_pool_layers=4,
         save_best_only=True,
         center_fractions=[0.08, 0.04],
@@ -131,15 +130,16 @@ if __name__ == '__main__':
         smoothing_factor=8,
 
         # Variables that occasionally change.
-        max_images=6,  # Maximum number of images to save.
+        chans=8,
+        max_images=8,  # Maximum number of images to save.
         num_workers=1,
         init_lr=1E-3,
-        gpu=1,  # Set to None for CPU mode.
+        gpu=0,  # Set to None for CPU mode.
         max_to_keep=0,
         start_slice=10,
 
         # Variables that change frequently.
-        sample_rate=0.05,
+        sample_rate=0.25,
         img_lambda=8,
         num_epochs=10,
         min_ext_size=1,

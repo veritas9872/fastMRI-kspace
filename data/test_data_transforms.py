@@ -63,6 +63,120 @@ def test_ifft2(shape):
     assert np.allclose(out_torch, out_numpy)
 
 
+# @pytest.mark.parametrize('shape', [
+#     [3, 3],
+#     [4, 6],
+#     [10, 8, 4],
+# ])
+# def test_fft1(shape):
+#     shape = shape + [2]
+#     tensor = create_tensor(shape)
+#     out_torch = data_transforms.fft1(tensor).numpy()
+#     out_torch = out_torch[..., 0] + 1j * out_torch[..., 1]
+#
+#     tensor_numpy = data_transforms.tensor_to_complex_np(tensor)
+#     tensor_numpy = np.fft.ifftshift(tensor_numpy, axes=-2)
+#     out_numpy = np.fft.fft(tensor_numpy, axis=-2, norm='ortho')
+#     out_numpy = np.fft.fftshift(out_numpy, axes=-2)
+#
+#     assert np.allclose(out_torch, out_numpy)
+#
+#
+# @pytest.mark.parametrize('shape', [
+#     [3, 3],
+#     [4, 6],
+#     [10, 8, 4],
+# ])
+# def test_ifft1(shape):
+#     shape = shape + [2]
+#     tensor = create_tensor(shape)
+#     out_torch = data_transforms.ifft1(tensor).numpy()
+#     out_torch = out_torch[..., 0] + 1j * out_torch[..., 1]
+#
+#     tensor_numpy = data_transforms.tensor_to_complex_np(tensor)
+#     tensor_numpy = np.fft.ifftshift(tensor_numpy, axes=-2)
+#     out_numpy = np.fft.ifft(tensor_numpy, axis=-2, norm='ortho')
+#     out_numpy = np.fft.fftshift(out_numpy, axes=-2)
+#
+#     assert np.allclose(out_torch, out_numpy)
+
+
+@pytest.mark.parametrize('shape', [
+    [3, 3],
+    [4, 6],
+    [10, 8, 4],
+])
+def test_fft1_height(shape):
+    shape = shape + [2]
+    tensor = create_tensor(shape)
+    out_torch = data_transforms.fft1(tensor, direction='height').numpy()
+    out_torch = out_torch[..., 0] + 1j * out_torch[..., 1]
+
+    tensor_numpy = data_transforms.tensor_to_complex_np(tensor)
+    tensor_numpy = np.fft.ifftshift(tensor_numpy, axes=-2)
+    out_numpy = np.fft.fft(tensor_numpy, axis=-2, norm='ortho')
+    out_numpy = np.fft.fftshift(out_numpy, axes=-2)
+
+    assert np.allclose(out_torch, out_numpy)
+
+
+@pytest.mark.parametrize('shape', [
+    [3, 3],
+    [4, 6],
+    [10, 8, 4],
+])
+def test_fft1_width(shape):
+    shape = shape + [2]
+    tensor = create_tensor(shape)
+    out_torch = data_transforms.fft1(tensor, direction='width').numpy()
+    out_torch = out_torch[..., 0] + 1j * out_torch[..., 1]
+
+    tensor_numpy = data_transforms.tensor_to_complex_np(tensor)
+    tensor_numpy = np.fft.ifftshift(tensor_numpy, axes=-1)
+    out_numpy = np.fft.fft(tensor_numpy, axis=-1, norm='ortho')
+    out_numpy = np.fft.fftshift(out_numpy, axes=-1)
+
+    assert np.allclose(out_torch, out_numpy)
+
+
+@pytest.mark.parametrize('shape', [
+    [3, 3],
+    [4, 6],
+    [10, 8, 4],
+])
+def test_ifft1_height(shape):
+    shape = shape + [2]
+    tensor = create_tensor(shape)
+    out_torch = data_transforms.ifft1(tensor, direction='height').numpy()
+    out_torch = out_torch[..., 0] + 1j * out_torch[..., 1]
+
+    tensor_numpy = data_transforms.tensor_to_complex_np(tensor)
+    tensor_numpy = np.fft.ifftshift(tensor_numpy, axes=-2)
+    out_numpy = np.fft.ifft(tensor_numpy, axis=-2, norm='ortho')
+    out_numpy = np.fft.fftshift(out_numpy, axes=-2)
+
+    assert np.allclose(out_torch, out_numpy)
+
+
+@pytest.mark.parametrize('shape', [
+    [3, 3],
+    [4, 6],
+    [10, 8, 4],
+])
+def test_ifft1_width(shape):
+    shape = shape + [2]
+    tensor = create_tensor(shape)
+    out_torch = data_transforms.ifft1(tensor, direction='width').numpy()
+    out_torch = out_torch[..., 0] + 1j * out_torch[..., 1]
+
+    tensor_numpy = data_transforms.tensor_to_complex_np(tensor)
+    tensor_numpy = np.fft.ifftshift(tensor_numpy, axes=-1)
+    out_numpy = np.fft.ifft(tensor_numpy, axis=-1, norm='ortho')
+    out_numpy = np.fft.fftshift(out_numpy, axes=-1)
+
+    assert np.allclose(out_torch, out_numpy)
+
+
 @pytest.mark.parametrize('shape', [
     [3, 3],
     [4, 6],

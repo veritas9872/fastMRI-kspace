@@ -3,7 +3,7 @@ import torch.nn.functional as F
 
 import numpy as np
 
-from data.data_transforms import to_tensor, ifft2, complex_abs, apply_mask, kspace_to_nchw
+from data.data_transforms import to_tensor, ifft2, complex_abs, apply_mask, kspace_to_nchw, ifft1
 
 
 class InputTransformK:
@@ -139,3 +139,34 @@ class TrainPreProcessK:
             inputs = F.pad(masked_kspace, pad=pad, value=0)
 
         return inputs, targets, extra_params
+
+
+class PartialKPreProcess:
+    def __init__(self, mask_func, challenge, device, use_seed=True, divisor=1):
+        if challenge not in ('singlecoil', 'multicoil'):
+            raise ValueError(f'Challenge should either be "singlecoil" or "multicoil"')
+        self.mask_func = mask_func
+        self.challenge = challenge
+        self.device = device
+        self.use_seed = use_seed
+        self.divisor = divisor
+
+    def __call__(self, kspace_target, target, attrs, file_name, slice_num):
+        assert isinstance(kspace_target, torch.Tensor)
+        if kspace_target.dim() == 4:  # If the collate function does not expand dimensions.
+            kspace_target = kspace_target.unsqueeze(dim=0)
+        elif kspace_target.dim() != 5:  # Expanded k-space should have 5 dimensions.
+            raise RuntimeError('k-space target has invalid shape!')
+
+        if kspace_target.size(0) != 1:
+            raise NotImplementedError('Batch size should be 1 for now.')
+
+        with torch.no_grad():
+            # Apply mask
+            seed = None if not self.use_seed else tuple(map(ord, file_name))
+            masked_kspace, mask = apply_mask(kspace_target, self.mask_func, seed)
+
+
+
+
+

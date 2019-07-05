@@ -5,7 +5,39 @@ import torch.nn.functional as F
 from models.attention import ChannelAttention
 
 
-class AsymmetricSignalExtractor(nn.Module):
+class LayerCenterCrop(nn.Module):
+    def __init__(self, scale, pad=0):
+        super().__init__()
+
+        # Type checking for pad.
+        if isinstance(pad, int):
+            pad = (pad, pad, pad, pad)
+        elif isinstance(pad, (list, tuple)):
+            if len(pad) == 2:
+                pad = (pad[0], pad[0], pad[1], pad[1])
+            elif len(pad) != 4:
+                raise ValueError(
+                    f'Invalid pad length. `pad` must have either 2 or 4 elements but input has {len(pad)} elements.')
+        else:
+            raise TypeError('Invalid pad input. `pad` must be either an integer or list/tuple of length 2 or 4.')
+
+        self.pad = pad
+        self.scale = scale
+
+    def forward(self, tensor):
+        top = tensor.size(-2) - (tensor.size(-2) // self.scale)
+        bottom = top + tensor.size(-2)
+        top -= self.pad[0]
+        bottom += self.pad[1]
+        left = tensor.size(-1) - (tensor.size(-1) // self.scale)
+        right = left + tensor.size(-1)
+        left -= self.pad[2]
+        right += self.pad[3]
+
+        return tensor[..., top:bottom, left:right]
+
+
+class SignalExtractor(nn.Module):  # TODO: Add new extractor types and methods
     def __init__(self, in_chans, out_chans, ext_chans, min_ext_size, max_ext_size, use_bias=True):
         super().__init__()
         assert isinstance(min_ext_size, int) and isinstance(max_ext_size, int), 'Extractor sizes must be integers.'
@@ -23,6 +55,7 @@ class AsymmetricSignalExtractor(nn.Module):
         # print(f'min_ext_size: {min_ext_size}')  # For debugging
         # The cases where the maximum size is smaller than 5 will automatically be dealt with by the for-loop.
         for size in range(min_ext_size, max_ext_size + 1, 2):
+            # 1NN1 style extractor.
             # Left-right, then up-down. This is because of the sampling pattern.
             conv = nn.Sequential(  # Number of channels is different for the two layers.
                 nn.Conv2d(in_channels=in_chans, out_channels=ext_chans,
@@ -43,8 +76,8 @@ class AsymmetricSignalExtractor(nn.Module):
         return outputs
 
 
-class ConvBlock(nn.Module):
-    def __init__(self, in_chans, out_chans):
+class AttConvBlock(nn.Module):
+    def __init__(self, in_chans, out_chans, use_att=True, reduction=16, use_gap=True, use_gmp=True):
         super().__init__()
         self.in_chans = in_chans
         self.out_chans = out_chans
@@ -56,9 +89,14 @@ class ConvBlock(nn.Module):
             nn.BatchNorm2d(num_features=out_chans),
             nn.ReLU()
         )
+        self.use_att = use_att
+        self.att = ChannelAttention(num_chans=out_chans, reduction=reduction, use_gap=use_gap, use_gmp=use_gmp)
 
     def forward(self, tensor):
-        return self.layers(tensor)
+        if self.use_att:
+            return self.att(self.layers(tensor))
+        else:
+            return self.layers(tensor)
 
 
 class Bilinear(nn.Module):
@@ -69,36 +107,35 @@ class Bilinear(nn.Module):
         return F.interpolate(tensor, scale_factor=2, mode='bilinear', align_corners=False)
 
 
-class UnetASE(nn.Module):
+class UNetCropASE(nn.Module):  # This model needs testing. It has not been tested at all.
     def __init__(self, in_chans, out_chans, ext_chans, chans, num_pool_layers,
-                 min_ext_size, max_ext_size, use_ext_bias=True, use_att=True):
+                 min_ext_size, max_ext_size, use_ext_bias=True, use_block_att=True):
 
         super().__init__()
-        self.extractor = AsymmetricSignalExtractor(
+        self.extractor = SignalExtractor(
             in_chans=in_chans, out_chans=chans, ext_chans=ext_chans,
             min_ext_size=min_ext_size, max_ext_size=max_ext_size, use_bias=use_ext_bias)
 
-        self.pool = nn.AvgPool2d(2)
         self.interp = Bilinear()
-        # self.input_att = ChannelAttention(num_chans=chans, reduction=16, use_gap=True, use_gmp=True)
-        self.use_att = use_att
+        self.use_block_att = use_block_att
         self.down_sample_layers = nn.ModuleList()
+        self.crop = LayerCenterCrop(scale=2)
         ch = chans
 
         for n in range(num_pool_layers - 1):
-            conv = ConvBlock(in_chans=ch, out_chans=ch * 2)
+            conv = AttConvBlock(in_chans=ch, out_chans=ch * 2, use_att=use_block_att)
             self.down_sample_layers.append(conv)
             ch *= 2
 
-        self.conv_mid = ConvBlock(in_chans=ch, out_chans=ch)
+        self.conv_mid = AttConvBlock(in_chans=ch, out_chans=ch, use_att=use_block_att)
 
         self.up_sample_layers = nn.ModuleList()
         for n in range(num_pool_layers - 1):
-            conv = ConvBlock(in_chans=ch * 2, out_chans=ch // 2)
+            conv = AttConvBlock(in_chans=ch * 2, out_chans=ch // 2, use_att=use_block_att)
             self.up_sample_layers.append(conv)
             ch //= 2
         else:
-            conv = ConvBlock(in_chans=ch * 2, out_chans=ch)
+            conv = AttConvBlock(in_chans=ch * 2, out_chans=ch, use_att=use_block_att)
             self.up_sample_layers.append(conv)
 
         self.conv_last = nn.Conv2d(in_channels=ch, out_channels=out_chans, kernel_size=1)
@@ -106,16 +143,13 @@ class UnetASE(nn.Module):
     def forward(self, tensor):
         stack = list()
         output = self.extractor(tensor)
-        # Added channel attention to input layer after feature extraction, compression, and ReLU.
-        # if self.use_att:
-        #     output = self.input_att(output)
         stack.append(output)
-        output = self.pool(output)
+        output = self.crop(output)
 
         for layer in self.down_sample_layers:
             output = layer(output)
             stack.append(output)
-            output = self.pool(output)
+            output = self.crop(output)
 
         output = self.conv_mid(output)
 

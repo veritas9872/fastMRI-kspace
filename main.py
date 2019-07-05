@@ -10,7 +10,8 @@ from train.subsample import MaskFunc
 from data.input_transforms import Prefetch2Device, TrainPreProcessK
 from data.output_transforms import OutputReplaceTransformK
 
-from models.ase_unet import UnetASE
+# from models.ase_unet import UnetASE
+from models.skip_unet import UNetSkip
 from train.model_trainers.model_trainer_K2CI import ModelTrainerK2CI
 from metrics.custom_losses import CSSIM
 from metrics.combination_losses import L1CSSIM7
@@ -95,9 +96,8 @@ def train_img(args):
 
     data_chans = 2 if args.challenge == 'singlecoil' else 30  # Multicoil has 15 coils with 2 for real/imag
 
-    model = UnetASE(in_chans=data_chans, out_chans=data_chans, ext_chans=args.chans, chans=args.chans,
-                    num_pool_layers=args.num_pool_layers, min_ext_size=args.min_ext_size,
-                    max_ext_size=args.max_ext_size, use_ext_bias=args.use_ext_bias, use_att=False).to(device)
+    model = UNetSkip(in_chans=data_chans, out_chans=data_chans, chans=args.chans, num_pool_layers=args.num_pool_layers,
+                     pool='avg', use_att=True, reduction=16, use_gap=True, use_gmp=False).to(device)
 
     optimizer = optim.Adam(model.parameters(), lr=args.init_lr)
 
@@ -123,7 +123,6 @@ if __name__ == '__main__':
         log_root='./logs',
         ckpt_root='./checkpoints',
         batch_size=1,  # This MUST be 1 for now.
-        chans=32,
         num_pool_layers=4,
         save_best_only=True,
         center_fractions=[0.08, 0.04],
@@ -131,24 +130,25 @@ if __name__ == '__main__':
         smoothing_factor=8,
 
         # Variables that occasionally change.
-        max_images=6,  # Maximum number of images to save.
+        chans=32,
+        max_images=8,  # Maximum number of images to save.
         num_workers=1,
-        init_lr=1E-3,
-        gpu=0,  # Set to None for CPU mode.
+        init_lr=1E-4,
+        gpu=1,  # Set to None for CPU mode.
         max_to_keep=0,
         start_slice=10,
 
         # Variables that change frequently.
-        sample_rate=0.05,
+        sample_rate=0.25,
         img_lambda=8,
-        num_epochs=10,
-        min_ext_size=1,
-        max_ext_size=15,
+        num_epochs=30,
+        # min_ext_size=1,
+        # max_ext_size=15,
+        # use_ext_bias=True,
         verbose=False,
-        use_slice_metrics=True,  # Using slice metrics causes a 30% increase in training time.
-        lr_red_epoch=20,
+        use_slice_metrics=True,  # Using slice metrics causes a non-trivial increase in training time.
+        lr_red_epoch=10,
         lr_red_rate=0.1,
-        use_ext_bias=True
         # prev_model_ckpt='',
     )
     options = create_arg_parser(**settings).parse_args()
