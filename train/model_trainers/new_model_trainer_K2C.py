@@ -76,7 +76,6 @@ class ModelTrainerK2C:
         self.smoothing_factor = args.smoothing_factor
         self.use_slice_metrics = args.use_slice_metrics
         self.writer = SummaryWriter(str(args.log_path))
-        self.targets_recorded = False
 
     def train_model(self):
         tic_tic = time()
@@ -189,7 +188,7 @@ class ModelTrainerK2C:
 
                 self.writer.add_image(f'Image_Deltas/{step}', img_delta_grid, epoch, dataformats='HW')
 
-                if not self.targets_recorded:
+                if epoch == 1:
                     self.writer.add_image(f'k-space_Targets/{step}', kspace_target_grid, epoch, dataformats='HW')
                     self.writer.add_image(f'Image_Targets/{step}', img_target_grid, epoch, dataformats='HW')
 

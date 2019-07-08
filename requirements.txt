@@ -6,5 +6,4 @@ h5py
 pytest
 scikit-image
 runstats
-tensorboardX
 pillow
