@@ -130,13 +130,13 @@ if __name__ == '__main__':
         max_images=8,  # Maximum number of images to save.
         num_workers=2,
         init_lr=1E-4,
-        gpu=1,  # Set to None for CPU mode.
+        gpu=0,  # Set to None for CPU mode.
         max_to_keep=1,
         start_slice=10,
 
         # Model specific parameters.
         min_ext_size=1,
-        max_ext_size=15,
+        max_ext_size=9,
         ext_chans=32,
         use_ext_bias=True,
 
