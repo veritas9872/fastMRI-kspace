@@ -7,11 +7,11 @@ from utils.run_utils import initialize, save_dict_as_json, get_logger, create_ar
 from utils.train_utils import create_custom_data_loaders
 
 from train.subsample import MaskFunc
-from data.input_transforms import Prefetch2Device, TrainPreProcessK
-from data.output_transforms import OutputReplaceTransformK
+from data.input_transforms import Prefetch2Device, WeightedPreProcessK
+from data.output_transforms import WeightedReplacePostProcess
 
 from train.model_trainers.new_model_trainer_K2C import ModelTrainerK2C
-from models.ase_skip_unet import UNetSkipKSSE
+from models.skip_unet import UNetSkip
 
 
 
@@ -78,8 +78,8 @@ def train_k2c(args):
 
     data_prefetch = Prefetch2Device(device)
 
-    input_train_transform = TrainPreProcessK(mask_func, args.challenge, args.device, use_seed=False, divisor=divisor)
-    input_val_transform = TrainPreProcessK(mask_func, args.challenge, args.device, use_seed=True, divisor=divisor)
+    input_train_transform = WeightedPreProcessK(mask_func, args.challenge, args.device, use_seed=False, divisor=divisor)
+    input_val_transform = WeightedPreProcessK(mask_func, args.challenge, args.device, use_seed=True, divisor=divisor)
 
     # DataLoaders
     train_loader, val_loader = create_custom_data_loaders(args, transform=data_prefetch)
@@ -88,15 +88,19 @@ def train_k2c(args):
         cmg_loss=nn.MSELoss(reduction='mean')
     )
 
-    output_transform = OutputReplaceTransformK()
+    output_transform = WeightedReplacePostProcess()
 
     data_chans = 2 if args.challenge == 'singlecoil' else 30  # Multicoil has 15 coils with 2 for real/imag
 
-    model = UNetSkipKSSE(
-        in_chans=data_chans, out_chans=data_chans, chans=args.chans, num_pool_layers=args.num_pool_layers,
-        ext_chans=args.ext_chans, min_ext_size=args.min_ext_size, max_ext_size=args.max_ext_size, use_ext_bias=True,
-        pool=args.pool, use_skip=args.use_skip, use_att=args.use_att, reduction=args.reduction,
-        use_gap=args.use_gap, use_gmp=args.use_gmp).to(device)
+    # model = UNetSkipKSSE(
+    #     in_chans=data_chans, out_chans=data_chans, chans=args.chans, num_pool_layers=args.num_pool_layers,
+    #     ext_chans=args.ext_chans, min_ext_size=args.min_ext_size, max_ext_size=args.max_ext_size, use_ext_bias=True,
+    #     pool=args.pool, mode=args.ase_mode, use_skip=args.use_skip, use_att=args.use_att, reduction=args.reduction,
+    #     use_gap=args.use_gap, use_gmp=args.use_gmp).to(device)
+
+    model = UNetSkip(in_chans=data_chans, out_chans=data_chans, chans=args.chans, num_pool_layers=args.num_pool_layers,
+                     pool=args.pool, use_skip=args.use_skip, use_att=args.use_att, reduction=args.reduction,
+                     use_gap=args.use_gap, use_gmp=args.use_gmp).to(device)
 
     optimizer = optim.Adam(model.parameters(), lr=args.init_lr)
 
@@ -135,10 +139,11 @@ if __name__ == '__main__':
         start_slice=10,
 
         # Model specific parameters.
-        min_ext_size=1,
-        max_ext_size=11,
-        ext_chans=32,
-        use_ext_bias=True,
+        # min_ext_size=1,
+        # max_ext_size=11,
+        # ext_chans=32,
+        # use_ext_bias=True,
+        # ase_mode='N11N',
 
         pool='avg',
         use_skip=True,
@@ -149,7 +154,7 @@ if __name__ == '__main__':
 
         # Variables that change frequently.
         sample_rate=0.1,
-        num_epochs=35,
+        num_epochs=5,
         verbose=False,
         use_slice_metrics=True,  # This can significantly increase training time.
         lr_red_epoch=15,

@@ -89,3 +89,43 @@ class PostProcessSemiK(nn.Module):
 
         return recons
 
+
+class WeightedReplacePostProcess(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, kspace_outputs, targets, extra_params):
+        if kspace_outputs.size(0) > 1:
+            raise NotImplementedError('Only one batch at a time for now.')
+
+        kspace_targets = targets['kspace_targets']
+        mask = extra_params['masks']
+        weighting = extra_params['weightings']
+
+        # For removing width dimension padding. Recall that k-space form has 2 as last dim size.
+        left = (kspace_outputs.size(-1) - kspace_targets.size(-2)) // 2
+        right = left + kspace_targets.size(-2)
+
+        # Cropping width dimension by pad.
+        kspace_outputs = kspace_outputs[..., left:right]
+
+        kspace_recons = nchw_to_kspace(kspace_outputs)
+
+        assert kspace_recons.shape == kspace_targets.shape, 'Reconstruction and target sizes are different.'
+        assert (kspace_recons.size(-3) % 2 == 0) and (kspace_recons.size(-2) % 2 == 0), \
+            'Not impossible but not expected to have odd lengthed sides.'
+
+        # Removing weighting.
+        kspace_recons = kspace_recons / weighting
+
+        kspace_recons = kspace_recons * (1 - mask) + kspace_targets * mask
+
+        cmg_recons = ifft2(kspace_recons)
+
+        img_recons = complex_abs(cmg_recons)
+
+        recons = {'kspace_recons': kspace_recons, 'cmg_recons': cmg_recons, 'img_recons': img_recons}
+
+        return recons  # Returning scaled reconstructions. Not rescaled.
+
+

@@ -38,7 +38,7 @@ class Bilinear(nn.Module):
 
 
 class KSSEModule(nn.Module):
-    def __init__(self, in_chans, ext_chans, out_chans, min_ext_size, max_ext_size, use_bias=True):
+    def __init__(self, in_chans, ext_chans, out_chans, min_ext_size, max_ext_size, mode='1NN1', use_bias=True):
         super().__init__()
         assert isinstance(min_ext_size, int) and isinstance(max_ext_size, int), 'Extractor sizes must be integers.'
         assert 1 <= min_ext_size <= max_ext_size, 'Invalid extractor sizes.'
@@ -53,12 +53,37 @@ class KSSEModule(nn.Module):
         min_ext_size = max(min_ext_size, 3)
         for size in range(min_ext_size, max_ext_size + 1, 2):
             # 1NN1 pattern.
-            conv = nn.Sequential(  # Number of channels is different for the two layers.
-                nn.Conv2d(in_channels=in_chans, out_channels=ext_chans,
-                          kernel_size=(1, size), padding=(0, size // 2), bias=use_bias),
-                nn.Conv2d(in_channels=ext_chans, out_channels=ext_chans,  # Takes previous output as input.
-                          kernel_size=(size, 1), padding=(size // 2, 0), bias=use_bias)
-            )
+            if mode.upper() == '1NN1':
+                conv = nn.Sequential(  # Number of channels is different for the two layers.
+                    nn.Conv2d(in_channels=in_chans, out_channels=ext_chans,
+                              kernel_size=(1, size), padding=(0, size // 2), bias=use_bias),
+                    nn.Conv2d(in_channels=ext_chans, out_channels=ext_chans,  # Takes previous output as input.
+                              kernel_size=(size, 1), padding=(size // 2, 0), bias=use_bias)
+                )
+            elif mode.upper() == 'N11N':
+                conv = nn.Sequential(  # Number of channels is different for the two layers.
+                    nn.Conv2d(in_channels=in_chans, out_channels=ext_chans,  # Takes previous output as input.
+                              kernel_size=(size, 1), padding=(size // 2, 0), bias=use_bias),
+                    nn.Conv2d(in_channels=ext_chans, out_channels=ext_chans,
+                              kernel_size=(1, size), padding=(0, size // 2), bias=use_bias)
+                )
+            elif mode.upper() == 'BOTH':
+                conv = nn.Sequential(  # Number of channels is different for the two layers.
+                    nn.Conv2d(in_channels=in_chans, out_channels=ext_chans,
+                              kernel_size=(1, size), padding=(0, size // 2), bias=use_bias),
+                    nn.Conv2d(in_channels=ext_chans, out_channels=ext_chans,  # Takes previous output as input.
+                              kernel_size=(size, 1), padding=(size // 2, 0), bias=use_bias)
+                )
+                self.ext_layers.append(conv)  # For ease of implementation.
+                conv = nn.Sequential(  # Number of channels is different for the two layers.
+                    nn.Conv2d(in_channels=in_chans, out_channels=ext_chans,  # Takes previous output as input.
+                              kernel_size=(size, 1), padding=(size // 2, 0), bias=use_bias),
+                    nn.Conv2d(in_channels=ext_chans, out_channels=ext_chans,
+                              kernel_size=(1, size), padding=(0, size // 2), bias=use_bias)
+                )
+            else:
+                raise ValueError('Invalid mode!')
+
             self.ext_layers.append(conv)
 
         self.relu = nn.ReLU()
@@ -74,7 +99,7 @@ class KSSEModule(nn.Module):
 
 class UNetSkipKSSE(nn.Module):
     def __init__(self, in_chans, out_chans, chans, num_pool_layers, ext_chans, min_ext_size, max_ext_size, use_ext_bias,
-                 pool='avg', use_skip=True, use_att=True, reduction=16, use_gap=True, use_gmp=True):
+                 pool='avg', mode='1NN1', use_skip=True, use_att=True, reduction=16, use_gap=True, use_gmp=True):
         super().__init__()
 
         self.in_chans = in_chans
@@ -96,7 +121,7 @@ class UNetSkipKSSE(nn.Module):
         conv_kwargs = dict(use_att=use_att, reduction=reduction, use_gap=use_gap, use_gmp=use_gmp)
 
         ksse = KSSEModule(in_chans=in_chans, ext_chans=ext_chans, out_chans=chans,
-                          min_ext_size=min_ext_size, max_ext_size=max_ext_size, use_bias=use_ext_bias)
+                          min_ext_size=min_ext_size, max_ext_size=max_ext_size, mode=mode, use_bias=use_ext_bias)
 
         self.down_sample_layers = nn.ModuleList([ksse])
 
