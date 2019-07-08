@@ -1,8 +1,8 @@
 import torch
 from torch import nn, optim, multiprocessing
 from torch.utils.data import DataLoader
+from torch.utils.tensorboard.writer import SummaryWriter
 
-from tensorboardX import SummaryWriter
 from tqdm import tqdm
 
 from time import time
@@ -14,18 +14,7 @@ from metrics.my_ssim import ssim_loss
 from metrics.custom_losses import psnr_loss, nmse_loss
 
 
-class ModelTrainerS2CI:
-    """
-    Model Trainer for semi-k-space learning with losses in complex image domains and real valued image domains.
-    All learning occurs in k-space or complex image domains
-    while all losses are obtained from either complex images or real-valued images.
-    Expects multiple losses to be present for the image domain loss.
-    Expects only 1 component for complex image loss, which will be MSE, though this not set explicitly.
-    Also, if the image domain loss has multiple components, the total weighted image loss is expected to return
-    a dictionary with 'img_loss' as the key for the weighted loss.
-    One major difference in this implementation is that it no longer expects targets and recons.
-    They turn out to be very expensive to calculate, even with no gradients. Calculating them only when needed.
-    """
+class ModelTrainerK2K:
 
     def __init__(self, args, model, optimizer, train_loader, val_loader,
                  input_train_transform, input_val_transform, output_transform, losses, scheduler=None):
@@ -86,8 +75,8 @@ class ModelTrainerS2CI:
         self.num_epochs = args.num_epochs
         self.smoothing_factor = args.smoothing_factor
         self.use_slice_metrics = args.use_slice_metrics
-        self.img_lambda = torch.tensor(args.img_lambda, dtype=torch.float32, device=args.device)
         self.writer = SummaryWriter(str(args.log_path))
+        self.targets_recorded = False
 
     def train_model(self):
         tic_tic = time()
@@ -153,21 +142,10 @@ class ModelTrainerS2CI:
         self.optimizer.zero_grad()
         outputs = self.model(inputs)
         recons = self.output_transform(outputs, targets, extra_params)
-
-        cmg_loss = self.losses['cmg_loss'](recons['cmg_recons'], targets['cmg_targets'])
-        img_loss = self.losses['img_loss'](recons['img_recons'], targets['img_targets'])
-
-        # If img_loss is a tuple, it is expected to contain all its component losses as a dict in its second part.
-        if isinstance(img_loss, tuple):
-            img_loss, img_metrics = img_loss
-        else:
-            img_metrics = dict()
-
-        step_loss = cmg_loss + self.img_lambda * img_loss
+        step_loss = self.losses['kspace_loss'](recons['kspace_recons'], targets['kspace_targets'])
         step_loss.backward()
         self.optimizer.step()
-        step_metrics = {'img_loss': img_loss, 'cmg_loss': cmg_loss}
-        step_metrics.update(img_metrics)
+        step_metrics = dict()
         return recons, step_loss, step_metrics
 
     def _val_epoch(self, epoch):
@@ -196,22 +174,26 @@ class ModelTrainerS2CI:
             if self.verbose:
                 self._log_step_outputs(epoch, step, step_loss, step_metrics, training=False)
 
-            # Save images to TensorBoard.
-            # Condition ensures that self.display_interval != 0 and that the step is right for display.
-
             # This numbering scheme seems to have issues for certain numbers.
             # Please check cases when there is no remainder.
             if self.display_interval and (step % self.display_interval == 0):
+                # Change image display function later.
                 img_recon_grid, img_target_grid, img_delta_grid = \
                     make_grid_triplet(recons['img_recons'], targets['img_targets'])
                 kspace_recon_grid = make_k_grid(recons['kspace_recons'], self.smoothing_factor)
                 kspace_target_grid = make_k_grid(targets['kspace_targets'], self.smoothing_factor)
 
                 self.writer.add_image(f'k-space_Recons/{step}', kspace_recon_grid, epoch, dataformats='HW')
-                self.writer.add_image(f'k-space_Targets/{step}', kspace_target_grid, epoch, dataformats='HW')
+
                 self.writer.add_image(f'Image_Recons/{step}', img_recon_grid, epoch, dataformats='HW')
-                self.writer.add_image(f'Image_Targets/{step}', img_target_grid, epoch, dataformats='HW')
+
                 self.writer.add_image(f'Image_Deltas/{step}', img_delta_grid, epoch, dataformats='HW')
+
+                if not self.targets_recorded:
+                    self.writer.add_image(f'k-space_Targets/{step}', kspace_target_grid, epoch, dataformats='HW')
+                    self.writer.add_image(f'Image_Targets/{step}', img_target_grid, epoch, dataformats='HW')
+
+                self.targets_recorded = True
 
         epoch_loss, epoch_metrics = self._get_epoch_outputs(epoch, epoch_loss, epoch_metrics, training=False)
         return epoch_loss, epoch_metrics
@@ -219,18 +201,8 @@ class ModelTrainerS2CI:
     def _val_step(self, inputs, targets, extra_params):
         outputs = self.model(inputs)
         recons = self.output_transform(outputs, targets, extra_params)
-        cmg_loss = self.losses['cmg_loss'](recons['cmg_recons'], targets['cmg_targets'])
-        img_loss = self.losses['img_loss'](recons['img_recons'], targets['img_targets'])
-
-        # If img_loss is a dict, it is expected to contain all its component losses as key, value pairs.
-        if isinstance(img_loss, dict):
-            step_metrics = img_loss
-            img_loss = step_metrics['img_loss']
-        else:  # img_loss is expected to be a Tensor if not a dict.
-            step_metrics = {'img_loss': img_loss}
-
-        step_loss = cmg_loss + self.img_lambda * img_loss
-        step_metrics['cmg_loss'] = cmg_loss
+        step_loss = self.losses['kspace_loss'](recons['kspace_recons'], targets['kspace_targets'])
+        step_metrics = dict()
         return recons, step_loss, step_metrics
 
     @staticmethod

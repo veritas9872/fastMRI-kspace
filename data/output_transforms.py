@@ -83,6 +83,7 @@ class PostProcessSemiK(nn.Module):
         cmg_recons = ifft1(sks_recons, direction=self.recon_direction)
         img_recons = complex_abs(cmg_recons)
 
+        # This is inefficient memory-wise but memory is not a serious issue for me right now.
         recons = {'sks_recons': sks_recons, 'kspace_recons': kspace_recons,
                   'cmg_recons': cmg_recons, 'img_recons': img_recons}
 
