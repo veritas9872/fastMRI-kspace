@@ -13,8 +13,6 @@ from data.output_transforms import WeightedReplacePostProcess
 from train.model_trainers.new_model_trainer_K2C import ModelTrainerK2C
 from models.skip_unet import UNetSkip
 
-
-
 """
 Memo: I have found that there is a great deal of variation in performance when training.
 Even under the same settings, the results can be extremely different when using small numbers of samples. 
@@ -28,7 +26,7 @@ Using small datasets for multiple runs may also prove useful.
 def train_k2c(args):
 
     # Maybe move this to args later.
-    train_method = 'K2C'
+    train_method = 'W2C'  # Weighted K-space to complex image.
 
     # Creating checkpoint and logging directories, as well as the run name.
     ckpt_path = Path(args.ckpt_root)

@@ -33,8 +33,8 @@ def apply_mask(data, mask_func, seed=None):
     """
     shape = np.array(data.shape)
     shape[:-3] = 1
-    mask = mask_func(shape, seed).to(data.device)  # Changed this part here for Pre-loading on GPU.
-    return data * mask, mask
+    mask = mask_func(shape, seed).to(data.device)
+    return torch.where(mask == 0, torch.Tensor([0]), data), mask
 
 
 def fft2(data):

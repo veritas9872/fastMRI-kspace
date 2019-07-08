@@ -113,7 +113,7 @@ class WeightedReplacePostProcess(nn.Module):
 
         assert kspace_recons.shape == kspace_targets.shape, 'Reconstruction and target sizes are different.'
         assert (kspace_recons.size(-3) % 2 == 0) and (kspace_recons.size(-2) % 2 == 0), \
-            'Not impossible but not expected to have odd lengthed sides.'
+            'Not impossible but not expected to have sides with odd lengths.'
 
         # Removing weighting.
         kspace_recons = kspace_recons / weighting
