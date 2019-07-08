@@ -33,8 +33,9 @@ def apply_mask(data, mask_func, seed=None):
     """
     shape = np.array(data.shape)
     shape[:-3] = 1
-    mask = mask_func(shape, seed).to(data.device)
-    return torch.where(mask == 0, torch.Tensor([0]), data), mask
+    mask = mask_func(shape, seed).to(data.device)  # Includes my alterations to cope with pre-fetching to GPU.
+    # Checked that this version also removes negative 0 values as well.
+    return torch.where(mask == 0, torch.tensor(0, dtype=data.dtype, device=data.device), data), mask
 
 
 def fft2(data):

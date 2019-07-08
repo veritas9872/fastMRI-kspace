@@ -102,7 +102,8 @@ def train_k2c(args):
 
     optimizer = optim.Adam(model.parameters(), lr=args.init_lr)
 
-    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=args.lr_red_epoch, gamma=args.lr_red_rate)
+    # scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=args.lr_red_epoch, gamma=args.lr_red_rate)
+    scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.lr_red_epochs, gamma=args.lr_red_rate)
 
     trainer = ModelTrainerK2C(args, model, optimizer, train_loader, val_loader,
                               input_train_transform, input_val_transform, output_transform, losses, scheduler)
@@ -129,12 +130,12 @@ if __name__ == '__main__':
 
         # Variables that occasionally change.
         chans=32,
-        max_images=8,  # Maximum number of images to save.
+        max_images=12,  # Maximum number of images to save.
         num_workers=2,
-        init_lr=1E-4,
+        init_lr=1E-3,
         gpu=1,  # Set to None for CPU mode.
         max_to_keep=1,
-        start_slice=10,
+        start_slice=0,
 
         # Model specific parameters.
         # min_ext_size=1,
@@ -142,6 +143,10 @@ if __name__ == '__main__':
         # ext_chans=32,
         # use_ext_bias=True,
         # ase_mode='N11N',
+
+        # lr_red_epoch=15,
+        lr_red_epochs=[20, 40, 80],
+        lr_red_rate=0.1,
 
         pool='avg',
         use_skip=True,
@@ -151,12 +156,11 @@ if __name__ == '__main__':
         use_gmp=False,
 
         # Variables that change frequently.
-        sample_rate=0.1,
-        num_epochs=5,
+        sample_rate=1,
+        num_epochs=120,
         verbose=False,
         use_slice_metrics=True,  # This can significantly increase training time.
-        lr_red_epoch=15,
-        lr_red_rate=0.1,
+
         # prev_model_ckpt='',
     )
     options = create_arg_parser(**settings).parse_args()
