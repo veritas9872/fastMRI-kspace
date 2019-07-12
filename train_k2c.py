@@ -6,12 +6,12 @@ from pathlib import Path
 from utils.run_utils import initialize, save_dict_as_json, get_logger, create_arg_parser
 from utils.train_utils import create_custom_data_loaders
 
-from train.subsample import MaskFunc, UniformMaskFunc
+from train.subsample import UniformMaskFunc
 from data.input_transforms import Prefetch2Device, WeightedPreProcessK
 from data.output_transforms import WeightedReplacePostProcess
 
 from train.model_trainers.new_model_trainer_K2C import ModelTrainerK2C
-from models.skip_unet import UNetSkip
+from models.new_skip_unet import UNetSkipGN
 
 """
 Memo: I have found that there is a great deal of variation in performance when training.
@@ -91,15 +91,10 @@ def train_k2c(args):
 
     data_chans = 2 if args.challenge == 'singlecoil' else 30  # Multicoil has 15 coils with 2 for real/imag
 
-    # model = UNetSkipKSSE(
-    #     in_chans=data_chans, out_chans=data_chans, chans=args.chans, num_pool_layers=args.num_pool_layers,
-    #     ext_chans=args.ext_chans, min_ext_size=args.min_ext_size, max_ext_size=args.max_ext_size, use_ext_bias=True,
-    #     pool=args.pool, mode=args.ase_mode, use_skip=args.use_skip, use_att=args.use_att, reduction=args.reduction,
-    #     use_gap=args.use_gap, use_gmp=args.use_gmp).to(device)
-
-    model = UNetSkip(in_chans=data_chans, out_chans=data_chans, chans=args.chans, num_pool_layers=args.num_pool_layers,
-                     pool=args.pool, use_skip=args.use_skip, use_att=args.use_att, reduction=args.reduction,
-                     use_gap=args.use_gap, use_gmp=args.use_gmp).to(device)
+    model = UNetSkipGN(
+        in_chans=data_chans, out_chans=data_chans, chans=args.chans, num_pool_layers=args.num_pool_layers,
+        num_groups=args.num_groups, pool_type=args.pool, use_skip=args.use_skip, use_att=args.use_att,
+        reduction=args.reduction, use_gap=args.use_gap, use_gmp=args.use_gmp).to(device)
 
     optimizer = optim.Adam(model.parameters(), lr=args.init_lr)
 
@@ -139,6 +134,7 @@ if __name__ == '__main__':
         start_slice=0,
 
         # Model specific parameters.
+
         # min_ext_size=1,
         # max_ext_size=11,
         # ext_chans=32,
@@ -153,6 +149,7 @@ if __name__ == '__main__':
         use_skip=True,
         use_att=False,
         reduction=16,
+        num_groups=8,
         use_gap=True,
         use_gmp=False,
 
