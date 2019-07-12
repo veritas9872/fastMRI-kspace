@@ -1,6 +1,7 @@
 import torch
 from torch import nn, optim, multiprocessing
 from torch.utils.data import DataLoader
+from torch.optim.optimizer import Optimizer
 from torch.utils.tensorboard.writer import SummaryWriter
 
 from tqdm import tqdm
@@ -27,7 +28,7 @@ class ModelTrainerK2C:
 
         # Checking whether inputs are correct.
         assert isinstance(model, nn.Module), '`model` must be a Pytorch Module.'
-        assert isinstance(optimizer, optim.Optimizer), '`optimizer` must be a Pytorch Optimizer.'
+        assert isinstance(optimizer, optim.optimizer.Optimizer), '`optimizer` must be a Pytorch Optimizer.'
         assert isinstance(train_loader, DataLoader) and isinstance(val_loader, DataLoader), \
             '`train_loader` and `val_loader` must be Pytorch DataLoader objects.'
 
@@ -264,3 +265,7 @@ class ModelTrainerK2C:
         for key, value in epoch_metrics.items():
             self.logger.info(f'Epoch {epoch:03d} {mode}. {key}: {value:.4e}')
             self.writer.add_scalar(f'{mode}_epoch_{key}', scalar_value=value, global_step=epoch)
+
+        if not training:  # Record learning rate.
+            for idx, group in enumerate(self.optimizer.param_groups, start=1):
+                self.writer.add_scalar(f'learning_rate_{idx}', group['lr'], global_step=epoch)

@@ -93,7 +93,7 @@ def train_k2c(args):
 
     model = UNetSkipGN(
         in_chans=data_chans, out_chans=data_chans, chans=args.chans, num_pool_layers=args.num_pool_layers,
-        num_groups=args.num_groups, pool_type=args.pool, use_skip=args.use_skip, use_att=args.use_att,
+        num_groups=args.num_groups, pool_type=args.pool_type, use_skip=args.use_skip, use_att=args.use_att,
         reduction=args.reduction, use_gap=args.use_gap, use_gmp=args.use_gmp).to(device)
 
     optimizer = optim.Adam(model.parameters(), lr=args.init_lr)
@@ -118,44 +118,37 @@ if __name__ == '__main__':
         log_root='./logs',
         ckpt_root='./checkpoints',
         batch_size=1,  # This MUST be 1 for now.
-        num_pool_layers=4,
+        num_pool_layers=3,
         save_best_only=True,
         center_fractions=[0.08, 0.04],
         accelerations=[2, 3],
         smoothing_factor=8,
 
         # Variables that occasionally change.
-        chans=32,
-        max_images=12,  # Maximum number of images to save.
+        chans=64,
+        max_images=6,  # Maximum number of images to save.
         num_workers=2,
         init_lr=1E-3,
         gpu=1,  # Set to None for CPU mode.
         max_to_keep=1,
-        start_slice=0,
+        start_slice=6,
 
         # Model specific parameters.
 
-        # min_ext_size=1,
-        # max_ext_size=11,
-        # ext_chans=32,
-        # use_ext_bias=True,
-        # ase_mode='N11N',
-
-        # lr_red_epoch=15,
-        lr_red_epochs=[20, 40, 80],
+        lr_red_epochs=[10, 25, 50],
         lr_red_rate=0.1,
 
-        pool='avg',
-        use_skip=True,
+        num_groups=8,
+        pool_type='avg',
+        use_skip=False,
         use_att=False,
         reduction=16,
-        num_groups=8,
         use_gap=True,
         use_gmp=False,
 
         # Variables that change frequently.
         sample_rate=0.1,
-        num_epochs=5,
+        num_epochs=50,
         verbose=False,
         use_slice_metrics=True,  # This can significantly increase training time.
 
