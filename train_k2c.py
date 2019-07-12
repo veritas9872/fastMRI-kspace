@@ -6,7 +6,7 @@ from pathlib import Path
 from utils.run_utils import initialize, save_dict_as_json, get_logger, create_arg_parser
 from utils.train_utils import create_custom_data_loaders
 
-from train.subsample import MaskFunc
+from train.subsample import MaskFunc, UniformMaskFunc
 from data.input_transforms import Prefetch2Device, WeightedPreProcessK
 from data.output_transforms import WeightedReplacePostProcess
 
@@ -72,7 +72,8 @@ def train_k2c(args):
     # UNET architecture requires that all inputs be dividable by some power of 2.
     divisor = 2 ** args.num_pool_layers
 
-    mask_func = MaskFunc(args.center_fractions, args.accelerations)
+    # mask_func = MaskFunc(args.center_fractions, args.accelerations)
+    mask_func = UniformMaskFunc(args.center_fractions, args.accelerations)
 
     data_prefetch = Prefetch2Device(device)
 
@@ -125,7 +126,7 @@ if __name__ == '__main__':
         num_pool_layers=4,
         save_best_only=True,
         center_fractions=[0.08, 0.04],
-        accelerations=[4, 8],
+        accelerations=[2, 3],
         smoothing_factor=8,
 
         # Variables that occasionally change.
@@ -156,8 +157,8 @@ if __name__ == '__main__':
         use_gmp=False,
 
         # Variables that change frequently.
-        sample_rate=1,
-        num_epochs=120,
+        sample_rate=0.1,
+        num_epochs=5,
         verbose=False,
         use_slice_metrics=True,  # This can significantly increase training time.
 

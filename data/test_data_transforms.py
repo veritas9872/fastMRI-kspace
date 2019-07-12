@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 import torch
 
-from train.subsample import MaskFunc
+from train.subsample import MaskFunc, UniformMaskFunc
 from data import data_transforms
 
 
@@ -18,6 +18,21 @@ def create_tensor(shape):
 ])
 def test_apply_mask(shape, center_fractions, accelerations):
     mask_func = MaskFunc(center_fractions, accelerations)
+    expected_mask = mask_func(shape, seed=123)
+    tensor = create_tensor(shape)
+    output, mask = data_transforms.apply_mask(tensor, mask_func, seed=123)
+    assert output.shape == tensor.shape
+    assert mask.shape == expected_mask.shape
+    assert np.all(expected_mask.numpy() == mask.numpy())
+    assert np.all((output * mask).numpy() == output.numpy())
+
+
+@pytest.mark.parametrize('shape, center_fractions, accelerations', [
+    ([4, 32, 32, 2], [0.08], [4]),
+    ([2, 64, 64, 2], [0.04, 0.08], [8, 4]),
+])
+def test_apply_uniform_mask(shape, center_fractions, accelerations):
+    mask_func = UniformMaskFunc(center_fractions, accelerations)
     expected_mask = mask_func(shape, seed=123)
     tensor = create_tensor(shape)
     output, mask = data_transforms.apply_mask(tensor, mask_func, seed=123)
@@ -61,44 +76,6 @@ def test_ifft2(shape):
     out_numpy = np.fft.ifft2(tensor_numpy, norm='ortho')
     out_numpy = np.fft.fftshift(out_numpy, (-2, -1))
     assert np.allclose(out_torch, out_numpy)
-
-
-# @pytest.mark.parametrize('shape', [
-#     [3, 3],
-#     [4, 6],
-#     [10, 8, 4],
-# ])
-# def test_fft1(shape):
-#     shape = shape + [2]
-#     tensor = create_tensor(shape)
-#     out_torch = data_transforms.fft1(tensor).numpy()
-#     out_torch = out_torch[..., 0] + 1j * out_torch[..., 1]
-#
-#     tensor_numpy = data_transforms.tensor_to_complex_np(tensor)
-#     tensor_numpy = np.fft.ifftshift(tensor_numpy, axes=-2)
-#     out_numpy = np.fft.fft(tensor_numpy, axis=-2, norm='ortho')
-#     out_numpy = np.fft.fftshift(out_numpy, axes=-2)
-#
-#     assert np.allclose(out_torch, out_numpy)
-#
-#
-# @pytest.mark.parametrize('shape', [
-#     [3, 3],
-#     [4, 6],
-#     [10, 8, 4],
-# ])
-# def test_ifft1(shape):
-#     shape = shape + [2]
-#     tensor = create_tensor(shape)
-#     out_torch = data_transforms.ifft1(tensor).numpy()
-#     out_torch = out_torch[..., 0] + 1j * out_torch[..., 1]
-#
-#     tensor_numpy = data_transforms.tensor_to_complex_np(tensor)
-#     tensor_numpy = np.fft.ifftshift(tensor_numpy, axes=-2)
-#     out_numpy = np.fft.ifft(tensor_numpy, axis=-2, norm='ortho')
-#     out_numpy = np.fft.fftshift(out_numpy, axes=-2)
-#
-#     assert np.allclose(out_torch, out_numpy)
 
 
 @pytest.mark.parametrize('shape', [
