@@ -3,7 +3,7 @@ import torch.nn.functional as F
 
 import numpy as np
 
-from data.data_transforms import to_tensor, ifft2, complex_abs, apply_mask, kspace_to_nchw
+from data.data_transforms import to_tensor, ifft2, complex_abs, apply_mask, kspace_to_nchw, fft1, ifft1, log_weighting
 
 
 class InputTransformK:
@@ -125,6 +125,264 @@ class TrainPreProcessK:
             cmg_target = ifft2(kspace_target) * k_scaling
             img_target = complex_abs(cmg_target)
             kspace_target *= k_scaling
+
+            # Use plurals as keys to reduce confusion.
+            targets = {'kspace_targets': kspace_target, 'cmg_targets': cmg_target, 'img_targets': img_target}
+
+            margin = masked_kspace.size(-1) % self.divisor
+            if margin > 0:
+                pad = [(self.divisor - margin) // 2, (1 + self.divisor - margin) // 2]
+            else:  # This is a temporary fix to prevent padding by half the divisor when margin=0.
+                pad = [0, 0]
+
+            # This pads at the last dimension of a tensor with 0.
+            inputs = F.pad(masked_kspace, pad=pad, value=0)
+
+        return inputs, targets, extra_params
+
+
+class TrainPreProcessKK:
+    def __init__(self, mask_func, challenge, device, use_seed=True, divisor=1):
+        if challenge not in ('singlecoil', 'multicoil'):
+            raise ValueError(f'Challenge should either be "singlecoil" or "multicoil"')
+        self.mask_func = mask_func
+        self.challenge = challenge
+        self.device = device
+        self.use_seed = use_seed
+        self.divisor = divisor
+
+    def __call__(self, kspace_target, target, attrs, file_name, slice_num):
+        assert isinstance(kspace_target, torch.Tensor)
+        if kspace_target.dim() == 4:  # If the collate function does not expand dimensions.
+            kspace_target = kspace_target.unsqueeze(dim=0)
+        elif kspace_target.dim() != 5:  # Expanded k-space should have 5 dimensions.
+            raise RuntimeError('k-space target has invalid shape!')
+
+        if kspace_target.size(0) != 1:
+            raise NotImplementedError('Batch size should be 1 for now.')
+
+        with torch.no_grad():
+            # Apply mask
+            seed = None if not self.use_seed else tuple(map(ord, file_name))
+            masked_kspace, mask = apply_mask(kspace_target, self.mask_func, seed)
+
+            k_scale = torch.std(masked_kspace)
+            k_scaling = torch.tensor(1) / k_scale
+
+            masked_kspace *= k_scaling  # Multiplication is faster than division.
+            masked_kspace = masked_kspace + torch.ones(masked_kspace.shape, device=self.device) * (1 - mask)
+            masked_kspace = kspace_to_nchw(masked_kspace)
+
+            extra_params = {'k_scales': k_scale, 'masks': mask}
+
+            # Target must be on the same scale as the inputs for scale invariance of data.
+            # kspace_target *= (torch.tensor(1) / k_scale)
+
+            # Recall that the Fourier transform is a linear transform.
+            # Performing scaling after ifft for numerical stability
+            cmg_target = ifft2(kspace_target) * k_scaling
+            img_target = complex_abs(cmg_target)
+            kspace_target *= k_scaling
+
+            # Use plurals as keys to reduce confusion.
+            targets = {'kspace_targets': kspace_target, 'cmg_targets': cmg_target, 'img_targets': img_target}
+
+            margin = masked_kspace.size(-1) % self.divisor
+            if margin > 0:
+                pad = [(self.divisor - margin) // 2, (1 + self.divisor - margin) // 2]
+            else:  # This is a temporary fix to prevent padding by half the divisor when margin=0.
+                pad = [0, 0]
+
+            # This pads at the last dimension of a tensor with 0.
+            inputs = F.pad(masked_kspace, pad=pad, value=0)
+
+        return inputs, targets, extra_params
+
+
+class TrainPreProcessSemiK:
+    def __init__(self, mask_func, challenge, device, use_seed=True, divisor=1):
+        if challenge not in ('singlecoil', 'multicoil'):
+            raise ValueError(f'Challenge should either be "singlecoil" or "multicoil"')
+        self.mask_func = mask_func
+        self.challenge = challenge
+        self.device = device
+        self.use_seed = use_seed
+        self.divisor = divisor
+
+    def __call__(self, kspace_target, target, attrs, file_name, slice_num):
+        assert isinstance(kspace_target, torch.Tensor)
+        if kspace_target.dim() == 4:  # If the collate function does not expand dimensions.
+            kspace_target = kspace_target.unsqueeze(dim=0)
+        elif kspace_target.dim() != 5:  # Expanded k-space should have 5 dimensions.
+            raise RuntimeError('k-space target has invalid shape!')
+
+        if kspace_target.size(0) != 1:
+            raise NotImplementedError('Batch size should be 1 for now.')
+
+        with torch.no_grad():
+            # Apply mask
+            seed = None if not self.use_seed else tuple(map(ord, file_name))
+            masked_kspace, mask = apply_mask(kspace_target, self.mask_func, seed)
+
+            k_scale = torch.std(masked_kspace)
+            k_scaling = torch.tensor(1) / k_scale
+
+            masked_kspace *= k_scaling  # Multiplication is faster than division.
+            masked_kspace = ifft1(masked_kspace, direction='width')
+            # n, c, h, w, i = masked_kspace.size()
+            norm_mask = complex_abs(masked_kspace).max(dim=-1).values.unsqueeze(dim=-1).unsqueeze(dim=-1)
+            masked_kspace = masked_kspace / norm_mask
+            masked_kspace = kspace_to_nchw(masked_kspace)
+
+            extra_params = {'k_scales': k_scale, 'masks': mask, 'norm_mask': norm_mask}
+
+            # Target must be on the same scale as the inputs for scale invariance of data.
+            # kspace_target *= (torch.tensor(1) / k_scale)
+
+            # Recall that the Fourier transform is a linear transform.
+            # Performing scaling after ifft for numerical stability
+            kspace_target = kspace_target * k_scaling
+            cmg_target = ifft2(kspace_target)
+            img_target = complex_abs(cmg_target)
+            kspace_target = ifft1(kspace_target, direction='width')
+
+            # Use plurals as keys to reduce confusion.
+            targets = {'kspace_targets': kspace_target, 'cmg_targets': cmg_target, 'img_targets': img_target}
+
+            margin = masked_kspace.size(-1) % self.divisor
+            if margin > 0:
+                pad = [(self.divisor - margin) // 2, (1 + self.divisor - margin) // 2]
+            else:  # This is a temporary fix to prevent padding by half the divisor when margin=0.
+                pad = [0, 0]
+
+            # This pads at the last dimension of a tensor with 0.
+            inputs = F.pad(masked_kspace, pad=pad, value=0)
+
+        return inputs, targets, extra_params
+
+
+class TrainPreProcessLoggedK:
+    def __init__(self, mask_func, challenge, device, use_seed=True, divisor=1):
+        if challenge not in ('singlecoil', 'multicoil'):
+            raise ValueError(f'Challenge should either be "singlecoil" or "multicoil"')
+        self.mask_func = mask_func
+        self.challenge = challenge
+        self.device = device
+        self.use_seed = use_seed
+        self.divisor = divisor
+
+    def __call__(self, kspace_target, target, attrs, file_name, slice_num):
+        assert isinstance(kspace_target, torch.Tensor)
+        if kspace_target.dim() == 4:  # If the collate function does not expand dimensions.
+            kspace_target = kspace_target.unsqueeze(dim=0)
+        elif kspace_target.dim() != 5:  # Expanded k-space should have 5 dimensions.
+            raise RuntimeError('k-space target has invalid shape!')
+
+        if kspace_target.size(0) != 1:
+            raise NotImplementedError('Batch size should be 1 for now.')
+
+        with torch.no_grad():
+            # Apply mask
+            seed = None if not self.use_seed else tuple(map(ord, file_name))
+            masked_kspace, mask = apply_mask(kspace_target, self.mask_func, seed)
+
+            k_scale = torch.std(masked_kspace)
+            k_scaling = torch.tensor(1) / k_scale
+
+            masked_kspace *= k_scaling  # Multiplication is faster than division.
+            masked_kspace = kspace_to_nchw(masked_kspace)
+            masked_kspace += torch.randn(masked_kspace.shape, device=self.device) * 0.01
+            masked_kspace = log_weighting(masked_kspace)
+
+            extra_params = {'k_scales': k_scale, 'masks': mask}
+
+            # Target must be on the same scale as the inputs for scale invariance of data.
+            # kspace_target *= (torch.tensor(1) / k_scale)
+
+            # Recall that the Fourier transform is a linear transform.
+            # Performing scaling after ifft for numerical stability
+            kspace_target *= k_scaling
+            cmg_target = ifft2(kspace_target)
+            img_target = complex_abs(cmg_target)
+            kspace_target = log_weighting(kspace_target)
+
+            # Use plurals as keys to reduce confusion.
+            targets = {'kspace_targets': kspace_target, 'cmg_targets': cmg_target, 'img_targets': img_target}
+
+            margin = masked_kspace.size(-1) % self.divisor
+            if margin > 0:
+                pad = [(self.divisor - margin) // 2, (1 + self.divisor - margin) // 2]
+            else:  # This is a temporary fix to prevent padding by half the divisor when margin=0.
+                pad = [0, 0]
+
+            # This pads at the last dimension of a tensor with 0.
+            inputs = F.pad(masked_kspace, pad=pad, value=0)
+
+        return inputs, targets, extra_params
+
+
+class TrainPreProcessNormK:
+    def __init__(self, mask_func, challenge, device, use_seed=True, divisor=1):
+        if challenge not in ('singlecoil', 'multicoil'):
+            raise ValueError(f'Challenge should either be "singlecoil" or "multicoil"')
+        self.mask_func = mask_func
+        self.challenge = challenge
+        self.device = device
+        self.use_seed = use_seed
+        self.divisor = divisor
+
+    def __call__(self, kspace_target, target, attrs, file_name, slice_num):
+        assert isinstance(kspace_target, torch.Tensor)
+        if kspace_target.dim() == 4:  # If the collate function does not expand dimensions.
+            kspace_target = kspace_target.unsqueeze(dim=0)
+        elif kspace_target.dim() != 5:  # Expanded k-space should have 5 dimensions.
+            raise RuntimeError('k-space target has invalid shape!')
+
+        if kspace_target.size(0) != 1:
+            raise NotImplementedError('Batch size should be 1 for now.')
+
+        with torch.no_grad():
+            # Apply mask
+            seed = None if not self.use_seed else tuple(map(ord, file_name))
+            masked_kspace, mask = apply_mask(kspace_target, self.mask_func, seed)
+
+            k_scale = torch.std(masked_kspace)
+            k_scaling = torch.tensor(1) / k_scale
+
+            masked_kspace *= k_scaling  # Multiplication is faster than division.
+
+            n, c, h, w, i = masked_kspace.size()
+            line = complex_abs(masked_kspace[..., h//2:, w//2, :]).squeeze()
+            line = line.mean(dim=0)
+
+            x = torch.arange(-w // 2, w // 2, 1, dtype=torch.float32, device=self.device)
+            y = torch.arange(-h // 2, h // 2, 1, dtype=torch.float32, device=self.device)
+            cc = torch.arange(0, c, 1, dtype=torch.float32, device=self.device)
+
+            ccc, yy, xx = torch.meshgrid(cc, y, x)
+            ccc = ccc.to(dtype=torch.int64)
+
+            R = torch.floor(torch.sqrt(xx ** 2 + yy ** 2)).to(dtype=torch.int64)
+            R[R >= len(line)] = len(line)-1
+            norm_mask = line[R] + 1E-10
+            norm_mask = torch.stack([norm_mask, norm_mask], dim=-1)
+            masked_kspace = masked_kspace / norm_mask
+            masked_kspace += (1 - mask) * torch.randn(masked_kspace.shape, device=self.device) * 0.01
+
+            masked_kspace = kspace_to_nchw(masked_kspace)
+
+            extra_params = {'k_scales': k_scaling, 'masks': mask, 'norm_mask': norm_mask}
+
+            # Target must be on the same scale as the inputs for scale invariance of data.
+            # kspace_target *= (torch.tensor(1) / k_scale)
+
+            # Recall that the Fourier transform is a linear transform.
+            # Performing scaling after ifft for numerical stability
+            kspace_target *= k_scaling
+            cmg_target = ifft2(kspace_target)
+            img_target = complex_abs(cmg_target)
+            kspace_target = kspace_target / norm_mask
+            # kspace_target = log_weighting(kspace_target)
 
             # Use plurals as keys to reduce confusion.
             targets = {'kspace_targets': kspace_target, 'cmg_targets': cmg_target, 'img_targets': img_target}
