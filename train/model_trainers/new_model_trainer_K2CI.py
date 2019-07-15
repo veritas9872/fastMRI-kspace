@@ -14,7 +14,7 @@ from metrics.my_ssim import ssim_loss
 from metrics.custom_losses import psnr_loss, nmse_loss
 
 
-class ModelTrainerK2C:
+class ModelTrainerK2CI:
 
     def __init__(self, args, model, optimizer, train_loader, val_loader,
                  input_train_transform, input_val_transform, output_transform, losses, scheduler=None):
@@ -76,6 +76,7 @@ class ModelTrainerK2C:
         self.smoothing_factor = args.smoothing_factor
         self.use_slice_metrics = args.use_slice_metrics
         self.writer = SummaryWriter(str(args.log_path))
+        self.img_lambda = torch.tensor(args.img_lambda, dtype=torch.float32, device=args.device)
 
     def train_model(self):
         tic_tic = time()
@@ -108,7 +109,7 @@ class ModelTrainerK2C:
         self.model.train()
         torch.autograd.set_grad_enabled(True)
 
-        epoch_loss = list()  # Appending values to list due to numerical underflow.
+        epoch_loss = list()  # Appending values to list due to numerical underflow and NaN values.
         epoch_metrics = defaultdict(list)
 
         data_loader = enumerate(self.train_loader, start=1)
@@ -116,7 +117,7 @@ class ModelTrainerK2C:
             data_loader = tqdm(data_loader, total=len(self.train_loader.dataset))
 
         for step, data in data_loader:
-            # Data pre-processing is expected to have gradient calculations removed already.
+            # Data pre-processing is expected to have gradient calculations removed inside already.
             inputs, targets, extra_params = self.input_train_transform(*data)
 
             # 'recons' is a dictionary containing k-space, complex image, and real image reconstructions.
@@ -134,17 +135,28 @@ class ModelTrainerK2C:
                 if self.verbose:
                     self._log_step_outputs(epoch, step, step_loss, step_metrics, training=True)
 
-        # Converted to scalar and dict with scalar forms.
+        # Converted to scalar and dict with scalar values respectively.
         return self._get_epoch_outputs(epoch, epoch_loss, epoch_metrics, training=True)
 
     def _train_step(self, inputs, targets, extra_params):
         self.optimizer.zero_grad()
         outputs = self.model(inputs)
         recons = self.output_transform(outputs, targets, extra_params)
-        step_loss = self.losses['cmg_loss'](recons['cmg_recons'], targets['cmg_targets'])
+
+        cmg_loss = self.losses['cmg_loss'](recons['cmg_recons'], targets['cmg_targets'])
+        img_loss = self.losses['img_loss'](recons['img_recons'], targets['img_targets'])
+
+        # If img_loss is a tuple, it is expected to contain all its component losses as a dict in its second part.
+        if isinstance(img_loss, tuple):
+            img_loss, img_metrics = img_loss
+        else:
+            img_metrics = dict()
+
+        step_loss = cmg_loss + self.img_lambda * img_loss
         step_loss.backward()
         self.optimizer.step()
-        step_metrics = dict()
+        step_metrics = {'img_loss': img_loss, 'cmg_loss': cmg_loss}
+        step_metrics.update(img_metrics)
         return recons, step_loss, step_metrics
 
     def _val_epoch(self, epoch):
@@ -183,27 +195,31 @@ class ModelTrainerK2C:
                 kspace_target_grid = make_k_grid(targets['kspace_targets'], self.smoothing_factor)
 
                 self.writer.add_image(f'k-space_Recons/{step}', kspace_recon_grid, epoch, dataformats='HW')
-
                 self.writer.add_image(f'Image_Recons/{step}', img_recon_grid, epoch, dataformats='HW')
-
                 self.writer.add_image(f'Image_Deltas/{step}', img_delta_grid, epoch, dataformats='HW')
 
-                if epoch == 1:
+                if epoch == 1:  # Maybe add input images too later on.
                     self.writer.add_image(f'k-space_Targets/{step}', kspace_target_grid, epoch, dataformats='HW')
                     self.writer.add_image(f'Image_Targets/{step}', img_target_grid, epoch, dataformats='HW')
 
-                    # TODO: Add input images to visualization too.
-
-                self.targets_recorded = True
-
-        epoch_loss, epoch_metrics = self._get_epoch_outputs(epoch, epoch_loss, epoch_metrics, training=False)
-        return epoch_loss, epoch_metrics
+        # Converted to scalar and dict with scalar values respectively.
+        return self._get_epoch_outputs(epoch, epoch_loss, epoch_metrics, training=False)
 
     def _val_step(self, inputs, targets, extra_params):
         outputs = self.model(inputs)
         recons = self.output_transform(outputs, targets, extra_params)
-        step_loss = self.losses['cmg_loss'](recons['cmg_recons'], targets['cmg_targets'])
-        step_metrics = dict()
+        cmg_loss = self.losses['cmg_loss'](recons['cmg_recons'], targets['cmg_targets'])
+        img_loss = self.losses['img_loss'](recons['img_recons'], targets['img_targets'])
+
+        # If img_loss is a tuple, it is expected to contain all its component losses as a dict in its second part.
+        if isinstance(img_loss, tuple):
+            img_loss, img_metrics = img_loss
+        else:
+            img_metrics = dict()
+
+        step_loss = cmg_loss + self.img_lambda * img_loss
+        step_metrics = {'img_loss': img_loss, 'cmg_loss': cmg_loss}
+        step_metrics.update(img_metrics)
         return recons, step_loss, step_metrics
 
     @staticmethod

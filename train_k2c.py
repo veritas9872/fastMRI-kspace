@@ -97,8 +97,6 @@ def train_k2c(args):
         reduction=args.reduction, use_gap=args.use_gap, use_gmp=args.use_gmp).to(device)
 
     optimizer = optim.Adam(model.parameters(), lr=args.init_lr)
-
-    # scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=args.lr_red_epoch, gamma=args.lr_red_rate)
     scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.lr_red_epochs, gamma=args.lr_red_rate)
 
     trainer = ModelTrainerK2C(args, model, optimizer, train_loader, val_loader,
@@ -118,29 +116,29 @@ if __name__ == '__main__':
         log_root='./logs',
         ckpt_root='./checkpoints',
         batch_size=1,  # This MUST be 1 for now.
-        num_pool_layers=3,
+        num_pool_layers=4,
         save_best_only=True,
-        center_fractions=[0.08, 0.04],
-        accelerations=[2, 3],
+        center_fractions=[0.16],
+        accelerations=[2],
         smoothing_factor=8,
 
         # Variables that occasionally change.
-        chans=64,
+        chans=32,
         max_images=6,  # Maximum number of images to save.
         num_workers=2,
-        init_lr=1E-3,
+        init_lr=2E-2,
         gpu=1,  # Set to None for CPU mode.
         max_to_keep=1,
-        start_slice=6,
+        start_slice=12,
 
-        # Model specific parameters.
-
-        lr_red_epochs=[10, 25, 50],
+        # Learning rate scheduling.
+        lr_red_epochs=[30, 60, 90],
         lr_red_rate=0.1,
 
+        # Model specific parameters.
         num_groups=8,
         pool_type='avg',
-        use_skip=False,
+        use_skip=True,
         use_att=False,
         reduction=16,
         use_gap=True,
@@ -150,7 +148,7 @@ if __name__ == '__main__':
         sample_rate=0.1,
         num_epochs=50,
         verbose=False,
-        use_slice_metrics=True,  # This can significantly increase training time.
+        use_slice_metrics=False,  # This can significantly increase training time.
 
         # prev_model_ckpt='',
     )
