@@ -32,10 +32,18 @@ def initialize(ckpt_dir):
     return run_number, run_name
 
 
+class CustomJSONEncoder(json.JSONEncoder):
+    """
+    Custom JSON Encoder designed to return the string of an object if it cannot be serialized.
+    """
+    def default(self, o):
+        return str(o)
+
+
 def save_dict_as_json(dict_data, log_dir, save_name):
     file_dir = Path(log_dir, f'{save_name}.json')
     with open(file_dir, mode='w') as jf:
-        json.dump(dict_data, jf, indent=2, sort_keys=True)
+        json.dump(dict_data, jf, indent=2, sort_keys=True, cls=CustomJSONEncoder)
 
 
 def get_logger(name, save_file=None):
@@ -43,7 +51,8 @@ def get_logger(name, save_file=None):
     logger = logging.getLogger(name)
     logger.setLevel(logging.INFO)
 
-    for handler in logger.handlers:  # Initialize existing logger.
+    # Remove previous handlers. Useful when logger is being redefined in the same run.
+    for handler in logger.handlers:
         logger.removeHandler(handler)
 
     c_handler = logging.StreamHandler()

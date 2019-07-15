@@ -179,5 +179,16 @@ def test_ifftshift(shape):
     assert np.allclose(out_torch, out_numpy)
 
 
+@pytest.mark.parametrize('shape', [
+    [1, 640, 368, 2],
+    [15, 640, 384, 2]
+])
+@pytest.mark.parametrize('scale', [1, 3.7, 0.12])
+def test_reversibility(shape, scale):
+    tensor = torch.rand(shape) * 20 - 10
+    new = data_transforms.exp_weighting(data_transforms.log_weighting(tensor, scale), scale)
+    assert torch.allclose(tensor, new)
+
+
 if __name__ == '__main__':
     pass  # Run all tests

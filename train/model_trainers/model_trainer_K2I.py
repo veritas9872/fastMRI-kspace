@@ -11,7 +11,7 @@ from utils.train_utils import CheckpointManager, make_grid_triplet, make_k_grid
 from utils.run_utils import get_logger
 
 
-class ModelTrainerK:
+class ModelTrainerK2I:
     """
     Model Trainer for K-space learning.
     Please note a bit of terminology.
@@ -103,7 +103,7 @@ class ModelTrainerK:
 
             if self.scheduler is not None:
                 if self.metric_scheduler:  # If the scheduler is a metric based scheduler, include metrics.
-                    self.scheduler.step(metrics=val_epoch_metrics)
+                    self.scheduler.step(metrics=val_epoch_loss)
                 else:
                     self.scheduler.step()
 
@@ -111,12 +111,12 @@ class ModelTrainerK:
         self.writer.close()  # Flushes remaining data to TensorBoard.
         toc_toc = int(time() - tic_tic)
         self.logger.info(f'Finishing Training Loop. Total elapsed time: '
-                         f'{toc_toc // 3600} hr {toc_toc // 60} min {toc_toc % 60} sec.')
+                         f'{toc_toc // 3600} hr {(toc_toc // 60) % 60} min {toc_toc % 60} sec.')
 
-    def _train_step(self, inputs, targets, scales):
+    def _train_step(self, inputs, targets, extra_params):
         self.optimizer.zero_grad()
         outputs = self.model(inputs)
-        image_recons, kspace_recons = self.post_processing_func(outputs, targets, scales)
+        image_recons, kspace_recons = self.post_processing_func(outputs, targets, extra_params)
         step_loss = self.loss_func(image_recons, targets)
         step_loss.backward()
         self.optimizer.step()
@@ -130,8 +130,8 @@ class ModelTrainerK:
         epoch_metrics_lst = [list() for _ in self.metrics] if self.metrics else None
 
         # labels are fully sampled coil-wise images, not rss or esc.
-        for step, (inputs, targets, scales) in enumerate(self.train_loader, start=1):
-            step_loss, image_recons, kspace_recons = self._train_step(inputs, targets, scales)
+        for step, (inputs, targets, extra_params) in enumerate(self.train_loader, start=1):
+            step_loss, image_recons, kspace_recons = self._train_step(inputs, targets, extra_params)
 
             # Gradients are not calculated so as to boost speed and remove weird errors.
             with torch.no_grad():  # Update epoch loss and metrics
@@ -145,15 +145,13 @@ class ModelTrainerK:
         epoch_loss, epoch_metrics = self._get_epoch_outputs(epoch, epoch_loss_lst, epoch_metrics_lst, training=True)
         return epoch_loss, epoch_metrics
 
-    def _val_step(self, inputs, targets, scales):
+    def _val_step(self, inputs, targets, extra_params):
         """
-        I decided to shove all variables other than the inputs and targets into a dictionary called params_dict.
-        There are simply too many different scenarios to prepare for in a single class.
-        Just shove all other variables into that dict for convenience instead of making a new class each time.
-        Deal with the dict in the post-processing function.
+        All extra parameters are to be placed in extra_params.
+        This makes the system more flexible.
         """
         outputs = self.model(inputs)
-        image_recons, kspace_recons = self.post_processing_func(outputs, targets, scales)
+        image_recons, kspace_recons = self.post_processing_func(outputs, targets, extra_params)
         step_loss = self.loss_func(image_recons, targets)
         return step_loss, image_recons, kspace_recons
 
@@ -164,8 +162,8 @@ class ModelTrainerK:
         epoch_loss_lst = list()
         epoch_metrics_lst = [list() for _ in self.metrics] if self.metrics else None
 
-        for step, (inputs, targets, scales) in enumerate(self.val_loader, start=1):
-            step_loss, image_recons, kspace_recons = self._val_step(inputs, targets, scales)
+        for step, (inputs, targets, extra_params) in enumerate(self.val_loader, start=1):
+            step_loss, image_recons, kspace_recons = self._val_step(inputs, targets, extra_params)
 
             epoch_loss_lst.append(step_loss.item())
             # Step functions have internalized conditional statements deciding whether to execute or not.

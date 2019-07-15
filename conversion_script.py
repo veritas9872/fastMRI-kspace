@@ -11,6 +11,16 @@ For most systems, File I/O is the bottleneck for training speed.
 """
 
 
+def check_chunk_size(data, chunk, file):
+    mb = 2 ** 20  # megabyte
+    chunk_bytes = np.prod(chunk) * data.itemsize
+    if chunk_bytes > mb:
+        warnings.warn(f'kspace chunk size for {file} is greater than 1MB. '
+                      f'Specified chunk size is {chunk_bytes} for chunk configuration of {chunk}'
+                      f'Please reconsider chunk size configurations. '
+                      f'A chunk size greater than 1MB cannot utilize HDF5 caching by default.')
+
+
 def make_compressed_dataset(data_folder, save_dir, **save_params):
     data_path = Path(data_folder)
     files = data_path.glob('*.h5')
@@ -19,8 +29,6 @@ def make_compressed_dataset(data_folder, save_dir, **save_params):
     save_path.mkdir(exist_ok=True)
     save_path = save_path / data_path.stem
     save_path.mkdir()
-
-    mb = 2 ** 20  # megabyte
 
     for file in sorted(files):
         print(f'Processing {file}')
@@ -31,10 +39,12 @@ def make_compressed_dataset(data_folder, save_dir, **save_params):
             # Chunk size should be below 1M for cache utilization. Complex data is 8 bytes.
             if kspace.ndim == 3:  # Single-coil case
                 chunk = (1, kspace.shape[-2] // 4, kspace.shape[-1])  # dim=-2 is always 640 for fastMRI.
+                # chunk = (1, 640, kspace.shape[-1])
                 recons_key = 'reconstruction_esc'
 
             elif kspace.ndim == 4:
                 chunk = (1, 1, kspace.shape[-2] // 4, kspace.shape[-1])
+                # chunk = (1, 15, 640, kspace.shape[-1])
                 recons_key = 'reconstruction_rss'
             else:
                 raise TypeError('Invalid dimensions of input k-space data')
@@ -42,12 +52,7 @@ def make_compressed_dataset(data_folder, save_dir, **save_params):
             test_set = recons_key not in old_hf.keys()
             labels = np.asarray(old_hf[recons_key]) if not test_set else None
 
-        chunk_bytes = np.prod(chunk) * kspace.itemsize
-        if chunk_bytes > mb:
-            warnings.warn(f'kspace chunk size for {file} is greater than 1MB. '
-                          f'Specified chunk size is {chunk_bytes} for chunk configuration of {chunk}'
-                          f'Please reconsider chunk size configurations. '
-                          f'A chunk size greater than 1MB cannot utilize HDF5 caching.')
+        check_chunk_size(kspace, chunk, file)
 
         with h5py.File(save_path / file.name, mode='x', libver='latest') as new_hf:
             new_hf.attrs.update(attrs)
@@ -80,21 +85,27 @@ def check_same(old_folder, new_folder):
 
 
 if __name__ == '__main__':
-    train_dir = '/media/veritas/D/fastMRI/singlecoil_train'
-    val_dir = '/media/veritas/D/fastMRI/singlecoil_val'
-    test_dir = '/media/veritas/D/fastMRI/singlecoil_test'
+    train_dir = '/media/veritas/E/fastMRI/multicoil_train'
+    val_dir = '/media/veritas/E/fastMRI/multicoil_val'
+    test_dir = '/media/veritas/E/fastMRI/multicoil_test'
 
-    data_root = '/media/veritas/F/compFastMRI'  # Compressed Fast MRI Dataset
+    data_root = '/media/veritas/D/FastMRI'  # Compressed Fast MRI Dataset
     data_path_ = Path(data_root)
 
     # For floating point values, I have found that gzip level 1 and 9 give almost the same compression.
     # I have not checked whether this is also true for complex numbers but I presume this here.
-    gzip = dict(compression='gzip', compression_opts=1, shuffle=True, fletcher32=False)
+
+    # I have found that gzip with level 1 is almost the same as gzip level 9 for complex data
+    # when used with the shuffle filter. They both reduce the data by about half.
+    # The differences are not great enough to justify the extra computational cost of higher gzip levels.
+    # The differences do justify using gzip over lzf, however.
+    kwargs = dict(compression='gzip', compression_opts=1, shuffle=True, fletcher32=False)
+    # kwargs = dict(compression='lzf', shuffle=True)
 
     # Use compression if storing on hard drive, not SSD.
-    make_compressed_dataset(train_dir, data_root, **gzip)
-    make_compressed_dataset(val_dir, data_root, **gzip)
-    make_compressed_dataset(test_dir, data_root, **gzip)
+    make_compressed_dataset(train_dir, data_root, **kwargs)
+    make_compressed_dataset(val_dir, data_root, **kwargs)
+    make_compressed_dataset(test_dir, data_root, **kwargs)
 
     # check_same(train_dir, data_path_ / 'new_singlecoil_train')
     # check_same(val_dir, data_path_ / 'new_singlecoil_val')
