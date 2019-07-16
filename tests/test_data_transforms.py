@@ -33,13 +33,15 @@ def test_apply_mask(shape, center_fractions, accelerations):
 ])
 def test_apply_uniform_mask(shape, center_fractions, accelerations):
     mask_func = UniformMaskFunc(center_fractions, accelerations)
-    expected_mask = mask_func(shape, seed=123)
+    expected_mask, expected_info = mask_func(shape, seed=123)
     tensor = create_tensor(shape)
-    output, mask = data_transforms.apply_mask(tensor, mask_func, seed=123)
+    output, mask, info = data_transforms.apply_info_mask(tensor, mask_func, seed=123)
+    assert isinstance(info, dict)
     assert output.shape == tensor.shape
     assert mask.shape == expected_mask.shape
     assert np.all(expected_mask.numpy() == mask.numpy())
     assert np.all((output * mask).numpy() == output.numpy())
+    assert expected_info == info
 
 
 @pytest.mark.parametrize('shape', [
