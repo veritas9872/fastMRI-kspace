@@ -21,4 +21,4 @@ class L1CSSIM7(nn.Module):
         l1_loss = self.l1_loss(tensor, target)
         cssim = self.cssim(tensor, target)
         img_loss = l1_loss * self.alpha + cssim * (1 - self.alpha)
-        return {'img_loss': img_loss, 'l1_loss': l1_loss, 'cssim': cssim}
+        return img_loss, {'l1_loss': l1_loss, 'cssim': cssim}

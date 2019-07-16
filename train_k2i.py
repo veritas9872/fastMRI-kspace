@@ -10,8 +10,9 @@ from train.subsample import MaskFunc, UniformMaskFunc
 from data.input_transforms import Prefetch2Device, WeightedPreProcessK
 from data.output_transforms import WeightedReplacePostProcess
 
-from train.model_trainers.new_model_trainer_K2C import ModelTrainerK2C
+from train.model_trainers.new_model_trainer_K2I import ModelTrainerK2I
 from models.new_skip_unet import UNetSkipGN
+from metrics.combination_losses import L1CSSIM7
 
 """
 Memo: I have found that there is a great deal of variation in performance when training.
@@ -23,10 +24,10 @@ Using small datasets for multiple runs may also prove useful.
 """
 
 
-def train_k2c(args):
+def train_k2i(args):
 
     # Maybe move this to args later.
-    train_method = 'W2C'  # Weighted K-space to complex image.
+    train_method = 'W2I'  # Weighted K-space to real-valued image.
 
     # Creating checkpoint and logging directories, as well as the run name.
     ckpt_path = Path(args.ckpt_root)
@@ -72,19 +73,24 @@ def train_k2c(args):
     # UNET architecture requires that all inputs be dividable by some power of 2.
     divisor = 2 ** args.num_pool_layers
 
-    mask_func = MaskFunc(args.center_fractions, args.accelerations)
-    # mask_func = UniformMaskFunc(args.center_fractions, args.accelerations)
+    if args.random_sampling:
+        mask_func = MaskFunc(args.center_fractions, args.accelerations)
+    else:
+        mask_func = UniformMaskFunc(args.center_fractions, args.accelerations)
 
+    # This is optimized for SSD storage.
+    # Sending to device should be inside the input transform for optimal performance on HDD.
     data_prefetch = Prefetch2Device(device)
 
-    input_train_transform = WeightedPreProcessK(mask_func, args.challenge, args.device, use_seed=False, divisor=divisor)
-    input_val_transform = WeightedPreProcessK(mask_func, args.challenge, args.device, use_seed=True, divisor=divisor)
+    input_train_transform = WeightedPreProcessK(mask_func, args.challenge, device, use_seed=False, divisor=divisor)
+    input_val_transform = WeightedPreProcessK(mask_func, args.challenge, device, use_seed=True, divisor=divisor)
 
     # DataLoaders
     train_loader, val_loader = create_custom_data_loaders(args, transform=data_prefetch)
 
     losses = dict(
-        cmg_loss=nn.MSELoss(reduction='mean')
+        img_loss=nn.L1Loss(reduction='mean')
+        # img_loss=L1CSSIM7(reduction='mean', alpha=args.alpha)
     )
 
     output_transform = WeightedReplacePostProcess()
@@ -99,7 +105,7 @@ def train_k2c(args):
     optimizer = optim.Adam(model.parameters(), lr=args.init_lr)
     scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.lr_red_epochs, gamma=args.lr_red_rate)
 
-    trainer = ModelTrainerK2C(args, model, optimizer, train_loader, val_loader,
+    trainer = ModelTrainerK2I(args, model, optimizer, train_loader, val_loader,
                               input_train_transform, input_val_transform, output_transform, losses, scheduler)
 
     trainer.train_model()
@@ -118,39 +124,40 @@ if __name__ == '__main__':
         batch_size=1,  # This MUST be 1 for now.
         num_pool_layers=4,
         save_best_only=True,
-        center_fractions=[0.16],
-        accelerations=[2],
+        center_fractions=[0.08, 0.04],
+        accelerations=[4, 8],
         smoothing_factor=8,
 
         # Variables that occasionally change.
         chans=64,
-        max_images=6,  # Maximum number of images to save.
+        max_images=12,  # Maximum number of images to save.
         num_workers=1,
         init_lr=2E-2,
-        gpu=1,  # Set to None for CPU mode.
         max_to_keep=1,
-        start_slice=12,
+        start_slice=6,
+        random_sampling=True,
+        verbose=False,
 
         # Learning rate scheduling.
-        lr_red_epochs=[30, 60, 90],
+        lr_red_epochs=[40, 60, 80],
         lr_red_rate=0.1,
 
         # Model specific parameters.
         num_groups=8,
         pool_type='avg',
-        use_skip=True,
+        use_skip=False,
         use_att=False,
         reduction=16,
         use_gap=True,
         use_gmp=False,
+        alpha=0.5,
 
         # Variables that change frequently.
-        sample_rate=0.1,
-        num_epochs=50,
-        verbose=False,
-        use_slice_metrics=False,  # This can significantly increase training time.
-
+        sample_rate=0.25,  # Ratio of the dataset to sample and use.
+        num_epochs=100,
+        gpu=1,  # Set to None for CPU mode.
+        use_slice_metrics=True,  # This can significantly increase training time.
         # prev_model_ckpt='',
     )
     options = create_arg_parser(**settings).parse_args()
-    train_k2c(options)
+    train_k2i(options)

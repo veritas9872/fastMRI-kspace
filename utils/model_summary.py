@@ -57,7 +57,7 @@ def summary(model, input_size, batch_size=-1, device="cuda", display_func=print)
 
     # batch_size of 2 for batchnorm
     x = [torch.rand(2, *in_size).type(dtype) for in_size in input_size]
-    # print(type(x[0]))
+    # display_func(type(x[0]))
 
     # create properties
     model_summary = OrderedDict()
@@ -67,7 +67,7 @@ def summary(model, input_size, batch_size=-1, device="cuda", display_func=print)
     model.apply(register_hook)
 
     # make a forward pass
-    # print(x.shape)
+    # display_func(x.shape)
     model(*x)
 
     # Adding this line just in case. It would be bad to have unnecessary tensors eating up memory.
@@ -77,10 +77,10 @@ def summary(model, input_size, batch_size=-1, device="cuda", display_func=print)
     for h in hooks:
         h.remove()
 
-    print("----------------------------------------------------------------")
+    display_func("----------------------------------------------------------------")
     line_new = "{:>20}  {:>25} {:>15}".format("Layer (type)", "Output Shape", "Param #")
-    print(line_new)
-    print("================================================================")
+    display_func(line_new)
+    display_func("================================================================")
     total_params = 0
     total_output = 0
     trainable_params = 0
@@ -96,7 +96,7 @@ def summary(model, input_size, batch_size=-1, device="cuda", display_func=print)
         if "trainable" in model_summary[layer]:
             if model_summary[layer]["trainable"]:
                 trainable_params += model_summary[layer]["nb_params"]
-        print(line_new)
+        display_func(line_new)
 
     # assume 4 bytes/number (float on cuda).
     total_input_size = abs(np.prod(input_size) * batch_size * 4. / (1024 ** 2.))
@@ -104,14 +104,14 @@ def summary(model, input_size, batch_size=-1, device="cuda", display_func=print)
     total_params_size = abs(total_params.numpy() * 4. / (1024 ** 2.))
     total_size = total_params_size + total_output_size + total_input_size
 
-    print("================================================================")
-    print("Total params: {0:,}".format(total_params))
-    print("Trainable params: {0:,}".format(trainable_params))
-    print("Non-trainable params: {0:,}".format(total_params - trainable_params))
-    print("----------------------------------------------------------------")
-    print("Input size (MB): %0.2f" % total_input_size)
-    print("Forward/backward pass size (MB): %0.2f" % total_output_size)
-    print("Params size (MB): %0.2f" % total_params_size)
-    print("Estimated Total Size (MB): %0.2f" % total_size)
-    print("----------------------------------------------------------------")
+    display_func("================================================================")
+    display_func("Total params: {0:,}".format(total_params))
+    display_func("Trainable params: {0:,}".format(trainable_params))
+    display_func("Non-trainable params: {0:,}".format(total_params - trainable_params))
+    display_func("----------------------------------------------------------------")
+    display_func("Input size (MB): %0.2f" % total_input_size)
+    display_func("Forward/backward pass size (MB): %0.2f" % total_output_size)
+    display_func("Params size (MB): %0.2f" % total_params_size)
+    display_func("Estimated Total Size (MB): %0.2f" % total_size)
+    display_func("----------------------------------------------------------------")
     # return model_summary
