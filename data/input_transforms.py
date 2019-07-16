@@ -324,10 +324,12 @@ class WeightedPreProcessSemiK:
             # Performing scaling after ifft for numerical stability
             cmg_target = ifft2(kspace_target) * k_scaling
             img_target = complex_abs(cmg_target)
+            semi_kspace_target = ifft1(kspace_target, direction='height') * k_scaling
             kspace_target *= k_scaling
 
             # Use plurals as keys to reduce confusion.
-            targets = {'kspace_targets': kspace_target, 'cmg_targets': cmg_target, 'img_targets': img_target}
+            targets = {'semi_kspace_targets': semi_kspace_target, 'kspace_targets': kspace_target,
+                       'cmg_targets': cmg_target, 'img_targets': img_target}
 
             margin = semi_kspace.size(-1) % self.divisor
             if margin > 0:

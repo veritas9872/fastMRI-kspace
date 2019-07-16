@@ -124,8 +124,8 @@ if __name__ == '__main__':
         batch_size=1,  # This MUST be 1 for now.
         num_pool_layers=4,
         save_best_only=True,
-        center_fractions=[0.08, 0.04],
-        accelerations=[4, 8],
+        center_fractions=[0.08],
+        accelerations=[4],
         smoothing_factor=8,
 
         # Variables that occasionally change.

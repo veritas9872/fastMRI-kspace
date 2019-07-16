@@ -209,9 +209,19 @@ class ModelTrainerK2I:
                 self.writer.add_image(f'Image_Recons/{step}', img_recon_grid, epoch, dataformats='HW')
                 self.writer.add_image(f'Image_Deltas/{step}', img_delta_grid, epoch, dataformats='HW')
 
+                if 'semi_kspace_recons' in recons:
+                    semi_kspace_recon_grid = make_k_grid(recons['semi_kspace_recons'])
+                    self.writer.add_image(f'semi-k-space_Recons/{step}',
+                                          semi_kspace_recon_grid, epoch, dataformats='HW')
+
                 if epoch == 1:  # Maybe add input images too later on.
                     self.writer.add_image(f'k-space_Targets/{step}', kspace_target_grid, epoch, dataformats='HW')
                     self.writer.add_image(f'Image_Targets/{step}', img_target_grid, epoch, dataformats='HW')
+
+                    if 'semi_kspace_targets' in targets:
+                        semi_kspace_target_grid = make_k_grid(targets['semi_kspace_targets'])
+                        self.writer.add_image(f'semi-k-space_Targets/{step}',
+                                              semi_kspace_target_grid, epoch, dataformats='HW')
 
         # Converted to scalar and dict with scalar values respectively.
         return self._get_epoch_outputs(epoch, epoch_loss, epoch_metrics, training=False)
