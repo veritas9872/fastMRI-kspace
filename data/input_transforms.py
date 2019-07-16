@@ -199,7 +199,7 @@ class PreProcessSemiK(nn.Module):
 
 
 class WeightedPreProcessK:
-    def __init__(self, mask_func, challenge, device, use_seed=True, divisor=1):
+    def __init__(self, mask_func, challenge, device, use_seed=True, divisor=1, squared=False):
         if challenge not in ('singlecoil', 'multicoil'):
             raise ValueError(f'Challenge should either be "singlecoil" or "multicoil"')
         self.mask_func = mask_func
@@ -207,6 +207,7 @@ class WeightedPreProcessK:
         self.device = device
         self.use_seed = use_seed
         self.divisor = divisor
+        self.squared = squared
 
     def __call__(self, kspace_target, target, attrs, file_name, slice_num):
         assert isinstance(kspace_target, torch.Tensor)
@@ -256,8 +257,7 @@ class WeightedPreProcessK:
 
         return inputs, targets, extra_params
 
-    @staticmethod
-    def make_weighting_matrix(tensor):
+    def make_weighting_matrix(self, tensor):
         assert isinstance(tensor, torch.Tensor), '`tensor` must be a tensor.'
         assert tensor.dim() == 5, '`tensor` is expected to be in the k-space format.'
         device = tensor.device
@@ -274,7 +274,10 @@ class WeightedPreProcessK:
         y_coords = torch.arange(start=-mid_height + 0.5, end=mid_height + 0.5, step=1,
                                 device=device).view(height, 1).expand(height, width)
 
-        weighting_matrix = torch.sqrt((x_coords ** 2) + (y_coords ** 2))
+        if self.squared:
+            weighting_matrix = (x_coords ** 2) + (y_coords ** 2)
+        else:
+            weighting_matrix = torch.sqrt((x_coords ** 2) + (y_coords ** 2))
 
         weighting_matrix = weighting_matrix.view(1, 1, height, width, 1)
 
@@ -282,7 +285,7 @@ class WeightedPreProcessK:
 
 
 class WeightedPreProcessSemiK:
-    def __init__(self, mask_func, challenge, device, use_seed=True, divisor=1):
+    def __init__(self, mask_func, challenge, device, use_seed=True, divisor=1, squared=False):
         if challenge not in ('singlecoil', 'multicoil'):
             raise ValueError(f'Challenge should either be "singlecoil" or "multicoil"')
         self.mask_func = mask_func
@@ -290,6 +293,7 @@ class WeightedPreProcessSemiK:
         self.device = device
         self.use_seed = use_seed
         self.divisor = divisor
+        self.squared = squared
 
     def __call__(self, kspace_target, target, attrs, file_name, slice_num):
         assert isinstance(kspace_target, torch.Tensor)
@@ -342,8 +346,7 @@ class WeightedPreProcessSemiK:
 
         return inputs, targets, extra_params
 
-    @staticmethod
-    def make_semi_weighting_matrix(tensor):  # Expects up-down IFFT to turn into image domain.
+    def make_semi_weighting_matrix(self, tensor):  # Expects up-down IFFT to turn into image domain.
         assert isinstance(tensor, torch.Tensor), '`tensor` must be a tensor.'
         assert tensor.dim() == 5, '`tensor` is expected to be in the k-space format.'
         device = tensor.device
@@ -353,4 +356,9 @@ class WeightedPreProcessSemiK:
 
         # The indexing might be a bit confusing.
         x_coords = torch.arange(start=-mid_width + 0.5, end=mid_width + 0.5, step=1, device=device)
-        return torch.abs(x_coords).view(1, 1, 1, width, 1)
+        if self.squared:
+            weighting_matrix = (x_coords ** 2).view(1, 1, 1, width, 1)
+        else:
+            weighting_matrix = torch.abs(x_coords).view(1, 1, 1, width, 1)
+
+        return weighting_matrix

@@ -8,7 +8,7 @@ from utils.train_utils import create_custom_data_loaders
 
 from train.subsample import MaskFunc, UniformMaskFunc
 from data.input_transforms import Prefetch2Device, WeightedPreProcessK
-from data.output_transforms import WeightedReplacePostProcess
+from data.output_transforms import WeightedReplacePostProcessK
 
 from train.model_trainers.new_model_trainer_K2I import ModelTrainerK2I
 from models.new_skip_unet import UNetSkipGN
@@ -93,7 +93,7 @@ def train_k2i(args):
         # img_loss=L1CSSIM7(reduction='mean', alpha=args.alpha)
     )
 
-    output_transform = WeightedReplacePostProcess()
+    output_transform = WeightedReplacePostProcessK()
 
     data_chans = 2 if args.challenge == 'singlecoil' else 30  # Multicoil has 15 coils with 2 for real/imag
 
@@ -124,8 +124,8 @@ if __name__ == '__main__':
         batch_size=1,  # This MUST be 1 for now.
         num_pool_layers=4,
         save_best_only=True,
-        center_fractions=[0.08],
-        accelerations=[4],
+        center_fractions=[0.08, 0.04],
+        accelerations=[4, 8],
         smoothing_factor=8,
 
         # Variables that occasionally change.

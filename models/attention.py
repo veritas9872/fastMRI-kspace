@@ -1,3 +1,4 @@
+import torch
 from torch import nn
 
 
@@ -18,6 +19,8 @@ class ChannelAttention(nn.Module):
 
         self.sigmoid = nn.Sigmoid()
 
+    # Maybe I should just concatenate the max and avg as in the spatial attention...
+    # It would make more sense that way...
     def forward(self, tensor):
         batch, chans, _, _ = tensor.shape
         if self.use_gap and self.use_gmp:
@@ -41,4 +44,61 @@ class ChannelAttention(nn.Module):
         else:
             att = 1
 
+        return tensor * att
+
+
+class ChannelAvgPool(nn.Module):
+    """
+    Performs average pooling of tensors along the channel axis.
+    """
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, tensor):
+        return torch.mean(tensor, dim=1, keepdim=True)
+
+
+class ChannelMaxPool(nn.Module):
+    """
+    Performs maximum pooling of tensors along the channel axis.
+    """
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, tensor):
+        return torch.max(tensor, dim=1, keepdim=True)[0]
+
+
+class SpatialAttention(nn.Module):
+    def __init__(self, kernel_size=7, dilation=1, use_cap=True, use_cmp=True):
+        super().__init__()
+        self.cap = ChannelAvgPool()
+        self.cmp = ChannelMaxPool()
+
+        self.use_cap = use_cap
+        self.use_cmp = use_cmp
+
+        # The use of 2 channels is inconsistent with the channel attention module but copying the paper anyway.
+        # Terrible coding style since the model is different for different settings.
+        if use_cap and use_cmp:  # Maybe implement as repeated conv, as in repeated MLP in channel attention.
+            self.conv = nn.Conv2d(in_channels=2, out_channels=1, kernel_size=kernel_size, dilation=dilation)
+        else:
+            self.conv = nn.Conv2d(in_channels=1, out_channels=1, kernel_size=kernel_size, dilation=dilation)
+
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, tensor):
+        if not (self.use_cap or self.use_cmp):
+            return tensor
+
+        if self.use_cap and self.use_cmp:
+            features = torch.cat([self.cap(tensor), self.cmp(tensor)], dim=1)
+        elif self.use_cap:
+            features = self.cap(tensor)
+        elif self.use_cmp:
+            features = self.cmp(tensor)
+        else:
+            raise RuntimeError('Impossible settings. Check for logic errors.')
+
+        att = self.sigmoid(features)
         return tensor * att

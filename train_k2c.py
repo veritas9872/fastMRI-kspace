@@ -8,7 +8,7 @@ from utils.train_utils import create_custom_data_loaders
 
 from train.subsample import MaskFunc, UniformMaskFunc
 from data.input_transforms import Prefetch2Device, WeightedPreProcessK
-from data.output_transforms import WeightedReplacePostProcess
+from data.output_transforms import WeightedReplacePostProcessK
 
 from train.model_trainers.new_model_trainer_K2C import ModelTrainerK2C
 from models.new_skip_unet import UNetSkipGN
@@ -87,7 +87,7 @@ def train_k2c(args):
         cmg_loss=nn.MSELoss(reduction='mean')
     )
 
-    output_transform = WeightedReplacePostProcess()
+    output_transform = WeightedReplacePostProcessK()
 
     data_chans = 2 if args.challenge == 'singlecoil' else 30  # Multicoil has 15 coils with 2 for real/imag
 
