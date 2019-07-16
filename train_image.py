@@ -7,7 +7,7 @@ from utils.run_utils import initialize, save_dict_as_json, get_logger, create_ar
 from utils.train_utils import create_custom_data_loaders
 
 from train.subsample import RandomMaskFunc, UniformMaskFunc
-from data.input_transforms import Prefetch2Device, WeightedPreProcessSemiK
+from data.input_transforms import Prefetch2Device, WeightedPreProcessSemiK, WeightedPreProcessK
 from data.output_transforms import WeightedReplacePostProcessK
 
 from train.model_trainers.model_trainer_IMAGE import ModelTrainerIMAGE
@@ -27,7 +27,7 @@ Using small datasets for multiple runs may also prove useful.
 def train_image(args):
 
     # Maybe move this to args later.
-    train_method = 'WS2I'  # Weighted semi-k-space to real-valued image.
+    train_method = 'WK2I'  # Weighted semi-k-space to real-valued image.
 
     # Creating checkpoint and logging directories, as well as the run name.
     ckpt_path = Path(args.ckpt_root)
@@ -82,9 +82,10 @@ def train_image(args):
     # Sending to device should be inside the input transform for optimal performance on HDD.
     data_prefetch = Prefetch2Device(device)
 
-    input_train_transform = WeightedPreProcessSemiK(
+    # Using k-space learning for now.
+    input_train_transform = WeightedPreProcessK(
         mask_func, args.challenge, device, use_seed=False, divisor=divisor, squared_weighting=False)
-    input_val_transform = WeightedPreProcessSemiK(
+    input_val_transform = WeightedPreProcessK(
         mask_func, args.challenge, device, use_seed=True, divisor=divisor, squared_weighting=False)
 
     # DataLoaders

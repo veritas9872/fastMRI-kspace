@@ -232,15 +232,20 @@ class ModelTrainerIMAGE:
         # This numbering scheme seems to have issues for certain numbers.
         # Please check cases when there is no remainder.
         if self.display_interval and (step % self.display_interval == 0):
-            # Change image display function later.
-            img_recon_grid, img_target_grid, img_delta_grid = \
-                make_grid_triplet(recons['img_recons'], targets['img_targets'])
+
+            img_recon_grid = make_img_grid(recons['img_recons'])
+            img_target_grid = make_img_grid(targets['img_targets'])
+
+            # The delta image is obtained by subtracting at the complex image, not the real valued image.
+            delta_image = torch.abs(targets['cmg_targets'] - recons['cmg_recons'])
+            delta_img_grid = make_img_grid(delta_image)
+
             kspace_recon_grid = make_k_grid(recons['kspace_recons'], self.smoothing_factor)
             kspace_target_grid = make_k_grid(targets['kspace_targets'], self.smoothing_factor)
 
             self.writer.add_image(f'{mode} k-space Recons/{step}', kspace_recon_grid, epoch, dataformats='HW')
             self.writer.add_image(f'{mode} Image Recons/{step}', img_recon_grid, epoch, dataformats='HW')
-            self.writer.add_image(f'{mode} Image Deltas/{step}', img_delta_grid, epoch, dataformats='HW')
+            self.writer.add_image(f'{mode} Delta Image/{step}', delta_img_grid, epoch, dataformats='HW')
 
             if 'semi_kspace_recons' in recons:
                 semi_kspace_recon_grid = make_k_grid(recons['semi_kspace_recons'])
@@ -251,14 +256,14 @@ class ModelTrainerIMAGE:
                 self.writer.add_image(f'{mode} k-space Targets/{step}', kspace_target_grid, epoch, dataformats='HW')
                 self.writer.add_image(f'{mode} Image Targets/{step}', img_target_grid, epoch, dataformats='HW')
 
+                # Not actually the input but what the input looks like as an image.
+                img_grid = make_img_grid(targets['img_inputs'])
+                self.writer.add_image(f'{mode} Inputs as Images/{step}', img_grid, epoch, dataformats='HW')
+
                 if 'semi_kspace_targets' in targets:
                     semi_kspace_target_grid = make_k_grid(targets['semi_kspace_targets'])
                     self.writer.add_image(f'{mode} semi-k-space Targets/{step}',
                                           semi_kspace_target_grid, epoch, dataformats='HW')
-
-                if 'img_inputs' in targets:  # Not actually the input but what the input looks like as an image.
-                    img_grid = make_img_grid(targets['img_inputs'])
-                    self.writer.add_image(f'{mode} Inputs as Images/{step}', img_grid, epoch, dataformats='HW')
 
     @staticmethod
     def _get_slice_metrics(img_recons, img_targets):
