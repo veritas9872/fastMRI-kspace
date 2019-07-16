@@ -7,8 +7,8 @@ from utils.run_utils import initialize, save_dict_as_json, get_logger, create_ar
 from utils.train_utils import create_custom_data_loaders
 
 from train.subsample import RandomMaskFunc, UniformMaskFunc
-from data.input_transforms import Prefetch2Device, WeightedPreProcessSemiK, WeightedPreProcessK
-from data.output_transforms import WeightedReplacePostProcessK
+from data.input_transforms import Prefetch2Device, WeightedPreProcessK, WeightedPreProcessSemiK
+from data.output_transforms import WeightedReplacePostProcessK, WeightedReplacePostProcessSemiK
 
 from train.model_trainers.model_trainer_IMAGE import ModelTrainerIMAGE
 from models.res_skip_unet import UNetModel
@@ -27,7 +27,7 @@ Using small datasets for multiple runs may also prove useful.
 def train_image(args):
 
     # Maybe move this to args later.
-    train_method = 'WK2I'  # Weighted semi-k-space to real-valued image.
+    train_method = 'WS2I'  # Weighted semi-k-space to real-valued image.
 
     # Creating checkpoint and logging directories, as well as the run name.
     ckpt_path = Path(args.ckpt_root)
@@ -82,11 +82,13 @@ def train_image(args):
     # Sending to device should be inside the input transform for optimal performance on HDD.
     data_prefetch = Prefetch2Device(device)
 
-    # Using k-space learning for now.
-    input_train_transform = WeightedPreProcessK(
+    # Attempting semi-k-space learning.
+    input_train_transform = WeightedPreProcessSemiK(
         mask_func, args.challenge, device, use_seed=False, divisor=divisor, squared_weighting=False)
-    input_val_transform = WeightedPreProcessK(
+    input_val_transform = WeightedPreProcessSemiK(
         mask_func, args.challenge, device, use_seed=True, divisor=divisor, squared_weighting=False)
+
+    output_transform = WeightedReplacePostProcessSemiK(weighted=True, replace=True)  # New settings.
 
     # DataLoaders
     train_loader, val_loader = create_custom_data_loaders(args, transform=data_prefetch)
@@ -95,8 +97,6 @@ def train_image(args):
         img_loss=nn.L1Loss(reduction='mean')
         # img_loss=L1CSSIM7(reduction='mean', alpha=args.alpha)
     )
-
-    output_transform = WeightedReplacePostProcessK(weighted=True, replace=True)  # New settings.
 
     data_chans = 2 if args.challenge == 'singlecoil' else 30  # Multicoil has 15 coils with 2 for real/imag
 

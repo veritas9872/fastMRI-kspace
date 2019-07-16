@@ -223,7 +223,7 @@ class WeightedPreProcessK:
             masked_kspace, mask, info = apply_info_mask(kspace_target, self.mask_func, seed)
 
             weighting = self.make_weighting_matrix(masked_kspace)
-            masked_kspace = masked_kspace * weighting
+            masked_kspace *= weighting
 
             # img_input is not actually an input but what the input would look like in the image domain.
             img_input = complex_abs(ifft2(masked_kspace))
@@ -238,9 +238,10 @@ class WeightedPreProcessK:
 
             extra_params = {'k_scales': k_scale, 'masks': mask, 'weightings': weighting}
             extra_params.update(info)
+            extra_params.update(attrs)
 
             # Recall that the Fourier transform is a linear transform.
-            # Performing scaling after ifft for numerical stability
+            # Performing scaling after ifft for numerical precision.
             cmg_target = ifft2(kspace_target) * k_scaling
             img_target = complex_abs(cmg_target)
             kspace_target *= k_scaling
@@ -330,9 +331,10 @@ class WeightedPreProcessSemiK:
 
             extra_params = {'k_scales': k_scale, 'masks': mask, 'weightings': weighting}
             extra_params.update(info)
+            extra_params.update(attrs)
 
             # Recall that the Fourier transform is a linear transform.
-            # Performing scaling after ifft for numerical stability
+            # Performing scaling after ifft for numerical precision.
             cmg_target = ifft2(kspace_target) * k_scaling
             img_target = complex_abs(cmg_target)
             semi_kspace_target = ifft1(kspace_target, direction='height') * k_scaling
