@@ -78,12 +78,7 @@ class SpatialAttention(nn.Module):
         self.use_cap = use_cap
         self.use_cmp = use_cmp
 
-        # The use of 2 channels is inconsistent with the channel attention module but copying the paper anyway.
-        # Terrible coding style since the model is different for different settings.
-        if use_cap and use_cmp:  # Maybe implement as repeated conv, as in repeated MLP in channel attention.
-            self.conv = nn.Conv2d(in_channels=2, out_channels=1, kernel_size=kernel_size, dilation=dilation)
-        else:
-            self.conv = nn.Conv2d(in_channels=1, out_channels=1, kernel_size=kernel_size, dilation=dilation)
+        self.conv = nn.Conv2d(in_channels=2, out_channels=1, kernel_size=kernel_size, dilation=dilation)
 
         self.sigmoid = nn.Sigmoid()
 
@@ -94,9 +89,9 @@ class SpatialAttention(nn.Module):
         if self.use_cap and self.use_cmp:
             features = torch.cat([self.cap(tensor), self.cmp(tensor)], dim=1)
         elif self.use_cap:
-            features = self.cap(tensor)
+            features = self.cap(tensor).expand(-1, 2, -1, -1)
         elif self.use_cmp:
-            features = self.cmp(tensor)
+            features = self.cmp(tensor).expand(-1, 2, -1, -1)
         else:
             raise RuntimeError('Impossible settings. Check for logic errors.')
 

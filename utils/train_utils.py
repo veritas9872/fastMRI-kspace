@@ -330,6 +330,24 @@ def make_grid_triplet(image_recons, image_targets):
     return image_recons, image_targets, deltas
 
 
+def make_img_grid(image):
+    if image.size(0) > 1:
+        raise NotImplementedError('Batch size is expected to be 1.')
+
+    image = image.detach().squeeze()
+
+    maximum = image.max()
+    minimum = image.min()
+    scale = 1 / (maximum - minimum)
+
+    image = (image - minimum) * scale
+
+    if image.size(0) == 15:  # Multi-coil case.
+        image = torch.cat(torch.chunk(image.view(-1, image.size(-1)), chunks=5, dim=0), dim=1)
+
+    return image.squeeze().cpu()
+
+
 def make_k_grid(kspace_recons, smoothing_factor=8):
     """
     Function for making k-space visualizations for Tensorboard.

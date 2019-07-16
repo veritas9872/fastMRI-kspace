@@ -199,7 +199,7 @@ class PreProcessSemiK(nn.Module):
 
 
 class WeightedPreProcessK:
-    def __init__(self, mask_func, challenge, device, use_seed=True, divisor=1, squared=False):
+    def __init__(self, mask_func, challenge, device, use_seed=True, divisor=1, squared_weighting=False):
         if challenge not in ('singlecoil', 'multicoil'):
             raise ValueError(f'Challenge should either be "singlecoil" or "multicoil"')
         self.mask_func = mask_func
@@ -207,7 +207,7 @@ class WeightedPreProcessK:
         self.device = device
         self.use_seed = use_seed
         self.divisor = divisor
-        self.squared = squared
+        self.squared_weighting = squared_weighting
 
     def __call__(self, kspace_target, target, attrs, file_name, slice_num):
         assert isinstance(kspace_target, torch.Tensor)
@@ -274,7 +274,7 @@ class WeightedPreProcessK:
         y_coords = torch.arange(start=-mid_height + 0.5, end=mid_height + 0.5, step=1,
                                 device=device).view(height, 1).expand(height, width)
 
-        if self.squared:
+        if self.squared_weighting:
             weighting_matrix = (x_coords ** 2) + (y_coords ** 2)
         else:
             weighting_matrix = torch.sqrt((x_coords ** 2) + (y_coords ** 2))
