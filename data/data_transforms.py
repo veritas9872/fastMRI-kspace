@@ -33,9 +33,30 @@ def apply_mask(data, mask_func, seed=None):
     """
     shape = np.array(data.shape)
     shape[:-3] = 1
-    mask = mask_func(shape, seed).to(data.device)  # Includes my alterations to cope with pre-fetching to GPU.
+    mask = mask_func(shape, seed)
+    return torch.where(mask == 0, torch.Tensor([0]), data), mask
+
+
+def apply_info_mask(data, mask_func, seed=None):
+    """
+    Subsample given k-space by multiplying with a mask.
+    Args:
+        data (torch.Tensor): The input k-space data. This should have at least 3 dimensions, where
+            dimensions -3 and -2 are the spatial dimensions, and the final dimension has size
+            2 (for complex values).
+        mask_func (callable): A function that takes a shape (tuple of ints) and a random
+            number seed and returns a mask.
+        seed (int or 1-d array_like, optional): Seed for the random number generator.
+    Returns:
+        (tuple): tuple containing:
+            masked data (torch.Tensor): Subsampled k-space data
+            mask (torch.Tensor): The generated mask
+    """
+    shape = np.array(data.shape)
+    shape[:-3] = 1
+    mask, info = mask_func(shape, seed).to(data.device)  # Includes my alterations to cope with pre-fetching to GPU.
     # Checked that this version also removes negative 0 values as well.
-    return torch.where(mask == 0, torch.tensor(0, dtype=data.dtype, device=data.device), data), mask
+    return torch.where(mask == 0, torch.tensor(0, dtype=data.dtype, device=data.device), data), mask, info
 
 
 def fft2(data):
