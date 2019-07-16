@@ -9,7 +9,7 @@ from time import time
 from collections import defaultdict
 
 from utils.run_utils import get_logger
-from utils.train_utils import CheckpointManager, make_grid_triplet, make_k_grid, make_img_grid
+from utils.train_utils import CheckpointManager, make_grid_triplet, make_k_grid, make_img_grid, complex_abs
 from metrics.my_ssim import ssim_loss
 from metrics.custom_losses import psnr_loss, nmse_loss
 
@@ -232,16 +232,13 @@ class ModelTrainerIMAGE:
         # This numbering scheme seems to have issues for certain numbers.
         # Please check cases when there is no remainder.
         if self.display_interval and (step % self.display_interval == 0):
-
             img_recon_grid = make_img_grid(recons['img_recons'])
-            img_target_grid = make_img_grid(targets['img_targets'])
 
             # The delta image is obtained by subtracting at the complex image, not the real valued image.
-            delta_image = torch.abs(targets['cmg_targets'] - recons['cmg_recons'])
+            delta_image = complex_abs(targets['cmg_targets'] - recons['cmg_recons'])
             delta_img_grid = make_img_grid(delta_image)
 
             kspace_recon_grid = make_k_grid(recons['kspace_recons'], self.smoothing_factor)
-            kspace_target_grid = make_k_grid(targets['kspace_targets'], self.smoothing_factor)
 
             self.writer.add_image(f'{mode} k-space Recons/{step}', kspace_recon_grid, epoch, dataformats='HW')
             self.writer.add_image(f'{mode} Image Recons/{step}', img_recon_grid, epoch, dataformats='HW')
@@ -253,11 +250,14 @@ class ModelTrainerIMAGE:
                                       semi_kspace_recon_grid, epoch, dataformats='HW')
 
             if epoch == 1:  # Maybe add input images too later on.
-                self.writer.add_image(f'{mode} k-space Targets/{step}', kspace_target_grid, epoch, dataformats='HW')
-                self.writer.add_image(f'{mode} Image Targets/{step}', img_target_grid, epoch, dataformats='HW')
+                img_target_grid = make_img_grid(targets['img_targets'])
+                kspace_target_grid = make_k_grid(targets['kspace_targets'], self.smoothing_factor)
 
                 # Not actually the input but what the input looks like as an image.
                 img_grid = make_img_grid(targets['img_inputs'])
+
+                self.writer.add_image(f'{mode} k-space Targets/{step}', kspace_target_grid, epoch, dataformats='HW')
+                self.writer.add_image(f'{mode} Image Targets/{step}', img_target_grid, epoch, dataformats='HW')
                 self.writer.add_image(f'{mode} Inputs as Images/{step}', img_grid, epoch, dataformats='HW')
 
                 if 'semi_kspace_targets' in targets:
