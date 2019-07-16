@@ -345,7 +345,7 @@ def make_img_grid(image):
     if image.size(0) == 15:  # Multi-coil case.
         image = torch.cat(torch.chunk(image.view(-1, image.size(-1)), chunks=5, dim=0), dim=1)
 
-    return image.squeeze().cpu()
+    return image.squeeze().to(device='cpu', non_blocking=True)
 
 
 def make_k_grid(kspace_recons, smoothing_factor=8):
@@ -372,7 +372,7 @@ def make_k_grid(kspace_recons, smoothing_factor=8):
     if kspace_view.size(0) == 15:
         kspace_view = torch.cat(torch.chunk(kspace_view.view(-1, kspace_view.size(-1)), chunks=5, dim=0), dim=1)
 
-    return kspace_view.squeeze().cpu()
+    return kspace_view.squeeze().to(device='cpu', non_blocking=True)
 
 
 def visualize_from_kspace(kspace_recons, kspace_targets, smoothing_factor=4):

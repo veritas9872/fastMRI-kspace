@@ -95,7 +95,7 @@ def train_image(args):
         # img_loss=L1CSSIM7(reduction='mean', alpha=args.alpha)
     )
 
-    output_transform = WeightedReplacePostProcessK(weighted=True, replace=False)  # New settings.
+    output_transform = WeightedReplacePostProcessK(weighted=True, replace=True)  # New settings.
 
     data_chans = 2 if args.challenge == 'singlecoil' else 30  # Multicoil has 15 coils with 2 for real/imag
 
@@ -149,7 +149,7 @@ if __name__ == '__main__':
         # Model specific parameters.
         num_groups=8,
         pool_type='avg',
-        use_residual=True,
+        use_residual=False,
         use_skip=False,
 
         # Channel Attention.

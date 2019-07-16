@@ -91,8 +91,8 @@ class ModelTrainerIMAGE:
         # Train and Val input transforms are assumed to use the same input transform class.
         self.logger.info(f'''
         Summary of Model Trainer Components:
-        Model: {get_class_name(model)}. 
-        Optimizer: {get_class_name(optimizer)}.            
+        Model: {get_class_name(model)}.
+        Optimizer: {get_class_name(optimizer)}.
         Input Transforms: {get_class_name(input_val_transform)}.
         Output Transform: {get_class_name(output_transform)}.
         Image Domain Loss: {get_class_name(losses["img_loss"])}.

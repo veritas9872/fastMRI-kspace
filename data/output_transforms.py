@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 
-from data.data_transforms import nchw_to_kspace, ifft2, complex_abs, ifft1
+from data.data_transforms import nchw_to_kspace, ifft2, complex_abs, ifft1, fft1
 
 
 class OutputReplaceTransformK(nn.Module):
@@ -169,7 +169,7 @@ class WeightedReplacePostProcessSemiK(nn.Module):
             mask = extra_params['masks']
             semi_kspace_recons = semi_kspace_recons * (1 - mask) + semi_kspace_targets * mask
 
-        kspace_recons = ifft1(semi_kspace_recons, direction=self.direction)
+        kspace_recons = fft1(semi_kspace_recons, direction=self.direction)
         cmg_recons = ifft1(semi_kspace_recons, direction=self.recon_direction)
         img_recons = complex_abs(cmg_recons)
 
