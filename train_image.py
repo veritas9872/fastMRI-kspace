@@ -88,7 +88,7 @@ def train_image(args):
     input_val_transform = WeightedPreProcessSemiK(
         mask_func, args.challenge, device, use_seed=True, divisor=divisor, squared_weighting=False)
 
-    output_transform = WeightedReplacePostProcessSemiK(weighted=True, replace=True)  # New settings.
+    output_transform = WeightedReplacePostProcessSemiK(weighted=True, replace=False)  # New settings.
 
     # DataLoaders
     train_loader, val_loader = create_custom_data_loaders(args, transform=data_prefetch)
@@ -135,11 +135,11 @@ if __name__ == '__main__':
 
         # Variables that occasionally change.
         chans=32,
-        max_images=8,  # Maximum number of images to save.
-        num_workers=1,
+        max_images=0,  # Maximum number of images to save.
+        num_workers=2,
         init_lr=2E-2,
-        max_to_keep=1,
-        start_slice=6,
+        max_to_keep=0,
+        start_slice=12,
         random_sampling=True,
         verbose=False,
 
@@ -150,7 +150,7 @@ if __name__ == '__main__':
         # Model specific parameters.
         num_groups=8,
         pool_type='avg',
-        use_residual=False,
+        use_residual=True,
         use_skip=False,
 
         # Channel Attention.
@@ -169,7 +169,7 @@ if __name__ == '__main__':
         # alpha=0.5,
 
         # Variables that change frequently.
-        sample_rate=0.02,  # Ratio of the dataset to sample and use.
+        sample_rate=0.01,  # Ratio of the dataset to sample and use.
         num_epochs=3,
         gpu=0,  # Set to None for CPU mode.
         use_slice_metrics=True,  # This can significantly increase training time.
