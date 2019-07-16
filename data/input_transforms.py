@@ -1,5 +1,4 @@
 import torch
-from torch import nn
 import torch.nn.functional as F
 
 import numpy as np
@@ -226,6 +225,9 @@ class WeightedPreProcessK:
             weighting = self.make_weighting_matrix(masked_kspace)
             masked_kspace = masked_kspace * weighting
 
+            # img_input is not actually an input but what the input would look like in the image domain.
+            img_input = complex_abs(ifft2(masked_kspace))
+
             # The slope is meaningless as the results always become the same after standardization no matter the slope.
             # The ordering could be changed to allow a difference, but this would make the inputs non-standardized.
             k_scale = torch.std(masked_kspace)
@@ -244,7 +246,8 @@ class WeightedPreProcessK:
             kspace_target *= k_scaling
 
             # Use plurals as keys to reduce confusion.
-            targets = {'kspace_targets': kspace_target, 'cmg_targets': cmg_target, 'img_targets': img_target}
+            targets = {'kspace_targets': kspace_target, 'cmg_targets': cmg_target,
+                       'img_targets': img_target, 'img_inputs': img_input}
 
             margin = masked_kspace.size(-1) % self.divisor
             if margin > 0:
@@ -285,7 +288,7 @@ class WeightedPreProcessK:
 
 
 class WeightedPreProcessSemiK:
-    def __init__(self, mask_func, challenge, device, use_seed=True, divisor=1, squared=False):
+    def __init__(self, mask_func, challenge, device, use_seed=True, divisor=1, squared_weighting=False):
         if challenge not in ('singlecoil', 'multicoil'):
             raise ValueError(f'Challenge should either be "singlecoil" or "multicoil"')
         self.mask_func = mask_func
@@ -293,7 +296,7 @@ class WeightedPreProcessSemiK:
         self.device = device
         self.use_seed = use_seed
         self.divisor = divisor
-        self.squared = squared
+        self.squared_weighting = squared_weighting
 
     def __call__(self, kspace_target, target, attrs, file_name, slice_num):
         assert isinstance(kspace_target, torch.Tensor)
@@ -309,6 +312,9 @@ class WeightedPreProcessSemiK:
             # Apply mask
             seed = None if not self.use_seed else tuple(map(ord, file_name))
             masked_kspace, mask, info = apply_info_mask(kspace_target, self.mask_func, seed)
+
+            # img_input is not actually an input but what the input would look like in the image domain.
+            img_input = complex_abs(ifft2(masked_kspace))
 
             semi_kspace = ifft1(masked_kspace, direction='height')
             weighting = self.make_semi_weighting_matrix(semi_kspace)
@@ -334,7 +340,7 @@ class WeightedPreProcessSemiK:
 
             # Use plurals as keys to reduce confusion.
             targets = {'semi_kspace_targets': semi_kspace_target, 'kspace_targets': kspace_target,
-                       'cmg_targets': cmg_target, 'img_targets': img_target}
+                       'cmg_targets': cmg_target, 'img_targets': img_target, 'img_inputs': img_input}
 
             margin = semi_kspace.size(-1) % self.divisor
             if margin > 0:
@@ -357,7 +363,7 @@ class WeightedPreProcessSemiK:
 
         # The indexing might be a bit confusing.
         x_coords = torch.arange(start=-mid_width + 0.5, end=mid_width + 0.5, step=1, device=device)
-        if self.squared:
+        if self.squared_weighting:
             weighting_matrix = (x_coords ** 2).view(1, 1, 1, width, 1)
         else:
             weighting_matrix = torch.abs(x_coords).view(1, 1, 1, width, 1)

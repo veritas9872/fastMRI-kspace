@@ -171,6 +171,9 @@ class ModelTrainerIMAGE:
         else:
             step_loss, step_metrics = img_loss, dict()
 
+        if 'acceleration' in extra_params:
+            step_metrics[f'acc_{extra_params["acceleration"]}_loss'] = step_loss
+
         step_loss.backward()
         self.optimizer.step()
         return recons, step_loss, step_metrics
@@ -201,6 +204,9 @@ class ModelTrainerIMAGE:
             if self.verbose:
                 self._log_step_outputs(epoch, step, step_loss, step_metrics, training=False)
 
+            # Visualize images on TensorBoard.
+            self._visualize_images(recons, targets, epoch, step, training=False)
+
         # Converted to scalar and dict with scalar values respectively.
         return self._get_epoch_outputs(epoch, epoch_loss, epoch_metrics, training=False)
 
@@ -214,6 +220,9 @@ class ModelTrainerIMAGE:
             step_loss, step_metrics = img_loss
         else:
             step_loss, step_metrics = img_loss, dict()
+
+        if 'acceleration' in extra_params:
+            step_metrics[f'acc_{extra_params["acceleration"]}_loss'] = step_loss
 
         return recons, step_loss, step_metrics
 
@@ -247,9 +256,9 @@ class ModelTrainerIMAGE:
                     self.writer.add_image(f'{mode} semi-k-space Targets/{step}',
                                           semi_kspace_target_grid, epoch, dataformats='HW')
 
-                if 'img_inputs' in targets:
+                if 'img_inputs' in targets:  # Not actually the input but what the input looks like as an image.
                     img_grid = make_img_grid(targets['img_inputs'])
-                    self.writer.add_image(f'{mode} Inputs as Images', img_grid, epoch, dataformats='HW')
+                    self.writer.add_image(f'{mode} Inputs as Images/{step}', img_grid, epoch, dataformats='HW')
 
     @staticmethod
     def _get_slice_metrics(img_recons, img_targets):

@@ -6,8 +6,8 @@ from pathlib import Path
 from utils.run_utils import initialize, save_dict_as_json, get_logger, create_arg_parser
 from utils.train_utils import create_custom_data_loaders
 
-from train.subsample import MaskFunc, UniformMaskFunc
-from data.input_transforms import Prefetch2Device, WeightedPreProcessK
+from train.subsample import RandomMaskFunc, UniformMaskFunc
+from data.input_transforms import Prefetch2Device, WeightedPreProcessSemiK
 from data.output_transforms import WeightedReplacePostProcessK
 
 from train.model_trainers.model_trainer_IMAGE import ModelTrainerIMAGE
@@ -74,7 +74,7 @@ def train_image(args):
     divisor = 2 ** args.num_pool_layers
 
     if args.random_sampling:
-        mask_func = MaskFunc(args.center_fractions, args.accelerations)
+        mask_func = RandomMaskFunc(args.center_fractions, args.accelerations)
     else:
         mask_func = UniformMaskFunc(args.center_fractions, args.accelerations)
 
@@ -82,10 +82,10 @@ def train_image(args):
     # Sending to device should be inside the input transform for optimal performance on HDD.
     data_prefetch = Prefetch2Device(device)
 
-    input_train_transform = \
-        WeightedPreProcessK(mask_func, args.challenge, device, use_seed=False, divisor=divisor, squared_weighting=False)
-    input_val_transform = \
-        WeightedPreProcessK(mask_func, args.challenge, device, use_seed=True, divisor=divisor, squared_weighting=False)
+    input_train_transform = WeightedPreProcessSemiK(
+        mask_func, args.challenge, device, use_seed=False, divisor=divisor, squared_weighting=False)
+    input_val_transform = WeightedPreProcessSemiK(
+        mask_func, args.challenge, device, use_seed=True, divisor=divisor, squared_weighting=False)
 
     # DataLoaders
     train_loader, val_loader = create_custom_data_loaders(args, transform=data_prefetch)
@@ -95,16 +95,16 @@ def train_image(args):
         # img_loss=L1CSSIM7(reduction='mean', alpha=args.alpha)
     )
 
-    output_transform = WeightedReplacePostProcessK()
+    output_transform = WeightedReplacePostProcessK(weighted=True, replace=False)  # New settings.
 
     data_chans = 2 if args.challenge == 'singlecoil' else 30  # Multicoil has 15 coils with 2 for real/imag
 
     model = UNetModel(
         in_chans=data_chans, out_chans=data_chans, chans=args.chans, num_pool_layers=args.num_pool_layers,
         num_groups=args.num_groups, use_residual=args.use_residual, pool_type=args.pool_type, use_skip=args.use_skip,
-        use_ca=args.use_ca, reduction=args.reduction, use_gap=args.use_gap, use_gmp=args.use_gmp, use_sa=args.use_sa,
-        sa_kernel_size=7, sa_dilation=1, use_cap=args.use_cap, use_cmp=args.use_cmp
-    ).to(device)
+        use_ca=args.use_ca, reduction=args.reduction, use_gap=args.use_gap, use_gmp=args.use_gmp,
+        use_sa=args.use_sa, sa_kernel_size=args.sa_kernel_size, sa_dilation=args.sa_dilation, use_cap=args.use_cap,
+        use_cmp=args.use_cmp).to(device)
 
     optimizer = optim.Adam(model.parameters(), lr=args.init_lr)
     scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.lr_red_epochs, gamma=args.lr_red_rate)
@@ -149,16 +149,27 @@ if __name__ == '__main__':
         # Model specific parameters.
         num_groups=8,
         pool_type='avg',
+        use_residual=True,
         use_skip=False,
-        use_att=False,
+
+        # Channel Attention.
+        use_ca=False,
         reduction=16,
         use_gap=True,
         use_gmp=False,
+
+        # Spatial Attention.
+        use_sa=False,
+        use_cap=True,
+        use_cmp=True,
+        sa_kernel_size=7,
+        sa_dilation=1,
+
         # alpha=0.5,
 
         # Variables that change frequently.
-        sample_rate=0.05,  # Ratio of the dataset to sample and use.
-        num_epochs=40,
+        sample_rate=0.02,  # Ratio of the dataset to sample and use.
+        num_epochs=3,
         gpu=0,  # Set to None for CPU mode.
         use_slice_metrics=True,  # This can significantly increase training time.
         # prev_model_ckpt='',
