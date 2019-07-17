@@ -82,13 +82,16 @@ class ChannelMaxPool(nn.Module):
 class SpatialAttention(nn.Module):
     def __init__(self, kernel_size=7, dilation=1, use_cap=True, use_cmp=True):
         super().__init__()
+        assert kernel_size % 2, 'The kernel is expected to have an odd size.'
         self.cap = ChannelAvgPool()
         self.cmp = ChannelMaxPool()
 
         self.use_cap = use_cap
         self.use_cmp = use_cmp
 
-        self.conv = nn.Conv2d(in_channels=2, out_channels=1, kernel_size=kernel_size, dilation=dilation)
+        padding = dilation * (kernel_size - 1) // 2
+        self.conv = nn.Conv2d(
+            in_channels=2, out_channels=1, kernel_size=kernel_size, padding=padding, dilation=dilation)
 
         self.sigmoid = nn.Sigmoid()
 
@@ -105,5 +108,5 @@ class SpatialAttention(nn.Module):
         else:
             raise RuntimeError('Impossible settings. Check for logic errors.')
 
-        att = self.sigmoid(features)
-        return tensor * att
+        att = self.sigmoid(self.conv(features))
+        return tensor * att.expand(1, 1, -1, -1)

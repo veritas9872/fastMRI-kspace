@@ -277,8 +277,6 @@ class ModelTrainerIMAGE:
         img_targets = img_targets.detach()
 
         max_range = img_targets.max() - img_targets.min()
-        # large, _ = torch.topk(img_targets, k=1)
-        # max_range = large - img_targets.min()
 
         slice_ssim = ssim_loss(img_recons, img_targets, max_val=max_range)
         slice_psnr = psnr_loss(img_recons, img_targets, data_range=max_range)

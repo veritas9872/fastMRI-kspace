@@ -241,10 +241,9 @@ class WeightedPreProcessK:
             extra_params.update(attrs)
 
             # Recall that the Fourier transform is a linear transform.
-            # Performing scaling after ifft for numerical precision.
-            cmg_target = ifft2(kspace_target) * k_scaling
-            img_target = complex_abs(cmg_target)
             kspace_target *= k_scaling
+            cmg_target = ifft2(kspace_target)
+            img_target = complex_abs(cmg_target)
 
             # Use plurals as keys to reduce confusion.
             targets = {'kspace_targets': kspace_target, 'cmg_targets': cmg_target,
@@ -334,11 +333,10 @@ class WeightedPreProcessSemiK:
             extra_params.update(attrs)
 
             # Recall that the Fourier transform is a linear transform.
-            # Performing scaling after ifft for numerical precision.
-            cmg_target = ifft2(kspace_target) * k_scaling
-            img_target = complex_abs(cmg_target)
-            semi_kspace_target = ifft1(kspace_target, direction='height') * k_scaling
             kspace_target *= k_scaling
+            cmg_target = ifft2(kspace_target)
+            img_target = complex_abs(cmg_target)
+            semi_kspace_target = ifft1(kspace_target, direction='height')
 
             # Use plurals as keys to reduce confusion.
             targets = {'semi_kspace_targets': semi_kspace_target, 'kspace_targets': kspace_target,

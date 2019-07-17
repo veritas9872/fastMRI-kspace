@@ -153,13 +153,13 @@ if __name__ == '__main__':
         squared_weighting=False,
 
         # Channel Attention.
-        use_ca=False,
+        use_ca=True,
         reduction=16,
         use_gap=True,
         use_gmp=False,
 
         # Spatial Attention.
-        use_sa=False,
+        use_sa=True,
         use_cap=True,
         use_cmp=True,
         sa_kernel_size=7,
@@ -174,12 +174,12 @@ if __name__ == '__main__':
         num_epochs=50,
         sample_rate=0.01,  # Ratio of the dataset to sample and use.
         start_slice=6,
-        gpu=0,  # Set to None for CPU mode.
-        max_images=8,  # Maximum number of images to save.
-        shrink_scale=2,  # Scale to shrink output image size.
+        gpu=1,  # Set to None for CPU mode.
+        max_images=2,  # Maximum number of images to save.
+        shrink_scale=0.5,  # Scale to shrink output image size.
         num_workers=1,
         init_lr=2E-2,
-        max_to_keep=1,
+        max_to_keep=0,
         # prev_model_ckpt='',
     )
     options = create_arg_parser(**settings).parse_args()

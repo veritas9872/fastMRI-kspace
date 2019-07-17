@@ -348,6 +348,8 @@ def make_img_grid(image, shrink_scale):
     if shrink_scale < 1:
         image_grid = F.interpolate(image_grid.expand(1, 1, -1, -1),
                                    scale_factor=shrink_scale, mode='bicubic', align_corners=True)
+    elif shrink_scale > 1:
+        raise UserWarning('shrink scale is expected to be below 1. Using image with the same size as input.')
 
     return image_grid.squeeze().to(device='cpu', non_blocking=True)
 
@@ -379,6 +381,8 @@ def make_k_grid(kspace_recons, smoothing_factor=8, shrink_scale=1):
     if shrink_scale < 1:
         kspace_grid = F.interpolate(kspace_grid.expand(1, 1, -1, -1),
                                     scale_factor=shrink_scale, mode='bicubic', align_corners=True)
+    elif shrink_scale > 1:
+        raise UserWarning('shrink scale is expected to be below 1. Using image with the same size as input.')
 
     return kspace_grid.squeeze().to(device='cpu', non_blocking=True)
 
