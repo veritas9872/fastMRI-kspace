@@ -2,6 +2,16 @@ import torch
 from torch import nn
 
 
+# class GlobalMaxPooling2D(nn.Module):  # This tried to find why GMP was so much slower than GAP.
+#     def __init__(self,):  # I think GMP is intrinsically slower than GAP for some reason.
+#         super().__init__()
+#
+#     def forward(self, tensor):
+#         assert isinstance(tensor, torch.Tensor)
+#         assert tensor.dim() == 4
+#         return F.max_pool2d(tensor, kernel_size=(tensor.size(-2), tensor.size(-1)))
+
+
 class ChannelAttention(nn.Module):
     def __init__(self, num_chans, reduction=16, use_gap=True, use_gmp=True):
         super().__init__()

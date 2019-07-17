@@ -10,9 +10,8 @@ from train.subsample import RandomMaskFunc, UniformMaskFunc
 from data.input_transforms import Prefetch2Device, WeightedPreProcessK, WeightedPreProcessSemiK
 from data.output_transforms import WeightedReplacePostProcessK, WeightedReplacePostProcessSemiK
 
-from train.model_trainers.model_trainer_IMAGE import ModelTrainerIMAGE
+from train.model_trainers.model_trainer_COMPLEX import ModelTrainerCOMPLEX
 from models.res_skip_unet import UNetModel
-# from metrics.combination_losses import L1CSSIM7
 
 """
 Memo: I have found that there is a great deal of variation in performance when training.
@@ -27,7 +26,7 @@ Using small datasets for multiple runs may also prove useful.
 def train_image(args):
 
     # Maybe move this to args later.
-    train_method = 'WS2I'  # Weighted semi-k-space to real-valued image.
+    train_method = 'WS2C'  # Weighted semi-k-space to real-valued image.
 
     # Creating checkpoint and logging directories, as well as the run name.
     ckpt_path = Path(args.ckpt_root)
@@ -82,14 +81,14 @@ def train_image(args):
     # Sending to device should be inside the input transform for optimal performance on HDD.
     data_prefetch = Prefetch2Device(device)
 
-    if train_method == 'WS2I':  # semi-k-space learning.
+    if train_method == 'WS2C':  # Semi-k-space learning.
         input_train_transform = WeightedPreProcessSemiK(mask_func, args.challenge, device, use_seed=False,
                                                         divisor=divisor, squared_weighting=args.squared_weighting)
         input_val_transform = WeightedPreProcessSemiK(mask_func, args.challenge, device, use_seed=True,
                                                       divisor=divisor, squared_weighting=args.squared_weighting)
-        output_transform = WeightedReplacePostProcessSemiK(weighted=True, replace=args.replace)  # New settings.
+        output_transform = WeightedReplacePostProcessSemiK(weighted=True, replace=args.replace)
 
-    elif train_method == 'WK2I':  # k-space learning.
+    elif train_method == 'WK2C':  # k-space learning.
         input_train_transform = WeightedPreProcessK(mask_func, args.challenge, device, use_seed=False,
                                                     divisor=divisor, squared_weighting=args.squared_weighting)
         input_val_transform = WeightedPreProcessK(mask_func, args.challenge, device, use_seed=True,
@@ -102,8 +101,7 @@ def train_image(args):
     train_loader, val_loader = create_custom_data_loaders(args, transform=data_prefetch)
 
     losses = dict(
-        img_loss=nn.L1Loss(reduction='mean')
-        # img_loss=L1CSSIM7(reduction='mean', alpha=args.alpha)
+        cmg_loss=nn.MSELoss(reduction='mean')
     )
 
     data_chans = 2 if args.challenge == 'singlecoil' else 30  # Multicoil has 15 coils with 2 for real/imag
@@ -118,8 +116,8 @@ def train_image(args):
     optimizer = optim.Adam(model.parameters(), lr=args.init_lr)
     scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.lr_red_epochs, gamma=args.lr_red_rate)
 
-    trainer = ModelTrainerIMAGE(args, model, optimizer, train_loader, val_loader,
-                                input_train_transform, input_val_transform, output_transform, losses, scheduler)
+    trainer = ModelTrainerCOMPLEX(args, model, optimizer, train_loader, val_loader,
+                                  input_train_transform, input_val_transform, output_transform, losses, scheduler)
 
     trainer.train_model()
 
@@ -135,37 +133,27 @@ if __name__ == '__main__':
         log_root='./logs',
         ckpt_root='./checkpoints',
         batch_size=1,  # This MUST be 1 for now.
-        num_pool_layers=4,
         save_best_only=True,
-        center_fractions=[0.08, 0.04],
-        accelerations=[4, 8],
         smoothing_factor=8,
 
         # Variables that occasionally change.
-        chans=64,
-        max_images=8,  # Maximum number of images to save.
-        shrink_scale=0.5,  # Scale to shrink output image size.
-        num_workers=1,
-        init_lr=2E-2,
-        max_to_keep=1,
-        start_slice=6,
+        center_fractions=[0.08, 0.04],
+        accelerations=[4, 8],
         random_sampling=True,
+        num_pool_layers=4,
         verbose=False,
-
-        # Learning rate scheduling.
-        lr_red_epochs=[40, 60, 80],
-        lr_red_rate=0.1,
 
         # Model specific parameters.
         num_groups=8,
-        pool_type='max',
+        pool_type='avg',
         use_residual=True,
         replace=False,
         use_skip=False,
+        chans=64,
         squared_weighting=False,
 
         # Channel Attention.
-        use_ca=True,
+        use_ca=False,
         reduction=16,
         use_gap=True,
         use_gmp=False,
@@ -177,13 +165,21 @@ if __name__ == '__main__':
         sa_kernel_size=7,
         sa_dilation=1,
 
-        # alpha=0.5,
+        # Learning rate scheduling.
+        lr_red_epochs=[40, 60, 80],
+        lr_red_rate=0.1,
 
         # Variables that change frequently.
-        sample_rate=0.02,  # Ratio of the dataset to sample and use.
-        num_epochs=20,
-        gpu=0,  # Set to None for CPU mode.
         use_slice_metrics=True,  # This can significantly increase training time.
+        num_epochs=50,
+        sample_rate=0.01,  # Ratio of the dataset to sample and use.
+        start_slice=6,
+        gpu=0,  # Set to None for CPU mode.
+        max_images=8,  # Maximum number of images to save.
+        shrink_scale=2,  # Scale to shrink output image size.
+        num_workers=1,
+        init_lr=2E-2,
+        max_to_keep=1,
         # prev_model_ckpt='',
     )
     options = create_arg_parser(**settings).parse_args()

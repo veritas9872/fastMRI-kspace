@@ -9,7 +9,8 @@ from time import time
 from collections import defaultdict
 
 from utils.run_utils import get_logger
-from utils.train_utils import CheckpointManager, make_grid_triplet, make_k_grid, make_img_grid, complex_abs
+from utils.train_utils import CheckpointManager, make_k_grid, make_img_grid
+from data.data_transforms import complex_abs
 from metrics.my_ssim import ssim_loss
 from metrics.custom_losses import psnr_loss, nmse_loss
 
@@ -19,21 +20,21 @@ def get_class_name(obj):
     return 'None' if obj is None else str(obj.__class__).split("'")[1]
 
 
-class ModelTrainerIMAGE:
+class ModelTrainerCOMPLEX:
     """
-    Model trainer for image domain loss.
+    Model trainer for complex image domain loss.
     This model trainer can accept k-space an semi-k-space, regardless of weighting.
-    However, only image domain losses can be calculated.
+    However, only complex image domain losses can be calculated.
     """
 
     def __init__(self, args, model, optimizer, train_loader, val_loader,
                  input_train_transform, input_val_transform, output_transform, losses, scheduler=None):
 
-        self.logger = get_logger(name=__name__, save_file=args.log_path / args.run_name)
-
         # Allow multiple processes to access tensors on GPU. Add checking for multiple continuous runs.
         if multiprocessing.get_start_method(allow_none=True) is None:
             multiprocessing.set_start_method(method='spawn')
+
+        self.logger = get_logger(name=__name__, save_file=args.log_path / args.run_name)
 
         # Checking whether inputs are correct.
         assert isinstance(model, nn.Module), '`model` must be a Pytorch Module.'
@@ -96,9 +97,9 @@ class ModelTrainerIMAGE:
         Optimizer: {get_class_name(optimizer)}.
         Input Transforms: {get_class_name(input_val_transform)}.
         Output Transform: {get_class_name(output_transform)}.
-        Image Domain Loss: {get_class_name(losses["img_loss"])}.
+        Complex Domain Loss: {get_class_name(losses["cmg_loss"])}.
         Learning-Rate Scheduler: {get_class_name(scheduler)}.
-        ''')
+        ''')  # This part has parts different for IMG and CMG losses!!
 
     def train_model(self):
         tic_tic = time()
@@ -149,7 +150,7 @@ class ModelTrainerIMAGE:
             # Gradients are not calculated so as to boost speed and remove weird errors.
             with torch.no_grad():  # Update epoch loss and metrics
                 if self.use_slice_metrics:
-                    slice_metrics = self._get_slice_metrics(recons['img_recons'], targets['img_targets'])
+                    slice_metrics = self._get_slice_metrics(recons['img_recons'], targets['img_targets'], extra_params)
                     step_metrics.update(slice_metrics)
 
                 [epoch_metrics[key].append(value.detach()) for key, value in step_metrics.items()]
@@ -164,14 +165,9 @@ class ModelTrainerIMAGE:
         self.optimizer.zero_grad()
         outputs = self.model(inputs)
         recons = self.output_transform(outputs, targets, extra_params)
-        img_loss = self.losses['img_loss'](recons['img_recons'], targets['img_targets'])
+        step_loss = self.losses['cmg_loss'](recons['cmg_recons'], targets['cmg_targets'])
 
-        # If img_loss is a tuple, it is expected to contain all its component losses as a dict in its second part.
-        if isinstance(img_loss, tuple):
-            step_loss, step_metrics = img_loss
-        else:
-            step_loss, step_metrics = img_loss, dict()
-
+        step_metrics = dict()
         if 'acceleration' in extra_params:
             step_metrics[f'acc_{extra_params["acceleration"]}_loss'] = step_loss
 
@@ -197,7 +193,7 @@ class ModelTrainerIMAGE:
             epoch_loss.append(step_loss.detach())
 
             if self.use_slice_metrics:
-                slice_metrics = self._get_slice_metrics(recons['img_recons'], targets['img_targets'])
+                slice_metrics = self._get_slice_metrics(recons['img_recons'], targets['img_targets'], extra_params)
                 step_metrics.update(slice_metrics)
 
             [epoch_metrics[key].append(value.detach()) for key, value in step_metrics.items()]
@@ -214,14 +210,9 @@ class ModelTrainerIMAGE:
     def _val_step(self, inputs, targets, extra_params):
         outputs = self.model(inputs)
         recons = self.output_transform(outputs, targets, extra_params)
-        img_loss = self.losses['img_loss'](recons['img_recons'], targets['img_targets'])
+        step_loss = self.losses['cmg_loss'](recons['cmg_recons'], targets['cmg_targets'])
 
-        # If img_loss is a tuple, it is expected to contain all its component losses as a dict in its second part.
-        if isinstance(img_loss, tuple):
-            step_loss, step_metrics = img_loss
-        else:
-            step_loss, step_metrics = img_loss, dict()
-
+        step_metrics = dict()
         if 'acceleration' in extra_params:
             step_metrics[f'acc_{extra_params["acceleration"]}_loss'] = step_loss
 
@@ -271,20 +262,25 @@ class ModelTrainerIMAGE:
                         f'{mode} semi-k-space Targets/{step}', semi_kspace_target_grid, epoch, dataformats='HW')
 
     @staticmethod
-    def _get_slice_metrics(img_recons, img_targets):
+    def _get_slice_metrics(img_recons, img_targets, extra_params):
 
         img_recons = img_recons.detach()  # Just in case.
         img_targets = img_targets.detach()
 
         max_range = img_targets.max() - img_targets.min()
-        # large, _ = torch.topk(img_targets, k=1)
-        # max_range = large - img_targets.min()
-
         slice_ssim = ssim_loss(img_recons, img_targets, max_val=max_range)
         slice_psnr = psnr_loss(img_recons, img_targets, data_range=max_range)
         slice_nmse = nmse_loss(img_recons, img_targets)
 
-        return {'slice_ssim': slice_ssim, 'slice_nmse': slice_nmse, 'slice_psnr': slice_psnr}
+        slice_metrics = {'slice_ssim': slice_ssim, 'slice_nmse': slice_nmse, 'slice_psnr': slice_psnr}
+
+        # Additional metrics for separating between acceleration factors.
+        if 'acceleration' in extra_params:
+            slice_metrics[f'acc_{extra_params["acceleration"]}_ssim'] = slice_ssim
+            slice_metrics[f'acc_{extra_params["acceleration"]}_psnr'] = slice_psnr
+            slice_metrics[f'acc_{extra_params["acceleration"]}_nmse'] = slice_nmse
+
+        return slice_metrics
 
     def _get_epoch_outputs(self, epoch, epoch_loss, epoch_metrics, training=True):
         mode = 'Training' if training else 'Validation'
