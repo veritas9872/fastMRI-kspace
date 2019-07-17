@@ -137,8 +137,8 @@ if __name__ == '__main__':
         smoothing_factor=8,
 
         # Variables that occasionally change.
-        center_fractions=[0.08, 0.04],
-        accelerations=[4, 8],
+        center_fractions=[0.32, 0.16, 0.08, 0.04],
+        accelerations=[1, 2, 4, 8],
         random_sampling=True,
         num_pool_layers=4,
         verbose=False,
@@ -152,6 +152,10 @@ if __name__ == '__main__':
         chans=64,
         squared_weighting=False,
 
+        # TensorBoard related parameters.
+        max_images=8,  # Maximum number of images to save.
+        shrink_scale=0.4,  # Scale to shrink output image size.
+
         # Channel Attention.
         use_ca=True,
         reduction=16,
@@ -159,7 +163,7 @@ if __name__ == '__main__':
         use_gmp=False,
 
         # Spatial Attention.
-        use_sa=True,
+        use_sa=False,
         use_cap=True,
         use_cmp=True,
         sa_kernel_size=7,
@@ -172,14 +176,12 @@ if __name__ == '__main__':
         # Variables that change frequently.
         use_slice_metrics=True,  # This can significantly increase training time.
         num_epochs=50,
-        sample_rate=0.01,  # Ratio of the dataset to sample and use.
+        sample_rate=0.1,  # Ratio of the dataset to sample and use.
         start_slice=6,
         gpu=1,  # Set to None for CPU mode.
-        max_images=2,  # Maximum number of images to save.
-        shrink_scale=0.5,  # Scale to shrink output image size.
         num_workers=1,
         init_lr=2E-2,
-        max_to_keep=0,
+        max_to_keep=1,
         # prev_model_ckpt='',
     )
     options = create_arg_parser(**settings).parse_args()

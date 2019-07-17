@@ -90,8 +90,8 @@ class SpatialAttention(nn.Module):
         self.use_cmp = use_cmp
 
         padding = dilation * (kernel_size - 1) // 2
-        self.conv = nn.Conv2d(
-            in_channels=2, out_channels=1, kernel_size=kernel_size, padding=padding, dilation=dilation)
+        self.conv = \
+            nn.Conv2d(in_channels=2, out_channels=1, kernel_size=kernel_size, padding=padding, dilation=dilation)
 
         self.sigmoid = nn.Sigmoid()
 
