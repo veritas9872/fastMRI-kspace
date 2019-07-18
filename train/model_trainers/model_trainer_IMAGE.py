@@ -9,8 +9,8 @@ from time import time
 from collections import defaultdict
 
 from utils.run_utils import get_logger
-from utils.train_utils import CheckpointManager, make_grid_triplet, make_k_grid, make_img_grid, complex_abs
-from metrics.my_ssim import ssim_loss
+from utils.train_utils import CheckpointManager, make_k_grid, make_img_grid, complex_abs
+from metrics.my_new_ssim import SSIM
 from metrics.custom_losses import psnr_loss, nmse_loss
 
 
@@ -88,6 +88,9 @@ class ModelTrainerIMAGE:
         self.shrink_scale = args.shrink_scale
         self.use_slice_metrics = args.use_slice_metrics
 
+        # TODO: Make this look better in the near future. Too obviously a hack.
+        self.ssim_loss = SSIM(filter_size=7, reduction='mean')  # Needed to cache the kernel.
+
         # Logging all components of the Model Trainer.
         # Train and Val input transforms are assumed to use the same input transform class.
         self.logger.info(f'''
@@ -149,7 +152,7 @@ class ModelTrainerIMAGE:
             # Gradients are not calculated so as to boost speed and remove weird errors.
             with torch.no_grad():  # Update epoch loss and metrics
                 if self.use_slice_metrics:
-                    slice_metrics = self._get_slice_metrics(recons['img_recons'], targets['img_targets'])
+                    slice_metrics = self._get_slice_metrics(recons['img_recons'], targets['img_targets'], extra_params)
                     step_metrics.update(slice_metrics)
 
                 [epoch_metrics[key].append(value.detach()) for key, value in step_metrics.items()]
@@ -197,7 +200,7 @@ class ModelTrainerIMAGE:
             epoch_loss.append(step_loss.detach())
 
             if self.use_slice_metrics:
-                slice_metrics = self._get_slice_metrics(recons['img_recons'], targets['img_targets'])
+                slice_metrics = self._get_slice_metrics(recons['img_recons'], targets['img_targets'], extra_params)
                 step_metrics.update(slice_metrics)
 
             [epoch_metrics[key].append(value.detach()) for key, value in step_metrics.items()]
@@ -270,19 +273,28 @@ class ModelTrainerIMAGE:
                     self.writer.add_image(
                         f'{mode} semi-k-space Targets/{step}', semi_kspace_target_grid, epoch, dataformats='HW')
 
-    @staticmethod
-    def _get_slice_metrics(img_recons, img_targets):
-
+    def _get_slice_metrics(self, img_recons, img_targets, extra_params):
         img_recons = img_recons.detach()  # Just in case.
         img_targets = img_targets.detach()
-
         max_range = img_targets.max() - img_targets.min()
 
-        slice_ssim = ssim_loss(img_recons, img_targets, max_val=max_range)
+        slice_ssim = self.ssim_loss(img_recons, img_targets, max_val=max_range)
         slice_psnr = psnr_loss(img_recons, img_targets, data_range=max_range)
         slice_nmse = nmse_loss(img_recons, img_targets)
 
-        return {'slice_ssim': slice_ssim, 'slice_nmse': slice_nmse, 'slice_psnr': slice_psnr}
+        slice_metrics = {
+            'slice_ssim': slice_ssim,
+            'slice_nmse': slice_nmse,
+            'slice_psnr': slice_psnr
+        }
+
+        # Additional metrics for separating between acceleration factors.
+        if 'acceleration' in extra_params:
+            slice_metrics[f'acc_{extra_params["acceleration"]}_ssim'] = slice_ssim
+            slice_metrics[f'acc_{extra_params["acceleration"]}_psnr'] = slice_psnr
+            slice_metrics[f'acc_{extra_params["acceleration"]}_nmse'] = slice_nmse
+
+        return slice_metrics
 
     def _get_epoch_outputs(self, epoch, epoch_loss, epoch_metrics, training=True):
         mode = 'Training' if training else 'Validation'

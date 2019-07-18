@@ -11,7 +11,7 @@ from collections import defaultdict
 from utils.run_utils import get_logger
 from utils.train_utils import CheckpointManager, make_k_grid, make_img_grid
 from data.data_transforms import complex_abs
-from metrics.my_ssim import ssim_loss
+from metrics.my_new_ssim import SSIM
 from metrics.custom_losses import psnr_loss, nmse_loss
 
 
@@ -88,6 +88,9 @@ class ModelTrainerCOMPLEX:
         self.smoothing_factor = args.smoothing_factor
         self.shrink_scale = args.shrink_scale
         self.use_slice_metrics = args.use_slice_metrics
+
+        # TODO: Make this look better in the near future. Too obviously a hack.
+        self.ssim_loss = SSIM(filter_size=7, reduction='mean')  # Needed to cache the kernel.
 
         # Logging all components of the Model Trainer.
         # Train and Val input transforms are assumed to use the same input transform class.
@@ -261,18 +264,20 @@ class ModelTrainerCOMPLEX:
                     self.writer.add_image(
                         f'{mode} semi-k-space Targets/{step}', semi_kspace_target_grid, epoch, dataformats='HW')
 
-    @staticmethod
-    def _get_slice_metrics(img_recons, img_targets, extra_params):
-
+    def _get_slice_metrics(self, img_recons, img_targets, extra_params):
         img_recons = img_recons.detach()  # Just in case.
         img_targets = img_targets.detach()
-
         max_range = img_targets.max() - img_targets.min()
-        slice_ssim = ssim_loss(img_recons, img_targets, max_val=max_range)
+
+        slice_ssim = self.ssim_loss(img_recons, img_targets, max_val=max_range)
         slice_psnr = psnr_loss(img_recons, img_targets, data_range=max_range)
         slice_nmse = nmse_loss(img_recons, img_targets)
 
-        slice_metrics = {'slice_ssim': slice_ssim, 'slice_nmse': slice_nmse, 'slice_psnr': slice_psnr}
+        slice_metrics = {
+            'slice_ssim': slice_ssim,
+            'slice_nmse': slice_nmse,
+            'slice_psnr': slice_psnr
+        }
 
         # Additional metrics for separating between acceleration factors.
         if 'acceleration' in extra_params:
