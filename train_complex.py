@@ -23,7 +23,7 @@ Using small datasets for multiple runs may also prove useful.
 """
 
 
-def train_image(args):
+def train_complex(args):
     # Creating checkpoint and logging directories, as well as the run name.
     ckpt_path = Path(args.ckpt_root)
     ckpt_path.mkdir(exist_ok=True)
@@ -151,7 +151,7 @@ if __name__ == '__main__':
 
         # TensorBoard related parameters.
         max_images=8,  # Maximum number of images to save.
-        shrink_scale=0.4,  # Scale to shrink output image size.
+        shrink_scale=1,  # Scale to shrink output image size.
 
         # Channel Attention.
         use_ca=True,
@@ -172,7 +172,7 @@ if __name__ == '__main__':
 
         # Variables that change frequently.
         use_slice_metrics=True,  # This can significantly increase training time.
-        num_epochs=10,
+        num_epochs=100,
         sample_rate=1,  # Ratio of the dataset to sample and use.
         start_slice=10,
         gpu=1,  # Set to None for CPU mode.
@@ -182,4 +182,4 @@ if __name__ == '__main__':
         # prev_model_ckpt='',
     )
     options = create_arg_parser(**settings).parse_args()
-    train_image(options)
+    train_complex(options)

@@ -12,7 +12,6 @@ from data.output_transforms import WeightedReplacePostProcessK, WeightedReplaceP
 
 from train.model_trainers.model_trainer_IMAGE import ModelTrainerIMAGE
 from models.res_skip_unet import UNetModel
-# from metrics.combination_losses import L1CSSIM7
 
 """
 Memo: I have found that there is a great deal of variation in performance when training.
@@ -25,15 +24,11 @@ Using small datasets for multiple runs may also prove useful.
 
 
 def train_image(args):
-
-    # Maybe move this to args later.
-    train_method = 'WS2I'  # Weighted semi-k-space to real-valued image.
-
     # Creating checkpoint and logging directories, as well as the run name.
     ckpt_path = Path(args.ckpt_root)
     ckpt_path.mkdir(exist_ok=True)
 
-    ckpt_path = ckpt_path / train_method
+    ckpt_path = ckpt_path / args.train_method
     ckpt_path.mkdir(exist_ok=True)
 
     run_number, run_name = initialize(ckpt_path)
@@ -44,7 +39,7 @@ def train_image(args):
     log_path = Path(args.log_root)
     log_path.mkdir(exist_ok=True)
 
-    log_path = log_path / train_method
+    log_path = log_path / args.train_method
     log_path.mkdir(exist_ok=True)
 
     log_path = log_path / run_name
@@ -82,14 +77,14 @@ def train_image(args):
     # Sending to device should be inside the input transform for optimal performance on HDD.
     data_prefetch = Prefetch2Device(device)
 
-    if train_method == 'WS2I':  # semi-k-space learning.
+    if args.train_method == 'WS2I':  # semi-k-space learning.
         input_train_transform = WeightedPreProcessSemiK(mask_func, args.challenge, device, use_seed=False,
                                                         divisor=divisor, squared_weighting=args.squared_weighting)
         input_val_transform = WeightedPreProcessSemiK(mask_func, args.challenge, device, use_seed=True,
                                                       divisor=divisor, squared_weighting=args.squared_weighting)
-        output_transform = WeightedReplacePostProcessSemiK(weighted=True, replace=args.replace)  # New settings.
+        output_transform = WeightedReplacePostProcessSemiK(weighted=True, replace=args.replace)
 
-    elif train_method == 'WK2I':  # k-space learning.
+    elif args.train_method == 'WK2I':  # k-space learning.
         input_train_transform = WeightedPreProcessK(mask_func, args.challenge, device, use_seed=False,
                                                     divisor=divisor, squared_weighting=args.squared_weighting)
         input_val_transform = WeightedPreProcessK(mask_func, args.challenge, device, use_seed=True,
@@ -103,7 +98,6 @@ def train_image(args):
 
     losses = dict(
         img_loss=nn.L1Loss(reduction='mean')
-        # img_loss=L1CSSIM7(reduction='mean', alpha=args.alpha)
     )
 
     data_chans = 2 if args.challenge == 'singlecoil' else 30  # Multicoil has 15 coils with 2 for real/imag
@@ -137,38 +131,39 @@ if __name__ == '__main__':
         batch_size=1,  # This MUST be 1 for now.
         num_pool_layers=4,
         save_best_only=True,
-        center_fractions=[0.08, 0.04],
-        accelerations=[4, 8],
         smoothing_factor=8,
 
         # Variables that occasionally change.
         chans=64,
+        center_fractions=[0.08, 0.04],
+        accelerations=[4, 8],
         max_images=8,  # Maximum number of images to save.
-        shrink_scale=0.5,  # Scale to shrink output image size.
+        shrink_scale=1,  # Scale to shrink output image size.
         num_workers=1,
         init_lr=2E-2,
         max_to_keep=1,
-        start_slice=6,
+        start_slice=10,
         random_sampling=True,
         verbose=False,
 
         # Learning rate scheduling.
-        lr_red_epochs=[40, 60, 80],
+        lr_red_epochs=[40, 50, 60],
         lr_red_rate=0.1,
 
         # Model specific parameters.
+        train_method='WK2I',  # Weighted semi-k-space to real-valued image.
         num_groups=8,
-        pool_type='max',
-        use_residual=True,
-        replace=False,
+        pool_type='avg',
+        use_residual=False,
+        replace=True,  # Whether to replace output k-space with original data.
         use_skip=False,
-        squared_weighting=False,
+        squared_weighting=True,
 
         # Channel Attention.
         use_ca=True,
         reduction=16,
         use_gap=True,
-        use_gmp=False,
+        use_gmp=True,
 
         # Spatial Attention.
         use_sa=False,
@@ -177,11 +172,9 @@ if __name__ == '__main__':
         sa_kernel_size=7,
         sa_dilation=1,
 
-        # alpha=0.5,
-
         # Variables that change frequently.
-        sample_rate=0.02,  # Ratio of the dataset to sample and use.
-        num_epochs=20,
+        sample_rate=1,  # Ratio of the dataset to sample and use.
+        num_epochs=15,
         gpu=0,  # Set to None for CPU mode.
         use_slice_metrics=True,  # This can significantly increase training time.
         # prev_model_ckpt='',

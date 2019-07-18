@@ -278,6 +278,7 @@ class ModelTrainerIMAGE:
         img_targets = img_targets.detach()
         max_range = img_targets.max() - img_targets.min()
 
+        # Implemented SSIM this way to allow caching of kernels and hence faster calculation.
         slice_ssim = self.ssim_loss(img_recons, img_targets, max_val=max_range)
         slice_psnr = psnr_loss(img_recons, img_targets, data_range=max_range)
         slice_nmse = nmse_loss(img_recons, img_targets)
