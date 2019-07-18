@@ -24,15 +24,11 @@ Using small datasets for multiple runs may also prove useful.
 
 
 def train_image(args):
-
-    # Maybe move this to args later.
-    train_method = 'WS2C'  # Weighted semi-k-space to real-valued image.
-
     # Creating checkpoint and logging directories, as well as the run name.
     ckpt_path = Path(args.ckpt_root)
     ckpt_path.mkdir(exist_ok=True)
 
-    ckpt_path = ckpt_path / train_method
+    ckpt_path = ckpt_path / args.train_method
     ckpt_path.mkdir(exist_ok=True)
 
     run_number, run_name = initialize(ckpt_path)
@@ -43,7 +39,7 @@ def train_image(args):
     log_path = Path(args.log_root)
     log_path.mkdir(exist_ok=True)
 
-    log_path = log_path / train_method
+    log_path = log_path / args.train_method
     log_path.mkdir(exist_ok=True)
 
     log_path = log_path / run_name
@@ -81,14 +77,14 @@ def train_image(args):
     # Sending to device should be inside the input transform for optimal performance on HDD.
     data_prefetch = Prefetch2Device(device)
 
-    if train_method == 'WS2C':  # Semi-k-space learning.
+    if args.train_method == 'WS2C':  # Semi-k-space learning.
         input_train_transform = WeightedPreProcessSemiK(mask_func, args.challenge, device, use_seed=False,
                                                         divisor=divisor, squared_weighting=args.squared_weighting)
         input_val_transform = WeightedPreProcessSemiK(mask_func, args.challenge, device, use_seed=True,
                                                       divisor=divisor, squared_weighting=args.squared_weighting)
         output_transform = WeightedReplacePostProcessSemiK(weighted=True, replace=args.replace)
 
-    elif train_method == 'WK2C':  # k-space learning.
+    elif args.train_method == 'WK2C':  # k-space learning.
         input_train_transform = WeightedPreProcessK(mask_func, args.challenge, device, use_seed=False,
                                                     divisor=divisor, squared_weighting=args.squared_weighting)
         input_val_transform = WeightedPreProcessK(mask_func, args.challenge, device, use_seed=True,
@@ -144,10 +140,11 @@ if __name__ == '__main__':
         verbose=False,
 
         # Model specific parameters.
+        train_method='WS2C',  # Weighted semi-k-space to real-valued image.
         num_groups=8,
         pool_type='avg',
-        use_residual=True,
-        replace=False,
+        use_residual=False,
+        replace=True,
         use_skip=False,
         chans=64,
         squared_weighting=False,

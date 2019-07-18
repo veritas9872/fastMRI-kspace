@@ -1,5 +1,6 @@
 import torch
 from torch.cuda import nvtx
+from torch.autograd.profiler import emit_nvtx, load_nvprof, profile
 
 
 def main():
@@ -12,4 +13,8 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    with profile(use_cuda=True) as prof:
+        main()
+    print(prof)
+    # load_nvprof('check.qdstem.qdrep')
+
