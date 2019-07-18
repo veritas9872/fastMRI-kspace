@@ -29,30 +29,28 @@ class ChannelAttention(nn.Module):
 
         self.sigmoid = nn.Sigmoid()
 
-    # Maybe I should just concatenate the max and avg as in the spatial attention...
-    # It would make more sense that way...
     def forward(self, tensor):
+        if not (self.use_gap or self.use_gmp):
+            return tensor
+
         batch, chans, _, _ = tensor.shape
         if self.use_gap and self.use_gmp:
             gap = self.gap(tensor).view(batch, chans)
             gmp = self.gmp(tensor).view(batch, chans)
-            # Maybe batch-norm the two pooling types to make their scales more similar.
-            # This might make training slower, however.
             features = self.layer(gap) + self.layer(gmp)
-            att = self.sigmoid(features).view(batch, chans, 1, 1)
 
         elif self.use_gap:
             gap = self.gap(tensor).view(batch, chans)
             features = self.layer(gap)
-            att = self.sigmoid(features).view(batch, chans, 1, 1)
 
         elif self.use_gmp:
             gmp = self.gmp(tensor).view(batch, chans)
             features = self.layer(gmp)
-            att = self.sigmoid(features).view(batch, chans, 1, 1)
 
         else:
-            att = 1
+            raise RuntimeError('Impossible logic. Please check for errors.')
+
+        att = self.sigmoid(features).view(batch, chans, 1, 1)
 
         return tensor * att
 

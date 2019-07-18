@@ -137,8 +137,8 @@ if __name__ == '__main__':
         smoothing_factor=8,
 
         # Variables that occasionally change.
-        center_fractions=[0.32, 0.16, 0.08, 0.04],
-        accelerations=[1, 2, 4, 8],
+        center_fractions=[0.32, 0.16, 0.08, 0.06, 0.04, 0.04],
+        accelerations=[1, 2, 4, 6, 8, 8],
         random_sampling=True,
         num_pool_layers=4,
         verbose=False,
@@ -175,9 +175,9 @@ if __name__ == '__main__':
 
         # Variables that change frequently.
         use_slice_metrics=True,  # This can significantly increase training time.
-        num_epochs=50,
-        sample_rate=0.1,  # Ratio of the dataset to sample and use.
-        start_slice=6,
+        num_epochs=10,
+        sample_rate=1,  # Ratio of the dataset to sample and use.
+        start_slice=0,
         gpu=1,  # Set to None for CPU mode.
         num_workers=1,
         init_lr=2E-2,
