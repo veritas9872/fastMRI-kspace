@@ -19,10 +19,10 @@ class AttConvBlockGN(nn.Module):
 
         self.layers = nn.Sequential(
             nn.Conv2d(in_chans, out_chans, kernel_size=3, padding=1, bias=True),
-            nn.ReLU(),
+            nn.LeakyReLU(),
             nn.Conv2d(out_chans, out_chans, kernel_size=3, padding=1, bias=False),
             nn.GroupNorm(num_groups=num_groups, num_channels=out_chans),
-            nn.ReLU()
+            nn.LeakyReLU()
         )
 
         self.ca = ChannelAttention(num_chans=out_chans, reduction=reduction, use_gap=use_gap, use_gmp=use_gmp)

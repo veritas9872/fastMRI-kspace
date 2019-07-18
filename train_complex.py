@@ -137,8 +137,8 @@ if __name__ == '__main__':
         smoothing_factor=8,
 
         # Variables that occasionally change.
-        center_fractions=[0.32, 0.16, 0.08, 0.06, 0.04, 0.04],
-        accelerations=[1, 2, 4, 6, 8, 8],
+        center_fractions=[0.08, 0.04],
+        accelerations=[4, 8],
         random_sampling=True,
         num_pool_layers=4,
         verbose=False,
@@ -160,7 +160,7 @@ if __name__ == '__main__':
         use_ca=True,
         reduction=16,
         use_gap=True,
-        use_gmp=False,
+        use_gmp=True,
 
         # Spatial Attention.
         use_sa=False,
@@ -177,7 +177,7 @@ if __name__ == '__main__':
         use_slice_metrics=True,  # This can significantly increase training time.
         num_epochs=10,
         sample_rate=1,  # Ratio of the dataset to sample and use.
-        start_slice=0,
+        start_slice=10,
         gpu=1,  # Set to None for CPU mode.
         num_workers=1,
         init_lr=2E-2,

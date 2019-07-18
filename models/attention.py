@@ -12,11 +12,27 @@ from torch import nn
 #         return F.max_pool2d(tensor, kernel_size=(tensor.size(-2), tensor.size(-1)))
 
 
+class GlobalMaxPooling2d(nn.Module):
+    """
+    I have designed a custom Global Maximum Pooling Layer because of a weird bug in Adaptive Average Pooling
+    that slows the system down enormously. Maximum pooling with a big kernel also fails for some reason.
+    I have yet to find the cause of the bug but the success of this layer shows that it is not due to my design logic.
+    I have verified that this layer is the same as AdaptiveMaxPool2d(1).
+    Maybe create a unit-test as well later.
+    """
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, tensor):
+        return torch.max(torch.max(tensor, dim=-1, keepdim=True)[0], dim=-2, keepdim=True)[0]
+
+
 class ChannelAttention(nn.Module):
     def __init__(self, num_chans, reduction=16, use_gap=True, use_gmp=True):
         super().__init__()
         self.gap = nn.AdaptiveAvgPool2d(1)  # Global Average Pooling.
-        self.gmp = nn.AdaptiveMaxPool2d(1)  # Global Maximum Pooling.
+        # self.gmp = nn.AdaptiveMaxPool2d(1)  # Global Maximum Pooling.
+        self.gmp = GlobalMaxPooling2d()
 
         self.use_gap = use_gap
         self.use_gmp = use_gmp
