@@ -79,16 +79,16 @@ def train_complex(args):
 
     if args.train_method == 'WS2C':  # Semi-k-space learning.
         input_train_transform = WeightedPreProcessSemiK(mask_func, args.challenge, device, use_seed=False,
-                                                        divisor=divisor, squared_weighting=args.squared_weighting)
+                                                        divisor=divisor, weight_type=args.squared_weighting)
         input_val_transform = WeightedPreProcessSemiK(mask_func, args.challenge, device, use_seed=True,
-                                                      divisor=divisor, squared_weighting=args.squared_weighting)
+                                                      divisor=divisor, weight_type=args.squared_weighting)
         output_transform = WeightedReplacePostProcessSemiK(weighted=True, replace=args.replace)
 
     elif args.train_method == 'WK2C':  # k-space learning.
         input_train_transform = WeightedPreProcessK(mask_func, args.challenge, device, use_seed=False,
-                                                    divisor=divisor, squared_weighting=args.squared_weighting)
+                                                    divisor=divisor, weight_type=args.squared_weighting)
         input_val_transform = WeightedPreProcessK(mask_func, args.challenge, device, use_seed=True,
-                                                  divisor=divisor, squared_weighting=args.squared_weighting)
+                                                  divisor=divisor, weight_type=args.squared_weighting)
         output_transform = WeightedReplacePostProcessK(weighted=True, replace=args.replace)
     else:
         raise NotImplementedError('Invalid train method!')
@@ -147,7 +147,7 @@ if __name__ == '__main__':
         replace=True,
         use_skip=False,
         chans=64,
-        squared_weighting=False,
+        squared_weighting=True,
 
         # TensorBoard related parameters.
         max_images=8,  # Maximum number of images to save.
@@ -172,11 +172,11 @@ if __name__ == '__main__':
 
         # Variables that change frequently.
         use_slice_metrics=True,  # This can significantly increase training time.
-        num_epochs=100,
+        num_epochs=15,
         sample_rate=1,  # Ratio of the dataset to sample and use.
         start_slice=10,
         gpu=1,  # Set to None for CPU mode.
-        num_workers=1,
+        num_workers=2,
         init_lr=2E-2,
         max_to_keep=1,
         # prev_model_ckpt='',

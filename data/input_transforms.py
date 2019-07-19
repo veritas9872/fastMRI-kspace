@@ -197,7 +197,7 @@ class Prefetch2Device:
 
 
 class WeightedPreProcessK:
-    def __init__(self, mask_func, challenge, device, use_seed=True, divisor=1, squared_weighting=False):
+    def __init__(self, mask_func, challenge, device, use_seed=True, divisor=1, weight_type=False):
         if challenge not in ('singlecoil', 'multicoil'):
             raise ValueError(f'Challenge should either be "singlecoil" or "multicoil"')
         self.mask_func = mask_func
@@ -205,7 +205,7 @@ class WeightedPreProcessK:
         self.device = device
         self.use_seed = use_seed
         self.divisor = divisor
-        self.squared_weighting = squared_weighting
+        self.weight_type = weight_type
 
     def __call__(self, kspace_target, target, attrs, file_name, slice_num):
         assert isinstance(kspace_target, torch.Tensor)
@@ -277,10 +277,15 @@ class WeightedPreProcessK:
         y_coords = torch.arange(start=-mid_height + 0.5, end=mid_height + 0.5, step=1,
                                 device=device).view(height, 1).expand(height, width)
 
-        if self.squared_weighting:
-            weighting_matrix = (x_coords ** 2) + (y_coords ** 2)
-        else:
+        if self.weight_type == 'distance':
             weighting_matrix = torch.sqrt((x_coords ** 2) + (y_coords ** 2))
+        elif self.weight_type == 'squared_distance':
+            weighting_matrix = (x_coords ** 2) + (y_coords ** 2)
+        elif self.weight_type == 'exponential_distance':  # Actually the exponent minus one.
+            distance = torch.sqrt((x_coords ** 2) + (y_coords ** 2))
+            weighting_matrix = torch.expm1(distance)
+        else:
+            raise NotImplementedError('Unknown weighting type')
 
         weighting_matrix = weighting_matrix.view(1, 1, height, width, 1)
 
@@ -288,7 +293,7 @@ class WeightedPreProcessK:
 
 
 class WeightedPreProcessSemiK:
-    def __init__(self, mask_func, challenge, device, use_seed=True, divisor=1, squared_weighting=False):
+    def __init__(self, mask_func, challenge, device, use_seed=True, divisor=1, weight_type=False):
         if challenge not in ('singlecoil', 'multicoil'):
             raise ValueError(f'Challenge should either be "singlecoil" or "multicoil"')
         self.mask_func = mask_func
@@ -296,7 +301,7 @@ class WeightedPreProcessSemiK:
         self.device = device
         self.use_seed = use_seed
         self.divisor = divisor
-        self.squared_weighting = squared_weighting
+        self.weight_type = weight_type
 
     def __call__(self, kspace_target, target, attrs, file_name, slice_num):
         assert isinstance(kspace_target, torch.Tensor)
@@ -363,9 +368,14 @@ class WeightedPreProcessSemiK:
 
         # The indexing might be a bit confusing.
         x_coords = torch.arange(start=-mid_width + 0.5, end=mid_width + 0.5, step=1, device=device)
-        if self.squared_weighting:
-            weighting_matrix = (x_coords ** 2).view(1, 1, 1, width, 1)
-        else:
+        if self.weight_type == 'distance':
             weighting_matrix = torch.abs(x_coords).view(1, 1, 1, width, 1)
+        elif self.weight_type == 'squared_distance':
+            weighting_matrix = (x_coords ** 2).view(1, 1, 1, width, 1)
+        elif self.weight_type == 'exponential_distance':  # Actually the exponent minus one.
+            distance = torch.abs(x_coords).view(1, 1, 1, width, 1)
+            weighting_matrix = torch.expm1(distance)
+        else:
+            raise NotImplementedError('Unknown weighting type')
 
         return weighting_matrix

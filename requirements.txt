@@ -7,3 +7,5 @@ pytest
 scikit-image
 runstats
 pillow
+future
+tb-nightly

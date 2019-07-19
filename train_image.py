@@ -79,16 +79,16 @@ def train_image(args):
 
     if args.train_method == 'WS2I':  # semi-k-space learning.
         input_train_transform = WeightedPreProcessSemiK(mask_func, args.challenge, device, use_seed=False,
-                                                        divisor=divisor, squared_weighting=args.squared_weighting)
+                                                        divisor=divisor, weight_type=args.weight_type)
         input_val_transform = WeightedPreProcessSemiK(mask_func, args.challenge, device, use_seed=True,
-                                                      divisor=divisor, squared_weighting=args.squared_weighting)
+                                                      divisor=divisor, weight_type=args.weight_type)
         output_transform = WeightedReplacePostProcessSemiK(weighted=True, replace=args.replace)
 
     elif args.train_method == 'WK2I':  # k-space learning.
         input_train_transform = WeightedPreProcessK(mask_func, args.challenge, device, use_seed=False,
-                                                    divisor=divisor, squared_weighting=args.squared_weighting)
+                                                    divisor=divisor, weight_type=args.weight_type)
         input_val_transform = WeightedPreProcessK(mask_func, args.challenge, device, use_seed=True,
-                                                  divisor=divisor, squared_weighting=args.squared_weighting)
+                                                  divisor=divisor, weight_type=args.weight_type)
         output_transform = WeightedReplacePostProcessK(weighted=True, replace=args.replace)
     else:
         raise NotImplementedError('Invalid train method!')
@@ -139,7 +139,7 @@ if __name__ == '__main__':
         accelerations=[4, 8],
         max_images=8,  # Maximum number of images to save.
         shrink_scale=1,  # Scale to shrink output image size.
-        num_workers=1,
+        num_workers=2,
         init_lr=2E-2,
         max_to_keep=1,
         start_slice=10,
@@ -157,7 +157,7 @@ if __name__ == '__main__':
         use_residual=False,
         replace=True,  # Whether to replace output k-space with original data.
         use_skip=False,
-        squared_weighting=True,
+        weight_type='exponential_distance',  # One of 'distance', 'squared_distance', 'exponential_distance'
 
         # Channel Attention.
         use_ca=True,
@@ -173,8 +173,8 @@ if __name__ == '__main__':
         sa_dilation=1,
 
         # Variables that change frequently.
-        sample_rate=1,  # Ratio of the dataset to sample and use.
-        num_epochs=15,
+        sample_rate=0.2,  # Ratio of the dataset to sample and use.
+        num_epochs=20,
         gpu=0,  # Set to None for CPU mode.
         use_slice_metrics=True,  # This can significantly increase training time.
         # prev_model_ckpt='',
