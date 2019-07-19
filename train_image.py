@@ -157,7 +157,7 @@ if __name__ == '__main__':
         use_residual=False,
         replace=True,  # Whether to replace output k-space with original data.
         use_skip=False,
-        weight_type='exponential_distance',  # One of 'distance', 'squared_distance', 'exponential_distance'
+        weight_type='distance',  # One of 'distance', 'squared_distance', etc.
 
         # Channel Attention.
         use_ca=True,

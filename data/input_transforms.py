@@ -196,6 +196,80 @@ class Prefetch2Device:
         return kspace_target, target, attrs, file_name, slice_num
 
 
+class PreProcessWK:
+    """
+    Class for pre-processing weighted k-space.
+    However, weighting is optional since a simple function that returns its input can be used to have no weighting.
+    """
+    def __init__(self, mask_func, weight_func, challenge, device, use_seed=True, divisor=1):
+        assert callable(mask_func), '`mask_func` must be a callable function.'
+        assert callable(weight_func), '`weight_func` must be a callable function.'
+        if challenge not in ('singlecoil', 'multicoil'):
+            raise ValueError(f'Challenge should either be "singlecoil" or "multicoil"')
+
+        self.mask_func = mask_func
+        self.weight_func = weight_func
+        self.challenge = challenge
+        self.device = device
+        self.use_seed = use_seed
+        self.divisor = divisor
+
+    def __call__(self, kspace_target, target, attrs, file_name, slice_num):
+        assert isinstance(kspace_target, torch.Tensor), 'k-space target was expected to be a Pytorch Tensor.'
+        if kspace_target.dim() == 3:  # If the collate function does not expand dimensions for single-coil.
+            kspace_target = kspace_target.expand(1, 1, -1, -1, -1)
+        elif kspace_target.dim() == 4:  # If the collate function does not expand dimensions for multi-coil.
+            kspace_target = kspace_target.expand(1, -1, -1, -1, -1)
+        elif kspace_target.dim() != 5:  # Expanded k-space should have 5 dimensions.
+            raise RuntimeError('k-space target has invalid shape!')
+
+        if kspace_target.size(0) != 1:
+            raise NotImplementedError('Batch size should be 1 for now.')
+
+        with torch.no_grad():
+            # Apply mask
+            seed = None if not self.use_seed else tuple(map(ord, file_name))
+            masked_kspace, mask, info = apply_info_mask(kspace_target, self.mask_func, seed)
+
+            weighting = self.weight_func(masked_kspace)
+            masked_kspace *= weighting
+
+            # img_input is not actually an input but what the input would look like in the image domain.
+            img_input = complex_abs(ifft2(masked_kspace))
+
+            # The slope is meaningless as the results always become the same after standardization no matter the slope.
+            # The ordering could be changed to allow a difference, but this would make the inputs non-standardized.
+            k_scale = torch.std(masked_kspace)
+            k_scaling = 1 / k_scale
+
+            masked_kspace *= k_scaling  # Multiplication is faster than division.
+            masked_kspace = kspace_to_nchw(masked_kspace)
+
+            extra_params = {'k_scales': k_scale, 'masks': mask, 'weightings': weighting}
+            extra_params.update(info)
+            extra_params.update(attrs)
+
+            # Recall that the Fourier transform is a linear transform.
+            kspace_target *= k_scaling
+            cmg_target = ifft2(kspace_target)
+            img_target = complex_abs(cmg_target)
+
+            # Use plurals as keys to reduce confusion.
+            targets = {'kspace_targets': kspace_target, 'cmg_targets': cmg_target,
+                       'img_targets': img_target, 'img_inputs': img_input}
+
+            margin = masked_kspace.size(-1) % self.divisor
+            if margin > 0:
+                pad = [(self.divisor - margin) // 2, (1 + self.divisor - margin) // 2]
+            else:  # This is a temporary fix to prevent padding by half the divisor when margin=0.
+                pad = [0, 0]
+
+            # This pads at the last dimension of a tensor with 0.
+            inputs = F.pad(masked_kspace, pad=pad, value=0)
+
+        return inputs, targets, extra_params
+
+
 class WeightedPreProcessK:
     def __init__(self, mask_func, challenge, device, use_seed=True, divisor=1, weight_type=False):
         if challenge not in ('singlecoil', 'multicoil'):
@@ -279,17 +353,93 @@ class WeightedPreProcessK:
 
         if self.weight_type == 'distance':
             weighting_matrix = torch.sqrt((x_coords ** 2) + (y_coords ** 2))
-        elif self.weight_type == 'squared_distance':
+        elif self.weight_type == 'squared_distance':  # Bad option. Do not use.
             weighting_matrix = (x_coords ** 2) + (y_coords ** 2)
-        elif self.weight_type == 'exponential_distance':  # Actually the exponent minus one.
-            distance = torch.sqrt((x_coords ** 2) + (y_coords ** 2))
-            weighting_matrix = torch.expm1(distance)
+        # elif self.weight_type == 'exponential_distance':  # Actually the exponent minus one.  # Total failure.
+        #     distance = torch.sqrt((x_coords ** 2) + (y_coords ** 2))
+        #     weighting_matrix = torch.expm1(distance)
         else:
             raise NotImplementedError('Unknown weighting type')
 
         weighting_matrix = weighting_matrix.view(1, 1, height, width, 1)
 
         return weighting_matrix
+
+
+class PreProcessWSK:
+    """
+    Class for pre-processing weighted semi-k-space.
+    """
+    def __init__(self, mask_func, weight_func, challenge, device, use_seed=True, divisor=1):
+        assert callable(mask_func), '`mask_func` must be a callable function.'
+        assert callable(weight_func), '`weight_func` must be a callable function.'
+        if challenge not in ('singlecoil', 'multicoil'):
+            raise ValueError(f'Challenge should either be "singlecoil" or "multicoil"')
+
+        self.mask_func = mask_func
+        self.weight_func = weight_func
+        self.challenge = challenge
+        self.device = device
+        self.use_seed = use_seed
+        self.divisor = divisor
+
+    def __call__(self, kspace_target, target, attrs, file_name, slice_num):
+        assert isinstance(kspace_target, torch.Tensor), 'k-space target was expected to be a Pytorch Tensor.'
+        if kspace_target.dim() == 3:  # If the collate function does not expand dimensions for single-coil.
+            kspace_target = kspace_target.expand(1, 1, -1, -1, -1)
+        elif kspace_target.dim() == 4:  # If the collate function does not expand dimensions for multi-coil.
+            kspace_target = kspace_target.expand(1, -1, -1, -1, -1)
+        elif kspace_target.dim() != 5:  # Expanded k-space should have 5 dimensions.
+            raise RuntimeError('k-space target has invalid shape!')
+
+        if kspace_target.size(0) != 1:
+            raise NotImplementedError('Batch size should be 1 for now.')
+
+        with torch.no_grad():
+            # Apply mask
+            seed = None if not self.use_seed else tuple(map(ord, file_name))
+            masked_kspace, mask, info = apply_info_mask(kspace_target, self.mask_func, seed)
+
+            # img_input is not actually an input but what the input would look like in the image domain.
+            img_input = complex_abs(ifft2(masked_kspace))
+
+            semi_kspace = ifft1(masked_kspace, direction='height')
+
+            weighting = self.weight_func(masked_kspace)
+            masked_kspace *= weighting
+
+            # The slope is meaningless as the results always become the same after standardization no matter the slope.
+            # The ordering could be changed to allow a difference, but this would make the inputs non-standardized.
+            k_scale = torch.std(semi_kspace)
+            k_scaling = 1 / k_scale
+
+            semi_kspace *= k_scaling  # Multiplication is faster than division.
+            semi_kspace = kspace_to_nchw(semi_kspace)
+
+            extra_params = {'k_scales': k_scale, 'masks': mask, 'weightings': weighting}
+            extra_params.update(info)
+            extra_params.update(attrs)
+
+            # Recall that the Fourier transform is a linear transform.
+            kspace_target *= k_scaling
+            cmg_target = ifft2(kspace_target)
+            img_target = complex_abs(cmg_target)
+            semi_kspace_target = ifft1(kspace_target, direction='height')
+
+            # Use plurals as keys to reduce confusion.
+            targets = {'semi_kspace_targets': semi_kspace_target, 'kspace_targets': kspace_target,
+                       'cmg_targets': cmg_target, 'img_targets': img_target, 'img_inputs': img_input}
+
+            margin = semi_kspace.size(-1) % self.divisor
+            if margin > 0:
+                pad = [(self.divisor - margin) // 2, (1 + self.divisor - margin) // 2]
+            else:  # This is a temporary fix to prevent padding by half the divisor when margin=0.
+                pad = [0, 0]
+
+            # This pads at the last dimension of a tensor with 0.
+            inputs = F.pad(semi_kspace, pad=pad, value=0)
+
+        return inputs, targets, extra_params
 
 
 class WeightedPreProcessSemiK:
@@ -370,11 +520,11 @@ class WeightedPreProcessSemiK:
         x_coords = torch.arange(start=-mid_width + 0.5, end=mid_width + 0.5, step=1, device=device)
         if self.weight_type == 'distance':
             weighting_matrix = torch.abs(x_coords).view(1, 1, 1, width, 1)
-        elif self.weight_type == 'squared_distance':
+        elif self.weight_type == 'squared_distance':  # Terrible option. Do not use.
             weighting_matrix = (x_coords ** 2).view(1, 1, 1, width, 1)
-        elif self.weight_type == 'exponential_distance':  # Actually the exponent minus one.
-            distance = torch.abs(x_coords).view(1, 1, 1, width, 1)
-            weighting_matrix = torch.expm1(distance)
+        # elif self.weight_type == 'exponential_distance':  # Actually the exponent minus one.  # Total failure.
+        #     distance = torch.abs(x_coords).view(1, 1, 1, width, 1)
+        #     weighting_matrix = torch.expm1(distance)
         else:
             raise NotImplementedError('Unknown weighting type')
 
