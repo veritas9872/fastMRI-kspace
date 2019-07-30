@@ -179,53 +179,49 @@ class WeightedReplacePostProcessSemiK(nn.Module):
         return recons  # Returning scaled reconstructions. Not rescaled.
 
 
-class PostProcessWSemiK(nn.Module):
-    def __init__(self, weighted=True, replace=True, direction='height', resolution=320):
+class PostProcessWK(nn.Module):
+    def __init__(self, weighted=True, replace=True, resolution=320):
         super().__init__()
         self.weighted = weighted
         self.replace = replace
         self.resolution = resolution
 
-        if direction == 'height':
-            self.recon_direction = 'width'
-        elif direction == 'width':
-            self.recon_direction = 'height'
-        else:
-            raise ValueError('`direction` should either be `height` or `width')
+    def forward(self, kspace_outputs, targets, extra_params):
 
-        self.direction = direction
+        if torch.isnan(kspace_outputs).any():
+            print('Output NAN!!!')
 
-    def forward(self, semi_kspace_outputs, targets, extra_params):
-        if semi_kspace_outputs.size(0) > 1:
-            raise NotImplementedError('Only one batch at a time for now.')
+        if kspace_outputs.size(0) > 1:
+            raise NotImplementedError('Only one slice at a time for now.')
 
-        semi_kspace_targets = targets['semi_kspace_targets']
+        kspace_targets = targets['kspace_targets']
+
         # For removing width dimension padding. Recall that k-space form has 2 as last dim size.
-        left = (semi_kspace_outputs.size(-1) - semi_kspace_targets.size(-2)) // 2
-        right = left + semi_kspace_targets.size(-2)
+        left = (kspace_outputs.size(-1) - kspace_targets.size(-2)) // 2
+        right = left + kspace_targets.size(-2)
 
         # Cropping width dimension by pad.
-        semi_kspace_recons = nchw_to_kspace(semi_kspace_outputs[..., left:right])
+        kspace_recons = nchw_to_kspace(kspace_outputs[..., left:right])
 
-        assert semi_kspace_recons.shape == semi_kspace_targets.shape, 'Reconstruction and target sizes are different.'
-        assert (semi_kspace_recons.size(-3) % 2 == 0) and (semi_kspace_recons.size(-2) % 2 == 0), \
+        if torch.isnan(kspace_recons).any():
+            print('Reshape NAN!!!')
+
+        assert kspace_recons.shape == kspace_targets.shape, 'Reconstruction and target sizes are different.'
+        assert (kspace_recons.size(-3) % 2 == 0) and (kspace_recons.size(-2) % 2 == 0), \
             'Not impossible but not expected to have sides with odd lengths.'
 
         # Removing weighting.
         if self.weighted:
             weighting = extra_params['weightings']
-            semi_kspace_recons = semi_kspace_recons / weighting
+            kspace_recons = kspace_recons / weighting
 
-        if self.replace:
+        if self.replace:  # Replace with original k-space if replace=True
             mask = extra_params['masks']
-            semi_kspace_recons = semi_kspace_recons * (1 - mask) + semi_kspace_targets * mask
+            kspace_recons = kspace_recons * (1 - mask) + kspace_targets * mask
 
-        kspace_recons = fft1(semi_kspace_recons, direction=self.direction)
-        cmg_recons = ifft1(semi_kspace_recons, direction=self.recon_direction)
+        cmg_recons = ifft2(kspace_recons)
         img_recons = complex_abs(cmg_recons)
-
-        recons = {'semi_kspace_recons': semi_kspace_recons, 'kspace_recons': kspace_recons,
-                  'cmg_recons': cmg_recons, 'img_recons': img_recons}
+        recons = {'kspace_recons': kspace_recons, 'cmg_recons': cmg_recons, 'img_recons': img_recons}
 
         if img_recons.size(1) == 15:
             top = (img_recons.size(-2) - self.resolution) // 2
@@ -237,7 +233,7 @@ class PostProcessWSemiK(nn.Module):
         return recons  # Returning scaled reconstructions. Not rescaled.
 
 
-class PostProcessWK(nn.Module):
+class PostProcessWSemiK(nn.Module):
     def __init__(self, weighted=True, replace=True, direction='height', resolution=320):
         super().__init__()
         self.weighted = weighted
