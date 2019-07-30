@@ -187,10 +187,6 @@ class PostProcessWK(nn.Module):
         self.resolution = resolution
 
     def forward(self, kspace_outputs, targets, extra_params):
-
-        if torch.isnan(kspace_outputs).any():
-            print('Output NAN!!!')
-
         if kspace_outputs.size(0) > 1:
             raise NotImplementedError('Only one slice at a time for now.')
 
@@ -202,10 +198,6 @@ class PostProcessWK(nn.Module):
 
         # Cropping width dimension by pad.
         kspace_recons = nchw_to_kspace(kspace_outputs[..., left:right])
-
-        if torch.isnan(kspace_recons).any():
-            print('Reshape NAN!!!')
-
         assert kspace_recons.shape == kspace_targets.shape, 'Reconstruction and target sizes are different.'
         assert (kspace_recons.size(-3) % 2 == 0) and (kspace_recons.size(-2) % 2 == 0), \
             'Not impossible but not expected to have sides with odd lengths.'
