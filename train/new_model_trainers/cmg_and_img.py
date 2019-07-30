@@ -11,7 +11,7 @@ from collections import defaultdict
 from utils.run_utils import get_logger
 from utils.train_utils import CheckpointManager, make_k_grid, make_img_grid, make_rss_slice
 from data.data_transforms import complex_abs
-from metrics.my_new_ssim import SSIM
+from metrics.my_ssim1d import SSIM
 from metrics.custom_losses import psnr_loss, nmse_loss
 
 
@@ -93,7 +93,7 @@ class ModelTrainerCI:
         self.use_slice_metrics = args.use_slice_metrics
 
         # This part should get SSIM, not 1 - SSIM.
-        self.ssim_loss = SSIM(filter_size=7)  # Needed to cache the kernel.
+        self.ssim_loss = SSIM(win_size=7)  # Needed to cache the kernel.
 
         # Logging all components of the Model Trainer.
         # Train and Val input and output transforms are assumed to use the same input transform class.
