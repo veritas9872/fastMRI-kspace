@@ -104,20 +104,20 @@ def train_complex(args):
 
     data_chans = 2 if args.challenge == 'singlecoil' else 30  # Multicoil has 15 coils with 2 for real/imag
 
-    model = UNetModel(
-        in_chans=data_chans, out_chans=data_chans, chans=args.chans, num_pool_layers=args.num_pool_layers,
-        num_groups=args.num_groups, use_residual=args.use_residual, pool_type=args.pool_type, use_skip=args.use_skip,
-        use_ca=args.use_ca, reduction=args.reduction, use_gap=args.use_gap, use_gmp=args.use_gmp,
-        use_sa=args.use_sa, sa_kernel_size=args.sa_kernel_size, sa_dilation=args.sa_dilation, use_cap=args.use_cap,
-        use_cmp=args.use_cmp).to(device)
-
-    # model = UNetModelKSSE(
+    # model = UNetModel(
     #     in_chans=data_chans, out_chans=data_chans, chans=args.chans, num_pool_layers=args.num_pool_layers,
     #     num_groups=args.num_groups, use_residual=args.use_residual, pool_type=args.pool_type, use_skip=args.use_skip,
-    #     min_ext_size=args.min_ext_size, max_ext_size=args.max_ext_size, ext_mode=args.ext_mode,
     #     use_ca=args.use_ca, reduction=args.reduction, use_gap=args.use_gap, use_gmp=args.use_gmp,
     #     use_sa=args.use_sa, sa_kernel_size=args.sa_kernel_size, sa_dilation=args.sa_dilation, use_cap=args.use_cap,
     #     use_cmp=args.use_cmp).to(device)
+
+    model = UNetModelKSSE(
+        in_chans=data_chans, out_chans=data_chans, chans=args.chans, num_pool_layers=args.num_pool_layers,
+        num_groups=args.num_groups, use_residual=args.use_residual, pool_type=args.pool_type, use_skip=args.use_skip,
+        min_ext_size=args.min_ext_size, max_ext_size=args.max_ext_size, ext_mode=args.ext_mode,
+        use_ca=args.use_ca, reduction=args.reduction, use_gap=args.use_gap, use_gmp=args.use_gmp,
+        use_sa=args.use_sa, sa_kernel_size=args.sa_kernel_size, sa_dilation=args.sa_dilation, use_cap=args.use_cap,
+        use_cmp=args.use_cmp).to(device)
 
     optimizer = optim.Adam(model.parameters(), lr=args.init_lr)
     scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.lr_red_epochs, gamma=args.lr_red_rate)
@@ -143,8 +143,8 @@ if __name__ == '__main__':
         smoothing_factor=8,
 
         # Variables that occasionally change.
-        center_fractions=[0.08],
-        accelerations=[4],
+        center_fractions=[0.08, 0.04],
+        accelerations=[4, 8],
         random_sampling=True,
         num_pool_layers=4,
         verbose=False,
@@ -158,11 +158,11 @@ if __name__ == '__main__':
         use_skip=False,
         chans=64,
 
-        # min_ext_size=1,
-        # max_ext_size=9,
-        # ext_mode='1NN1',
-        # y_scale=0.25,
-        weight_type='distance',  # 'distance' or 'root_distance'
+        min_ext_size=1,
+        max_ext_size=9,
+        ext_mode='N11N',
+        # y_scale=1,
+        weight_type='root_distance',  # 'distance' or 'root_distance'
 
         # TensorBoard related parameters.
         max_images=8,  # Maximum number of images to save.
@@ -190,9 +190,9 @@ if __name__ == '__main__':
         num_epochs=100,
         sample_rate=1,  # Ratio of the dataset to sample and use.
         start_slice=10,
-        gpu=0,  # Set to None for CPU mode.
+        gpu=1,  # Set to None for CPU mode.
         num_workers=2,
-        init_lr=2E-2,
+        init_lr=5E-2,
         max_to_keep=1,
         # prev_model_ckpt='',
     )

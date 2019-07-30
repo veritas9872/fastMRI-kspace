@@ -27,6 +27,8 @@ class TiltedDistanceWeight:
             weighting_matrix = torch.sqrt((x_coords ** 2) + self.y_scale * (y_coords ** 2))
         elif self.weight_type == 'root_distance':
             weighting_matrix = torch.sqrt(torch.sqrt((x_coords ** 2) + self.y_scale * (y_coords ** 2)))
+        elif self.weight_type == 'log_distance':  # Actually ln(1+distance).
+            weighting_matrix = torch.log1p(torch.sqrt((x_coords ** 2) + self.y_scale * (y_coords ** 2)))
         else:
             raise NotImplementedError('Invalid weighting type.')
 
@@ -56,6 +58,8 @@ class SemiDistanceWeight:
             weighting_matrix = torch.abs(x_coords)
         elif self.weight_type == 'root_distance':
             weighting_matrix = torch.sqrt(torch.abs(x_coords))
+        elif self.weight_type == 'log_distance':
+            weighting_matrix = torch.log1p(torch.abs(x_coords))
         else:
             raise NotImplementedError('Invalid weighting type.')
 

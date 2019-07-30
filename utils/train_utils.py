@@ -6,7 +6,7 @@ import torch.nn.functional as F
 from pathlib import Path
 
 from data.mri_data import SliceData, CustomSliceData
-from data.data_transforms import complex_abs, ifft2
+from data.data_transforms import complex_abs, ifft2, root_sum_of_squares
 from data.input_transforms import Prefetch2Device
 
 
@@ -139,37 +139,79 @@ def load_model_from_checkpoint(model, load_dir):
     return model  # Not actually necessary to return the model but doing so anyway.
 
 
-def create_datasets(args, train_transform, val_transform):
-    assert callable(train_transform) and callable(val_transform), 'Transforms should be callable functions.'
+# def create_datasets(args, train_transform, val_transform):
+#     assert callable(train_transform) and callable(val_transform), 'Transforms should be callable functions.'
+#
+#     # Generating Datasets.
+#     train_dataset = SliceData(
+#         root=Path(args.data_root) / f'{args.challenge}_train',
+#         transform=train_transform,
+#         challenge=args.challenge,
+#         sample_rate=args.sample_rate,
+#         use_gt=False
+#     )
+#
+#     val_dataset = SliceData(
+#         root=Path(args.data_root) / f'{args.challenge}_val',
+#         transform=val_transform,
+#         challenge=args.challenge,
+#         sample_rate=args.sample_rate,
+#         use_gt=False
+#     )
+#     return train_dataset, val_dataset
+#
+#
+# def single_collate_fn(batch):  # Returns `targets` as a 4D Tensor.
+#     """
+#     hack for single batch case.
+#     """
+#     return batch[0][0].unsqueeze(0), batch[0][1].unsqueeze(0), batch[0][2]
+#
+#
+# def single_triplet_collate_fn(batch):
+#     return batch[0][0], batch[0][1], batch[0][2]
 
-    # Generating Datasets.
-    train_dataset = SliceData(
-        root=Path(args.data_root) / f'{args.challenge}_train',
-        transform=train_transform,
-        challenge=args.challenge,
-        sample_rate=args.sample_rate,
-        use_gt=False
-    )
 
-    val_dataset = SliceData(
-        root=Path(args.data_root) / f'{args.challenge}_val',
-        transform=val_transform,
-        challenge=args.challenge,
-        sample_rate=args.sample_rate,
-        use_gt=False
-    )
-    return train_dataset, val_dataset
-
-
-def single_collate_fn(batch):  # Returns `targets` as a 4D Tensor.
-    """
-    hack for single batch case.
-    """
-    return batch[0][0].unsqueeze(0), batch[0][1].unsqueeze(0), batch[0][2]
-
-
-def single_triplet_collate_fn(batch):
-    return batch[0][0], batch[0][1], batch[0][2]
+# def create_data_loaders(args, train_transform, val_transform):
+#
+#     """
+#     A function for creating datasets where the data is sent to the desired device before being given to the model.
+#     This is done because data transfer is a serious bottleneck in k-space learning and is best done asynchronously.
+#     Also, the Fourier Transform is best done on the GPU instead of on CPU.
+#     Finally, Sending k-space data to device beforehand removes the need to also send generated label data to device.
+#     This reduces data transfer significantly.
+#     The only problem is that sending to GPU cannot be batched with this method.
+#     However, this seems to be a small price to pay.
+#     """
+#     assert callable(train_transform) and callable(val_transform), 'Transforms should be callable functions.'
+#
+#     train_dataset, val_dataset = create_datasets(args, train_transform, val_transform)
+#
+#     if args.batch_size == 1:
+#         collate_fn = single_collate_fn
+#     elif args.batch_size > 1:
+#         collate_fn = multi_collate_fn
+#     else:
+#         raise RuntimeError('Invalid batch size')
+#
+#     # Generating Data Loaders
+#     train_loader = DataLoader(
+#         dataset=train_dataset,
+#         batch_size=args.batch_size,
+#         shuffle=True,
+#         num_workers=args.num_workers,
+#         pin_memory=args.pin_memory,
+#         collate_fn=collate_fn
+#     )
+#
+#     val_loader = DataLoader(
+#         dataset=val_dataset,
+#         batch_size=args.batch_size,
+#         num_workers=args.num_workers,
+#         pin_memory=args.pin_memory,
+#         collate_fn=collate_fn
+#     )
+#     return train_loader, val_loader
 
 
 def single_batch_collate_fn(batch):
@@ -195,48 +237,6 @@ def multi_collate_fn(batch):
             tensors[idx] = F.pad(tensors[idx], pad=[pad, pad], value=0)
 
     return torch.stack(tensors, dim=0), targets, scales
-
-
-def create_data_loaders(args, train_transform, val_transform):
-
-    """
-    A function for creating datasets where the data is sent to the desired device before being given to the model.
-    This is done because data transfer is a serious bottleneck in k-space learning and is best done asynchronously.
-    Also, the Fourier Transform is best done on the GPU instead of on CPU.
-    Finally, Sending k-space data to device beforehand removes the need to also send generated label data to device.
-    This reduces data transfer significantly.
-    The only problem is that sending to GPU cannot be batched with this method.
-    However, this seems to be a small price to pay.
-    """
-    assert callable(train_transform) and callable(val_transform), 'Transforms should be callable functions.'
-
-    train_dataset, val_dataset = create_datasets(args, train_transform, val_transform)
-
-    if args.batch_size == 1:
-        collate_fn = single_collate_fn
-    elif args.batch_size > 1:
-        collate_fn = multi_collate_fn
-    else:
-        raise RuntimeError('Invalid batch size')
-
-    # Generating Data Loaders
-    train_loader = DataLoader(
-        dataset=train_dataset,
-        batch_size=args.batch_size,
-        shuffle=True,
-        num_workers=args.num_workers,
-        pin_memory=args.pin_memory,
-        collate_fn=collate_fn
-    )
-
-    val_loader = DataLoader(
-        dataset=val_dataset,
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
-        pin_memory=args.pin_memory,
-        collate_fn=collate_fn
-    )
-    return train_loader, val_loader
 
 
 def create_custom_datasets(args, transform=None):
@@ -328,6 +328,25 @@ def make_grid_triplet(image_recons, image_targets):
     deltas = image_targets - image_recons
 
     return image_recons, image_targets, deltas
+
+
+def make_rss_slice(image, dim=1, resolution=320):
+    assert image.dim() == 4, 'Real-valued images are expected.'
+    if image.size(0) > 1:
+        raise NotImplementedError('Batch size is expected to be 1.')
+
+    top = (image.size(-2) - resolution) // 2
+    left = (image.size(-1) - resolution) // 2
+
+    image = image.detach()[:, :, top:top+resolution, left:left+resolution]
+
+    if image.size(1) == 1:  # Single-coil
+        return image.squeeze().to(device='cpu', non_blocking=True)
+    elif image.size(1) != 15:
+        raise ValueError('Invalid number of coils for this dataset.')
+
+    rss = root_sum_of_squares(image, dim=dim).squeeze()
+    return rss.to(device='cpu', non_blocking=True)
 
 
 def make_img_grid(image, shrink_scale):

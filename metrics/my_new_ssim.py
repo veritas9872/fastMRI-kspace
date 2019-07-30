@@ -20,7 +20,7 @@ def _ssim(input, target, max_val, k1, k2, kernel):
 
     channel = input.size(1)
 
-    kernel = kernel.expand(channel, 1, -1, -1).contiguous()
+    kernel = kernel.expand(channel, 1, -1, -1).contiguous()  # Dynamic expansion.
 
     mu1 = conv2d(input, kernel, groups=channel)
     mu2 = conv2d(target, kernel, groups=channel)
@@ -58,11 +58,11 @@ def ssim_loss(input, target, max_val, filter_size=11, k1=0.01, k2=0.03,
 
     dim = input.dim()
     if dim == 2:
-        input = input.expand(1, 1, input.dim(-2), input.dim(-1))
-        target = target.expand(1, 1, target.dim(-2), target.dim(-1))
+        input = input.expand(1, 1, -1, -1)
+        target = target.expand(1, 1, -1, -1)
     elif dim == 3:
-        input = input.expand(1, input.dim(-3), input.dim(-2), input.dim(-1))
-        target = target.expand(1, target.dim(-3), target.dim(-2), target.dim(-1))
+        input = input.expand(1, -1, -1, -1)
+        target = target.expand(1, -1, -1, -1)
     elif dim != 4:
         raise ValueError('Expected 2, 3, or 4 dimensions (got {})'.format(dim))
 
@@ -218,6 +218,7 @@ class SSIM(nn.Module):
         self.reduction = reduction
 
     def forward(self, input, target, max_val=1.):
+        self.kernel = self.kernel.to(dtype=input.dtype, device=input.device)
         return ssim_loss(input, target, max_val=max_val, filter_size=self.filter_size, k1=self.k1, k2=self.k2,
                          sigma=self.sigma, reduction=self.reduction, kernel=self.kernel)
 
