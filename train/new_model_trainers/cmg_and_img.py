@@ -172,11 +172,8 @@ class ModelTrainerCI:
         self.optimizer.zero_grad()
         outputs = self.model(inputs)
 
-        if torch.isnan(outputs).any():
-            print('Doom!')
-
         recons = self.output_train_transform(outputs, targets, extra_params)
-
+        print(torch.std(inputs).item(), torch.std(outputs).item())
         cmg_loss = self.losses['cmg_loss'](recons['cmg_recons'], targets['cmg_targets'])
         img_loss = self.losses['img_loss'](recons['img_recons'], targets['img_targets'])
 

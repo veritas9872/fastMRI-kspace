@@ -8,7 +8,7 @@ from utils.data_loaders import create_prefetch_data_loaders
 
 from train.subsample import RandomMaskFunc, UniformMaskFunc
 from data.input_transforms import Prefetch2Device, PreProcessWK, PreProcessWSK
-from data.output_transforms import PostProcessWK, PostProcessWSK
+from data.output_transforms import PostProcessWK, PostProcessWSemiK
 
 from train.new_model_trainers.cmg_and_img import ModelTrainerCI
 from data.weighting import TiltedDistanceWeight, SemiDistanceWeight
@@ -75,8 +75,8 @@ def train_cmg_and_img(args):
         input_val_transform = PreProcessWSK(mask_func, weight_func, args.challenge, device,
                                             use_seed=True, divisor=divisor)
 
-        output_train_transform = PostProcessWSK(weighted=True, replace=False)  # Maybe change this later.
-        output_val_transform = PostProcessWSK(weighted=True, replace=args.replace)
+        output_train_transform = PostProcessWSemiK(weighted=True, replace=False)  # Maybe change this later.
+        output_val_transform = PostProcessWSemiK(weighted=True, replace=args.replace)
 
     elif args.train_method == 'WK2CI':  # k-space learning.
         weight_func = TiltedDistanceWeight(weight_type=args.weight_type, y_scale=args.y_scale)
