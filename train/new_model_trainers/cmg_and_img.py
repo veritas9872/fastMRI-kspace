@@ -319,9 +319,9 @@ class ModelTrainerCI:
         slice_nmse = nmse_loss(img_recons, img_targets)
 
         slice_metrics = {
-            'slice_ssim': slice_ssim,
-            'slice_nmse': slice_nmse,
-            'slice_psnr': slice_psnr
+            'slice/ssim': slice_ssim,
+            'slice/nmse': slice_nmse,
+            'slice/psnr': slice_psnr
         }
 
         if 'rss_recons' in recons:
@@ -333,23 +333,23 @@ class ModelTrainerCI:
             rss_psnr = psnr_loss(rss_recons, rss_targets, data_range=max_range)
             rss_nmse = nmse_loss(rss_recons, rss_targets)
 
-            slice_metrics['rss_ssim'] = rss_ssim
-            slice_metrics['rss_psnr'] = rss_psnr
-            slice_metrics['rss_nmse'] = rss_nmse
+            slice_metrics['rss/ssim'] = rss_ssim
+            slice_metrics['rss/psnr'] = rss_psnr
+            slice_metrics['rss/nmse'] = rss_nmse
         else:
             rss_ssim = rss_psnr = rss_nmse = 0
 
         # Additional metrics for separating between acceleration factors.
         if 'acceleration' in extra_params:
             acc = extra_params["acceleration"]
-            slice_metrics[f'acc_{acc}_slice_ssim'] = slice_ssim
-            slice_metrics[f'acc_{acc}_slice_psnr'] = slice_psnr
-            slice_metrics[f'acc_{acc}_slice_nmse'] = slice_nmse
+            slice_metrics[f'slice_acc_{acc}/ssim'] = slice_ssim
+            slice_metrics[f'slice_acc_{acc}/psnr'] = slice_psnr
+            slice_metrics[f'slice_acc_{acc}/nmse'] = slice_nmse
 
             if 'rss_recons' in recons:
-                slice_metrics[f'acc_{acc}_rss_ssim'] = rss_ssim
-                slice_metrics[f'acc_{acc}_rss_psnr'] = rss_psnr
-                slice_metrics[f'acc_{acc}_rss_nmse'] = rss_nmse
+                slice_metrics[f'rss_acc_{acc}/ssim'] = rss_ssim
+                slice_metrics[f'rss_acc_{acc}/psnr'] = rss_psnr
+                slice_metrics[f'rss_acc_{acc}/nmse'] = rss_nmse
 
         return slice_metrics
 

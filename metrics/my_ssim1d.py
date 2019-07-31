@@ -257,3 +257,28 @@ class MSSSIM(nn.Module):
         self.win = self.win.to(dtype=input.dtype, device=input.device)  # This is a non-op if already the same.
         self.weights = self.weights.to(dtype=input.dtype, device=input.device)
         return ms_ssim(input, target, win=self.win, size_average=self.size_average, data_range=self.data_range, weights=self.weights)
+
+
+# Classes to re-use window
+class SSIMLoss(nn.Module):
+    def __init__(self, win_size=11, win_sigma=1.5, data_range=None, size_average=True):
+        r""" class for ssim
+        Args:
+            win_size: (int, optional): the size of gauss kernel
+            win_sigma: (float, optional): sigma of normal distribution
+            data_range (float or int, optional): value range of input images. (usually 1.0 or 255)
+            size_average (bool, optional): if size_average=True, ssim of all images will be averaged as a scalar
+        """
+
+        super(SSIMLoss, self).__init__()
+        self.win = _fspecial_gauss_1d(win_size, win_sigma)
+
+        self.register_buffer('window', _fspecial_gauss_1d(win_size, win_sigma))
+        self.size_average = size_average
+        self.data_range = data_range
+
+    def forward(self, input, target):
+        assert isinstance(input, torch.Tensor)
+        # This will be unnecessary if the named buffer is used. The loss will have to be sent to GPU though.
+        self.win = self.win.to(dtype=input.dtype, device=input.device)  # This is a non-op if already the same.
+        return 1 - ssim(input, target, win=self.win, data_range=self.data_range, size_average=self.size_average)

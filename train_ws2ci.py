@@ -153,7 +153,7 @@ if __name__ == '__main__':
         use_residual=False,
         replace=True,  # This only applies to validation for now. Training does not use replace no matter the setting.
         use_skip=False,
-        chans=64,
+        chans=32,
 
         # min_ext_size=1,
         # max_ext_size=9,
@@ -179,19 +179,19 @@ if __name__ == '__main__':
         sa_dilation=1,
 
         # Learning rate scheduling.
-        lr_red_epochs=[80, 90, 95],
+        lr_red_epochs=[20, 30, 35],
         lr_red_rate=0.1,
 
         # Variables that change frequently.
         use_slice_metrics=True,  # This can significantly increase training time.
-        num_epochs=3,
-        sample_rate=0.02,  # Ratio of the dataset to sample and use.
+        num_epochs=40,
+        sample_rate=1,  # Ratio of the dataset to sample and use.
         start_slice=10,
         gpu=1,  # Set to None for CPU mode.
         num_workers=2,
-        init_lr=5E-2,
+        init_lr=2E-2,
         max_to_keep=1,
-        img_lambda=1,
+        img_lambda=1,  # This parameter needs serious tuning.
         # prev_model_ckpt='',
     )
     options = create_arg_parser(**settings).parse_args()
