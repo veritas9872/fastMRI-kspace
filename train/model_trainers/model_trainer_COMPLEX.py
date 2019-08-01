@@ -12,7 +12,7 @@ from utils.run_utils import get_logger
 from utils.train_utils import CheckpointManager, make_k_grid, make_img_grid
 from data.data_transforms import complex_abs
 from metrics.my_new_ssim import SSIM
-from metrics.custom_losses import psnr_loss, nmse_loss
+from metrics.custom_losses import psnr, nmse
 
 
 # Send this somewhere else soon...
@@ -270,8 +270,8 @@ class ModelTrainerCOMPLEX:
         max_range = img_targets.max() - img_targets.min()
 
         slice_ssim = self.ssim_loss(img_recons, img_targets, max_val=max_range)
-        slice_psnr = psnr_loss(img_recons, img_targets, data_range=max_range)
-        slice_nmse = nmse_loss(img_recons, img_targets)
+        slice_psnr = psnr(img_recons, img_targets, data_range=max_range)
+        slice_nmse = nmse(img_recons, img_targets)
 
         slice_metrics = {
             'slice_ssim': slice_ssim,

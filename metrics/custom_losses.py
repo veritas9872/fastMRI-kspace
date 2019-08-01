@@ -76,7 +76,7 @@ class L1CSSIM(nn.Module):  # Replace this with a system of summing losses in Mod
         return cssim + self.l1_weight * l1_loss
 
 
-def psnr_loss(img_comp, img_orig, data_range):
+def psnr(img_comp, img_orig, data_range):
     assert img_comp.size() == img_orig.size()
 
     # true_range = img_orig.max() - img_orig.min()
@@ -92,7 +92,7 @@ def psnr_loss(img_comp, img_orig, data_range):
     return 10 * torch.log10((data_range * data_range) / err)
 
 
-def nmse_loss(img_comp, img_orig):
+def nmse(img_comp, img_orig):
     return F.mse_loss(img_comp, img_orig, reduction='sum') / torch.sum(img_orig ** 2)
 
 

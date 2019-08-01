@@ -12,6 +12,7 @@ from data.output_transforms import PostProcessWK, PostProcessWSemiK
 
 from train.new_model_trainers.cmg_and_img import ModelTrainerCI
 from data.weighting import TiltedDistanceWeight, SemiDistanceWeight
+from models.att_unet import UNet
 from models.res_skip_unet import UNetModel
 from models.ksse_att_unet import UNetModelKSSE
 
@@ -66,9 +67,7 @@ def train_cmg_and_img(args):
     else:
         mask_func = UniformMaskFunc(args.center_fractions, args.accelerations)
 
-    data_prefetch = Prefetch2Device(device)
-
-    if args.train_method == 'WS2CI':  # Semi-k-space learning.
+    if args.train_method == 'WSemi2CI':  # Semi-k-space learning.
         weight_func = SemiDistanceWeight(weight_type=args.weight_type)
         input_train_transform = PreProcessWSK(mask_func, weight_func, args.challenge, device,
                                               use_seed=False, divisor=divisor)
@@ -100,20 +99,10 @@ def train_cmg_and_img(args):
 
     data_chans = 2 if args.challenge == 'singlecoil' else 30  # Multicoil has 15 coils with 2 for real/imag
 
-    model = UNetModel(
-        in_chans=data_chans, out_chans=data_chans, chans=args.chans, num_pool_layers=args.num_pool_layers,
-        num_groups=args.num_groups, use_residual=args.use_residual, pool_type=args.pool_type, use_skip=args.use_skip,
-        use_ca=args.use_ca, reduction=args.reduction, use_gap=args.use_gap, use_gmp=args.use_gmp,
-        use_sa=args.use_sa, sa_kernel_size=args.sa_kernel_size, sa_dilation=args.sa_dilation, use_cap=args.use_cap,
-        use_cmp=args.use_cmp).to(device)
-
-    # model = UNetModelKSSE(
-    #     in_chans=data_chans, out_chans=data_chans, chans=args.chans, num_pool_layers=args.num_pool_layers,
-    #     num_groups=args.num_groups, use_residual=args.use_residual, pool_type=args.pool_type, use_skip=args.use_skip,
-    #     min_ext_size=args.min_ext_size, max_ext_size=args.max_ext_size, ext_mode=args.ext_mode,
-    #     use_ca=args.use_ca, reduction=args.reduction, use_gap=args.use_gap, use_gmp=args.use_gmp,
-    #     use_sa=args.use_sa, sa_kernel_size=args.sa_kernel_size, sa_dilation=args.sa_dilation, use_cap=args.use_cap,
-    #     use_cmp=args.use_cmp).to(device)
+    model = UNet(in_chans=data_chans, out_chans=data_chans, chans=args.chans, num_pool_layers=args.num_pool_layers,
+                 num_groups=args.num_groups, negative_slope=args.negative_slope, use_residual=args.use_residual,
+                 interp_mode=args.interp_mode, use_ca=args.use_ca, reduction=args.reduction,
+                 use_gap=args.use_gap, use_gmp=args.use_gmp).to(device)
 
     optimizer = optim.Adam(model.parameters(), lr=args.init_lr)
     scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.lr_red_epochs, gamma=args.lr_red_rate)
@@ -121,7 +110,11 @@ def train_cmg_and_img(args):
     trainer = ModelTrainerCI(args, model, optimizer, train_loader, val_loader, input_train_transform,
                              input_val_transform, output_train_transform, output_val_transform, losses, scheduler)
 
-    trainer.train_model()
+    try:
+        trainer.train_model()
+    except KeyboardInterrupt:
+        trainer.writer.close()
+        logger.warning(f'Closing TensorBoard writer and flushing remaining outputs due to KeyboardInterrupt.')
 
 
 if __name__ == '__main__':
@@ -147,22 +140,19 @@ if __name__ == '__main__':
         use_gt=True,
 
         # Model specific parameters.
-        train_method='WS2CI',  # Weighted semi-k-space to complex-valued image.
+        train_method='WSemi2CI',  # Weighted semi-k-space to complex-valued image.
         num_groups=16,  # Maybe try 16 now since chans is 64.
-        pool_type='avg',
-        use_residual=False,
+        use_residual=True,  # TODO: Implement ACS residual only scheme soon.
         replace=True,  # This only applies to validation for now. Training does not use replace no matter the setting.
-        use_skip=False,
-        chans=32,
+        chans=64,
+        negative_slope=0.1,
+        interp_mode='bilinear',
 
-        # min_ext_size=1,
-        # max_ext_size=9,
-        # ext_mode='N11N',
         # y_scale=1,
-        weight_type='distance',  # 'distance', 'root_distance', or 'log_distance'.
+        weight_type='log_distance',  # 'distance', 'root_distance', or 'log_distance'.
 
         # TensorBoard related parameters.
-        max_images=4,  # Maximum number of images to save.
+        max_images=8,  # Maximum number of images to save.
         shrink_scale=1,  # Scale to shrink output image size.
 
         # Channel Attention.
@@ -171,20 +161,13 @@ if __name__ == '__main__':
         use_gap=True,
         use_gmp=True,
 
-        # Spatial Attention.
-        use_sa=False,
-        use_cap=True,
-        use_cmp=True,
-        sa_kernel_size=7,
-        sa_dilation=1,
-
         # Learning rate scheduling.
-        lr_red_epochs=[20, 30, 35],
+        lr_red_epochs=[30, 40, 45],
         lr_red_rate=0.1,
 
         # Variables that change frequently.
         use_slice_metrics=True,  # This can significantly increase training time.
-        num_epochs=40,
+        num_epochs=50,
         sample_rate=1,  # Ratio of the dataset to sample and use.
         start_slice=10,
         gpu=1,  # Set to None for CPU mode.

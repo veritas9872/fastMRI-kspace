@@ -53,13 +53,14 @@ class SemiDistanceWeight:
         mid_width = width / 2
 
         x_coords = torch.arange(start=-mid_width + 0.5, end=mid_width + 0.5, step=1, device=device)
+        distance = torch.abs(x_coords)
 
         if self.weight_type == 'distance':
-            weighting_matrix = torch.abs(x_coords)
+            weighting_matrix = distance
         elif self.weight_type == 'root_distance':
-            weighting_matrix = torch.sqrt(torch.abs(x_coords))
+            weighting_matrix = torch.sqrt(distance)
         elif self.weight_type == 'log_distance':
-            weighting_matrix = torch.log1p(torch.abs(x_coords))
+            weighting_matrix = torch.log1p(distance)
         else:
             raise NotImplementedError('Invalid weighting type.')
 

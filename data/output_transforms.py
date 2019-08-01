@@ -243,7 +243,7 @@ class PostProcessWSemiK(nn.Module):
 
     def forward(self, semi_kspace_outputs, targets, extra_params):
         if semi_kspace_outputs.size(0) > 1:
-            raise NotImplementedError('Only one batch at a time for now.')
+            raise NotImplementedError('Only one at a time for now.')
 
         semi_kspace_targets = targets['semi_kspace_targets']
         # For removing width dimension padding. Recall that k-space form has 2 as last dim size.
@@ -276,8 +276,9 @@ class PostProcessWSemiK(nn.Module):
         if semi_kspace_targets.size(1) == 15:
             top = (img_recons.size(-2) - self.resolution) // 2
             left = (img_recons.size(-1) - self.resolution) // 2
-            rss_recon = img_recons[:, :, top:top+self.resolution, left:left+self.resolution]
-            rss_recon = root_sum_of_squares(rss_recon, dim=1).squeeze()
-            recons['rss_recons'] = rss_recon
+            rss_recons = img_recons[:, :, top:top+self.resolution, left:left+self.resolution]
+            rss_recons = root_sum_of_squares(rss_recons, dim=1).squeeze()
+            rss_recons *= extra_params['sk_scales']
+            recons['rss_recons'] = rss_recons
 
-        return recons  # Returning scaled reconstructions. Not rescaled.
+        return recons  # Returning scaled reconstructions. Not rescaled. RSS images are rescaled.

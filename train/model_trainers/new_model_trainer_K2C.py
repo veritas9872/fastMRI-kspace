@@ -11,7 +11,7 @@ from collections import defaultdict
 from utils.run_utils import get_logger
 from utils.train_utils import CheckpointManager, make_grid_triplet, make_k_grid
 from metrics.my_ssim import ssim_loss
-from metrics.custom_losses import psnr_loss, nmse_loss
+from metrics.custom_losses import psnr, nmse
 
 
 class ModelTrainerK2C:
@@ -214,8 +214,8 @@ class ModelTrainerK2C:
 
         max_range = img_targets.max() - img_targets.min()
         slice_ssim = ssim_loss(img_recons, img_targets, max_val=max_range)
-        slice_psnr = psnr_loss(img_recons, img_targets, data_range=max_range)
-        slice_nmse = nmse_loss(img_recons, img_targets)
+        slice_psnr = psnr(img_recons, img_targets, data_range=max_range)
+        slice_nmse = nmse(img_recons, img_targets)
 
         return {'slice_ssim': slice_ssim, 'slice_nmse': slice_nmse, 'slice_psnr': slice_psnr}
 

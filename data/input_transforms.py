@@ -434,14 +434,13 @@ class PreProcessWSK:
             targets = {'semi_kspace_targets': semi_kspace_target, 'kspace_targets': kspace_target,
                        'cmg_targets': cmg_target, 'img_targets': img_target, 'img_inputs': img_input}
 
-            if kspace_target.size(1) == 15:
-                rss_target = target * sk_scaling
-                targets['rss_targets'] = rss_target
+            if kspace_target.size(1) == 15:  # If multi-coil.
+                targets['rss_targets'] = target  # Scaling needed for metric comparison later.
 
             margin = semi_kspace.size(-1) % self.divisor
             if margin > 0:
                 pad = [(self.divisor - margin) // 2, (1 + self.divisor - margin) // 2]
-            else:  # This is a temporary fix to prevent padding by half the divisor when margin=0.
+            else:  # This is a fix to prevent padding by half the divisor when margin=0.
                 pad = [0, 0]
 
             # This pads at the last dimension of a tensor with 0.

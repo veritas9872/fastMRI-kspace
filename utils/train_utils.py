@@ -349,17 +349,19 @@ def make_rss_slice(image, dim=1, resolution=320):
     return rss.to(device='cpu', non_blocking=True)
 
 
+def standardize_image(image):
+    maximum = image.max()
+    minimum = image.min()
+    scale = 1 / (maximum - minimum)
+    return (image - minimum) * scale
+
+
 def make_img_grid(image, shrink_scale):
     if image.size(0) > 1:
         raise NotImplementedError('Batch size is expected to be 1.')
 
     image_grid = image.detach().squeeze()
-
-    maximum = image_grid.max()
-    minimum = image_grid.min()
-    scale = 1 / (maximum - minimum)
-
-    image_grid = (image_grid - minimum) * scale
+    image_grid = standardize_image(image_grid)
 
     if image_grid.size(0) == 15:  # Multi-coil case.
         image_grid = torch.cat(torch.chunk(image_grid.view(-1, image_grid.size(-1)), chunks=5, dim=0), dim=1)
@@ -392,7 +394,7 @@ def make_k_grid(kspace_recons, smoothing_factor=8, shrink_scale=1):
     sf = torch.tensor(smoothing_factor, dtype=torch.float32)
     kspace_grid *= torch.expm1(sf) / kspace_grid.max()
     kspace_grid = torch.log1p(kspace_grid)  # Adds 1 to input for natural log.
-    kspace_grid /= kspace_grid.max()  # Normalization to 0~1 range.
+    kspace_grid /= kspace_grid.max()  # Standardization to 0~1 range.
 
     if kspace_grid.size(0) == 15:
         kspace_grid = torch.cat(torch.chunk(kspace_grid.view(-1, kspace_grid.size(-1)), chunks=5, dim=0), dim=1)

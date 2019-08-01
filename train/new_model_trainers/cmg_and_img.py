@@ -9,10 +9,10 @@ from time import time
 from collections import defaultdict
 
 from utils.run_utils import get_logger
-from utils.train_utils import CheckpointManager, make_k_grid, make_img_grid, make_rss_slice
+from utils.train_utils import CheckpointManager, make_k_grid, make_img_grid, make_rss_slice, standardize_image
 from data.data_transforms import complex_abs
-from metrics.my_ssim1d import SSIM
-from metrics.custom_losses import psnr_loss, nmse_loss
+from metrics.new_1d_ssim import SSIM
+from metrics.custom_losses import psnr, nmse
 
 
 # Send this somewhere else soon...
@@ -93,7 +93,7 @@ class ModelTrainerCI:
         self.use_slice_metrics = args.use_slice_metrics
 
         # This part should get SSIM, not 1 - SSIM.
-        self.ssim_loss = SSIM(win_size=7)  # Needed to cache the kernel.
+        self.ssim = SSIM(filter_size=7).to(device=args.device)  # Needed to cache the kernel.
 
         # Logging all components of the Model Trainer.
         # Train and Val input and output transforms are assumed to use the same input transform class.
@@ -275,8 +275,8 @@ class ModelTrainerCI:
 
             # Adding RSS images of reconstructions and targets.
             if 'rss_recons' in recons:
-                recon_rss = recons['rss_recons']
-                delta_rss = make_rss_slice(delta_image)
+                recon_rss = standardize_image(recons['rss_recons'])
+                delta_rss = standardize_image(make_rss_slice(delta_image))
                 self.writer.add_image(f'{mode} RSS Recons/{step}', recon_rss, epoch, dataformats='HW')
                 self.writer.add_image(f'{mode} RSS Delta/{step}', delta_rss, epoch, dataformats='HW')
 
@@ -299,24 +299,24 @@ class ModelTrainerCI:
                 self.writer.add_image(f'{mode} Inputs as Images/{step}', img_grid, epoch, dataformats='HW')
 
                 if 'rss_targets' in targets:
-                    target_rss = targets['rss_targets']
+                    target_rss = standardize_image(targets['rss_targets'])
                     self.writer.add_image(f'{mode} RSS Targets/{step}', target_rss, epoch, dataformats='HW')
 
                 if 'semi_kspace_targets' in targets:
-                    semi_kspace_target_grid = make_k_grid(
-                        targets['semi_kspace_targets'], self.smoothing_factor, self.shrink_scale)
+                    semi_kspace_target_grid = make_k_grid(targets['semi_kspace_targets'],
+                                                          self.smoothing_factor, self.shrink_scale)
 
-                    self.writer.add_image(
-                        f'{mode} semi-k-space Targets/{step}', semi_kspace_target_grid, epoch, dataformats='HW')
+                    self.writer.add_image(f'{mode} semi-k-space Targets/{step}',
+                                          semi_kspace_target_grid, epoch, dataformats='HW')
 
     def _get_slice_metrics(self, recons, targets, extra_params):
         img_recons = recons['img_recons'].detach()  # Just in case.
         img_targets = targets['img_targets'].detach()
         max_range = img_targets.max() - img_targets.min()
 
-        slice_ssim = self.ssim_loss(img_recons, img_targets)
-        slice_psnr = psnr_loss(img_recons, img_targets, data_range=max_range)
-        slice_nmse = nmse_loss(img_recons, img_targets)
+        slice_ssim = self.ssim(img_recons, img_targets)
+        slice_psnr = psnr(img_recons, img_targets, data_range=max_range)
+        slice_nmse = nmse(img_recons, img_targets)
 
         slice_metrics = {
             'slice/ssim': slice_ssim,
@@ -329,9 +329,9 @@ class ModelTrainerCI:
             rss_targets = targets['rss_targets'].detach()
             max_range = rss_targets.max() - rss_targets.min()
 
-            rss_ssim = self.ssim_loss(rss_recons, rss_targets)
-            rss_psnr = psnr_loss(rss_recons, rss_targets, data_range=max_range)
-            rss_nmse = nmse_loss(rss_recons, rss_targets)
+            rss_ssim = self.ssim(rss_recons, rss_targets)
+            rss_psnr = psnr(rss_recons, rss_targets, data_range=max_range)
+            rss_nmse = nmse(rss_recons, rss_targets)
 
             slice_metrics['rss/ssim'] = rss_ssim
             slice_metrics['rss/psnr'] = rss_psnr
@@ -399,7 +399,11 @@ class ModelTrainerCI:
 
         for key, value in epoch_metrics.items():
             self.logger.info(f'Epoch {epoch:03d} {mode}. {key}: {value:.4e}')
-            self.writer.add_scalar(f'{mode}/epoch_{key}', scalar_value=value, global_step=epoch)
+            # Very important whether it is mode_~~ or mode/~~.
+            if 'loss' in key:
+                self.writer.add_scalar(f'{mode}/epoch_{key}', scalar_value=value, global_step=epoch)
+            else:
+                self.writer.add_scalar(f'{mode}_epoch_{key}', scalar_value=value, global_step=epoch)
 
         if not training:  # Record learning rate.
             for idx, group in enumerate(self.optimizer.param_groups, start=1):
