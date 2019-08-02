@@ -1,5 +1,6 @@
 import torch
 from torch import nn
+import numpy as np
 
 from data.data_transforms import nchw_to_kspace, ifft2, complex_abs, ifft1, fft1, root_sum_of_squares
 
@@ -282,3 +283,13 @@ class PostProcessWSemiK(nn.Module):
             recons['rss_recons'] = rss_recons
 
         return recons  # Returning scaled reconstructions. Not rescaled. RSS images are rescaled.
+
+
+def find_acs_mask(kspace_recons: torch.Tensor, num_low_freqs: int):
+    assert kspace_recons.dim() == 5, 'Reconstructed tensor in k-space format is expected.'
+    num_cols = kspace_recons.size(-2)
+    pad = (num_cols - num_low_freqs + 1) // 2
+    mask = np.zeros(num_cols, dtype=bool)
+    mask[pad:pad+num_low_freqs] = True
+    mask = torch.from_numpy(mask.astype(np.float32)).view(1, 1, 1, -1, 1)
+    return mask

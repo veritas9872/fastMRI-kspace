@@ -135,7 +135,7 @@ class UniformMaskFunc:
         mask_shape[ds_axis] = num_cols
         mask = torch.from_numpy(mask.reshape(*mask_shape).astype(np.float32))
 
-        info = {'acceleration': acceleration, 'center_fraction': center_fraction, 'num_low_freqs': num_low_freqs}
+        info = {'acceleration': acceleration, 'center_fraction': center_fraction, 'num_low_frequency': num_low_freqs}
 
         return mask, info
 
@@ -210,7 +210,7 @@ class RandomMaskFunc:
         mask = torch.from_numpy(mask.reshape(*mask_shape).astype(np.float32))
 
         info = {'acceleration': acceleration, 'center_fraction': center_fraction,
-                'num_low_freqs': num_low_freqs, 'prob': prob, }
+                'num_low_frequency': num_low_freqs, 'prob': prob, }
 
         return mask, info
 

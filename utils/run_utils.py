@@ -60,6 +60,7 @@ def get_logger(name, save_file=None):
 
     logger = logging.getLogger(name)
     logger.setLevel(logging.INFO)
+    logger.propagate = False
 
     # Remove previous handlers. Useful when logger is being redefined in the same run.
     for handler in logger.handlers:
