@@ -181,11 +181,12 @@ class WeightedReplacePostProcessSemiK(nn.Module):
 
 
 class PostProcessWK(nn.Module):
-    def __init__(self, weighted=True, replace=True, resolution=320):
+    def __init__(self, weighted=True, replace=True, residual_acs=False, resolution=320):
         super().__init__()
         self.weighted = weighted
         self.replace = replace
         self.resolution = resolution
+        self.residual_acs = residual_acs
 
     def forward(self, kspace_outputs, targets, extra_params):
         if kspace_outputs.size(0) > 1:
@@ -208,6 +209,11 @@ class PostProcessWK(nn.Module):
             weighting = extra_params['weightings']
             kspace_recons = kspace_recons / weighting
 
+        if self.residual_acs:
+            num_low_freqs = extra_params['num_low_frequency']
+            acs_mask = find_acs_mask(kspace_recons, num_low_freqs)
+            kspace_recons = kspace_recons + acs_mask * kspace_targets
+
         if self.replace:  # Replace with original k-space if replace=True
             mask = extra_params['masks']
             kspace_recons = kspace_recons * (1 - mask) + kspace_targets * mask
@@ -227,11 +233,12 @@ class PostProcessWK(nn.Module):
 
 
 class PostProcessWSemiK(nn.Module):
-    def __init__(self, weighted=True, replace=True, direction='height', resolution=320):
+    def __init__(self, weighted=True, replace=True, residual_acs=False, direction='height', resolution=320):
         super().__init__()
         self.weighted = weighted
         self.replace = replace
         self.resolution = resolution
+        self.residual_acs = residual_acs
 
         if direction == 'height':
             self.recon_direction = 'width'
@@ -262,6 +269,11 @@ class PostProcessWSemiK(nn.Module):
         if self.weighted:
             weighting = extra_params['weightings']
             semi_kspace_recons = semi_kspace_recons / weighting
+
+        if self.residual_acs:
+            num_low_freqs = extra_params['num_low_frequency']
+            acs_mask = find_acs_mask(semi_kspace_recons, num_low_freqs)
+            semi_kspace_recons = semi_kspace_recons + acs_mask * semi_kspace_targets
 
         if self.replace:
             mask = extra_params['masks']
