@@ -13,8 +13,6 @@ from data.output_transforms import PostProcessWK, PostProcessWSemiK
 from train.new_model_trainers.cmg_and_img import ModelTrainerCI
 from data.weighting import TiltedDistanceWeight, SemiDistanceWeight
 from models.att_unet import UNet
-from models.res_skip_unet import UNetModel
-from models.ksse_att_unet import UNetModelKSSE
 
 
 def train_cmg_and_img(args):
@@ -144,7 +142,7 @@ if __name__ == '__main__':
         num_groups=16,  # Maybe try 16 now since chans is 64.
         use_residual=True,  # TODO: Implement ACS residual only scheme soon.
         replace=True,  # This only applies to validation for now. Training does not use replace no matter the setting.
-        chans=64,
+        chans=32,
         negative_slope=0.1,
         interp_mode='bilinear',
 
@@ -157,7 +155,7 @@ if __name__ == '__main__':
 
         # Channel Attention.
         use_ca=True,
-        reduction=16,
+        reduction=8,
         use_gap=True,
         use_gmp=True,
 

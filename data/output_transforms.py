@@ -278,7 +278,7 @@ class PostProcessWSemiK(nn.Module):
             left = (img_recons.size(-1) - self.resolution) // 2
             rss_recons = img_recons[:, :, top:top+self.resolution, left:left+self.resolution]
             rss_recons = root_sum_of_squares(rss_recons, dim=1).squeeze()
-            rss_recons *= extra_params['sk_scales']
+            rss_recons *= extra_params['sk_scales']  # This value was divided in the inputs. It is thus multiplied here.
             recons['rss_recons'] = rss_recons
 
         return recons  # Returning scaled reconstructions. Not rescaled. RSS images are rescaled.
