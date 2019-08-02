@@ -72,8 +72,8 @@ def train_cmg_and_img(args):
         input_val_transform = PreProcessWSK(mask_func, weight_func, args.challenge, device,
                                             use_seed=True, divisor=divisor)
 
-        output_train_transform = PostProcessWSemiK(weighted=True, replace=False)  # Maybe change this later.
-        output_val_transform = PostProcessWSemiK(weighted=True, replace=args.replace)
+        output_train_transform = PostProcessWSemiK(weighted=True, replace=False, residual_acs=args.residual_acs)
+        output_val_transform = PostProcessWSemiK(weighted=True, replace=args.replace, residual_acs=args.residual_acs)
 
     elif args.train_method == 'WK2CI':  # k-space learning.
         weight_func = TiltedDistanceWeight(weight_type=args.weight_type, y_scale=args.y_scale)
@@ -82,8 +82,8 @@ def train_cmg_and_img(args):
         input_val_transform = PreProcessWK(mask_func, weight_func, args.challenge, device,
                                            use_seed=True, divisor=divisor)
 
-        output_train_transform = PostProcessWK(weighted=True, replace=False)  # Maybe change this later.
-        output_val_transform = PostProcessWK(weighted=True, replace=args.replace)
+        output_train_transform = PostProcessWK(weighted=True, replace=False, residual_acs=args.residual_acs)
+        output_val_transform = PostProcessWK(weighted=True, replace=args.replace, residual_acs=args.residual_acs)
     else:
         raise NotImplementedError('Invalid train method!')
 
@@ -140,8 +140,9 @@ if __name__ == '__main__':
         # Model specific parameters.
         train_method='WSemi2CI',  # Weighted semi-k-space to complex-valued image.
         num_groups=16,  # Maybe try 16 now since chans is 64.
-        use_residual=True,  # TODO: Implement ACS residual only scheme soon.
-        replace=True,  # This only applies to validation for now. Training does not use replace no matter the setting.
+        use_residual=False,
+        residual_acs=True,
+        replace=False,  # This only applies to validation for now. Training does not use replace no matter the setting.
         chans=32,
         negative_slope=0.1,
         interp_mode='bilinear',

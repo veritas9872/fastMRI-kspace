@@ -303,5 +303,5 @@ def find_acs_mask(kspace_recons: torch.Tensor, num_low_freqs: int):
     pad = (num_cols - num_low_freqs + 1) // 2
     mask = np.zeros(num_cols, dtype=bool)
     mask[pad:pad+num_low_freqs] = True
-    mask = torch.from_numpy(mask.astype(np.float32)).view(1, 1, 1, -1, 1)
+    mask = torch.from_numpy(mask).to(dtype=kspace_recons.dtype, device=kspace_recons.device).view(1, 1, 1, -1, 1)
     return mask
