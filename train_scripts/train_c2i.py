@@ -11,7 +11,7 @@ from data.input_transforms import PreProcessCMG
 from data.output_transforms import PostProcessCMG
 
 from train.new_model_trainers.img_only import ModelTrainerIMG
-from models.att_unet import UNet
+from models.deep_unet import UNet
 from metrics.new_1d_ssim import SSIMLoss
 
 
@@ -65,10 +65,10 @@ def train_cmg_to_img(args):
     else:
         mask_func = UniformMaskFunc(args.center_fractions, args.accelerations)
 
-    input_train_transform = PreProcessCMG(
-        mask_func, args.challenge, device, augment_data=args.augment_data, use_seed=False, divisor=divisor)
-    input_val_transform = PreProcessCMG(
-        mask_func, args.challenge, device, augment_data=False, use_seed=True, divisor=divisor)
+    input_train_transform = PreProcessCMG(mask_func, args.challenge, device, augment_data=args.augment_data,
+                                          use_seed=False, center_crop=args.center_crop, divisor=divisor)
+    input_val_transform = PreProcessCMG(mask_func, args.challenge, device, augment_data=False, use_seed=True,
+                                        center_crop=args.center_crop, divisor=divisor)
 
     output_train_transform = PostProcessCMG()
     output_val_transform = PostProcessCMG()
@@ -77,16 +77,17 @@ def train_cmg_to_img(args):
     train_loader, val_loader = create_prefetch_data_loaders(args)
 
     losses = dict(
-        # img_loss=SSIMLoss(filter_size=7)
+        # img_loss=SSIMLoss(filter_size=7).to(device=device)
         img_loss=nn.L1Loss()
     )
 
     data_chans = 2 if args.challenge == 'singlecoil' else 30  # Multicoil has 15 coils with 2 for real/imag
 
-    model = UNet(in_chans=data_chans, out_chans=data_chans, chans=args.chans, num_pool_layers=args.num_pool_layers,
-                 num_groups=args.num_groups, negative_slope=args.negative_slope, use_residual=args.use_residual,
-                 interp_mode=args.interp_mode, use_ca=args.use_ca, reduction=args.reduction,
-                 use_gap=args.use_gap, use_gmp=args.use_gmp).to(device)
+    model = UNet(
+        in_chans=data_chans, out_chans=data_chans, chans=args.chans, num_pool_layers=args.num_pool_layers,
+        num_depth_blocks=args.num_depth_blocks, num_groups=args.num_groups, negative_slope=args.negative_slope,
+        use_residual=args.use_residual, interp_mode=args.interp_mode, use_ca=args.use_ca, reduction=args.reduction,
+        use_gap=args.use_gap, use_gmp=args.use_gmp).to(device)
 
     optimizer = optim.Adam(model.parameters(), lr=args.init_lr)
     scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.lr_red_epochs, gamma=args.lr_red_rate)
@@ -123,11 +124,13 @@ if __name__ == '__main__':
         verbose=False,
         use_gt=True,
         augment_data=True,
+        center_crop=True,
 
         # Model specific parameters.
         train_method='C2I',  # Weighted semi-k-space to complex-valued image.
         num_groups=16,  # Maybe try 16 now since chans is 64.
         chans=32,
+        num_depth_blocks=3,
         negative_slope=0.1,
         interp_mode='bilinear',
         use_residual=True,
@@ -139,8 +142,8 @@ if __name__ == '__main__':
         # Channel Attention.
         use_ca=True,
         reduction=8,
-        use_gap=False,
-        use_gmp=True,
+        use_gap=True,
+        use_gmp=False,
 
         # Learning rate scheduling.
         lr_red_epochs=[80, 90, 95],
@@ -150,9 +153,9 @@ if __name__ == '__main__':
         use_slice_metrics=True,
         num_epochs=100,
         sample_rate=1,  # Ratio of the dataset to sample and use.
-        start_slice=0,
+        start_slice=10,
         gpu=1,  # Set to None for CPU mode.
-        num_workers=2,
+        num_workers=3,
         init_lr=2E-2,
         max_to_keep=1,
         # prev_model_ckpt='',

@@ -49,7 +49,7 @@ class UNet(nn.Module):
         self.out_chans = out_chans
         self.chans = chans
         self.num_pool_layers = num_pool_layers
-        self.num_depth_blocks = num_depth_blocks
+        self.num_depth_blocks = num_depth_blocks  # This must be a positive integer.
         self.use_residual = use_residual
         kwargs = dict(num_groups=num_groups, negative_slope=negative_slope,
                       use_ca=use_ca, reduction=reduction, use_gap=use_gap, use_gmp=use_gmp)
@@ -67,9 +67,10 @@ class UNet(nn.Module):
             ch *= 2
 
         # Size reduction happens at the beginning of a block, hence the need for stride here.
+        self.mid_conv = ConvBlock(in_chans=ch, out_chans=ch, stride=2, **kwargs)
         self.middle_layers = nn.ModuleList()
-        for _ in range(num_depth_blocks):
-            self.middle_layers.append(ConvBlock(in_chans=ch, out_chans=ch, stride=2, **kwargs))
+        for _ in range(num_depth_blocks - 1):
+            self.middle_layers.append(ConvBlock(in_chans=ch, out_chans=ch, stride=1, **kwargs))
 
         self.up_sample_layers = nn.ModuleList()
         for _ in range(num_pool_layers - 1):
@@ -97,8 +98,9 @@ class UNet(nn.Module):
             stack.append(output)
 
         # Middle blocks
+        output = self.mid_conv(output)
         for layer in self.middle_layers:
-            output = output + layer(layer)  # Residual layers in the middle.
+            output = output + layer(output)  # Residual layers in the middle.
 
         # Up-Sampling.
         for layer in self.up_sample_layers:
