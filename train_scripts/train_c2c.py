@@ -7,15 +7,14 @@ from utils.run_utils import initialize, save_dict_as_json, get_logger, create_ar
 from utils.data_loaders import create_prefetch_data_loaders
 
 from train.subsample import RandomMaskFunc, UniformMaskFunc
-from data.input_transforms import Prefetch2Device, PreProcessWK, PreProcessWSK
-from data.output_transforms import PostProcessWK, PostProcessWSemiK
+from data.input_transforms import PreProcessCMG
+from data.output_transforms import PostProcessCMG
 
-from train.new_model_trainers.cmg_and_img import ModelTrainerCI
-from data.weighting import TiltedDistanceWeight, SemiDistanceWeight
+from train.new_model_trainers.cmg_only import ModelTrainerCMG
 from models.att_unet import UNet
 
 
-def train_cmg_and_img(args):
+def train_cmg_to_cmg(args):
     # Creating checkpoint and logging directories, as well as the run name.
     ckpt_path = Path(args.ckpt_root)
     ckpt_path.mkdir(exist_ok=True)
@@ -64,35 +63,20 @@ def train_cmg_and_img(args):
         mask_func = RandomMaskFunc(args.center_fractions, args.accelerations)
     else:
         mask_func = UniformMaskFunc(args.center_fractions, args.accelerations)
-
-    if args.train_method == 'WSemi2CI':  # Semi-k-space learning.
-        weight_func = SemiDistanceWeight(weight_type=args.weight_type)
-        input_train_transform = PreProcessWSK(mask_func, weight_func, args.challenge, device,
-                                              use_seed=False, divisor=divisor)
-        input_val_transform = PreProcessWSK(mask_func, weight_func, args.challenge, device,
-                                            use_seed=True, divisor=divisor)
-
-        output_train_transform = PostProcessWSemiK(weighted=True, replace=False, residual_acs=args.residual_acs)
-        output_val_transform = PostProcessWSemiK(weighted=True, replace=args.replace, residual_acs=args.residual_acs)
-
-    elif args.train_method == 'WK2CI':  # k-space learning.
-        weight_func = TiltedDistanceWeight(weight_type=args.weight_type, y_scale=args.y_scale)
-        input_train_transform = PreProcessWK(mask_func, weight_func, args.challenge, device,
-                                             use_seed=False, divisor=divisor)
-        input_val_transform = PreProcessWK(mask_func, weight_func, args.challenge, device,
-                                           use_seed=True, divisor=divisor)
-
-        output_train_transform = PostProcessWK(weighted=True, replace=False, residual_acs=args.residual_acs)
-        output_val_transform = PostProcessWK(weighted=True, replace=args.replace, residual_acs=args.residual_acs)
-    else:
-        raise NotImplementedError('Invalid train method!')
+    
+    input_train_transform = PreProcessCMG(
+        mask_func, args.challenge, device, augment_data=args.augment_data, use_seed=False, divisor=divisor)
+    input_val_transform = PreProcessCMG(
+        mask_func, args.challenge, device, augment_data=False, use_seed=True, divisor=divisor)
+    
+    output_train_transform = PostProcessCMG()
+    output_val_transform = PostProcessCMG()
 
     # DataLoaders
     train_loader, val_loader = create_prefetch_data_loaders(args)
 
     losses = dict(
-        cmg_loss=nn.MSELoss(reduction='mean'),
-        img_loss=nn.L1Loss(reduction='mean')  # Change to SSIM later.
+        cmg_loss=nn.MSELoss(reduction='mean')
     )
 
     data_chans = 2 if args.challenge == 'singlecoil' else 30  # Multicoil has 15 coils with 2 for real/imag
@@ -105,8 +89,8 @@ def train_cmg_and_img(args):
     optimizer = optim.Adam(model.parameters(), lr=args.init_lr)
     scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.lr_red_epochs, gamma=args.lr_red_rate)
 
-    trainer = ModelTrainerCI(args, model, optimizer, train_loader, val_loader, input_train_transform,
-                             input_val_transform, output_train_transform, output_val_transform, losses, scheduler)
+    trainer = ModelTrainerCMG(args, model, optimizer, train_loader, val_loader, input_train_transform,
+                              input_val_transform, output_train_transform, output_val_transform, losses, scheduler)
 
     try:
         trainer.train_model()
@@ -136,19 +120,15 @@ if __name__ == '__main__':
         num_pool_layers=4,
         verbose=False,
         use_gt=True,
+        augment_data=True,
 
         # Model specific parameters.
-        train_method='WSemi2CI',  # Weighted semi-k-space to complex-valued image.
+        train_method='C2C',  # Weighted semi-k-space to complex-valued image.
         num_groups=16,  # Maybe try 16 now since chans is 64.
-        use_residual=False,
-        residual_acs=True,
-        replace=False,  # This only applies to validation for now. Training does not use replace no matter the setting.
         chans=32,
         negative_slope=0.1,
         interp_mode='bilinear',
-
-        # y_scale=1,
-        weight_type='log_distance',  # 'distance', 'root_distance', or 'log_distance'.
+        use_residual=True,
 
         # TensorBoard related parameters.
         max_images=8,  # Maximum number of images to save.
@@ -161,20 +141,19 @@ if __name__ == '__main__':
         use_gmp=True,
 
         # Learning rate scheduling.
-        lr_red_epochs=[30, 40, 45],
+        lr_red_epochs=[80, 90, 95],
         lr_red_rate=0.1,
 
         # Variables that change frequently.
-        use_slice_metrics=True,  # This can significantly increase training time.
-        num_epochs=50,
+        use_slice_metrics=True,
+        num_epochs=100,
         sample_rate=1,  # Ratio of the dataset to sample and use.
-        start_slice=10,
+        start_slice=0,
         gpu=1,  # Set to None for CPU mode.
         num_workers=2,
         init_lr=2E-2,
         max_to_keep=1,
-        img_lambda=1,  # This parameter needs serious tuning.
         # prev_model_ckpt='',
     )
-    options = create_arg_parser(**settings).parse_args()
-    train_cmg_and_img(options)
+    arguments = create_arg_parser(**settings).parse_args()
+    train_cmg_to_cmg(arguments)

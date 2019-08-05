@@ -2,7 +2,7 @@ import torch
 from torch import nn
 import numpy as np
 
-from data.data_transforms import nchw_to_kspace, ifft2, complex_abs, ifft1, fft1, root_sum_of_squares
+from data.data_transforms import nchw_to_kspace, ifft2, fft2, complex_abs, ifft1, fft1, root_sum_of_squares
 
 
 # class OutputReplaceTransformK(nn.Module):
@@ -305,3 +305,41 @@ def find_acs_mask(kspace_recons: torch.Tensor, num_low_freqs: int):
     mask[pad:pad+num_low_freqs] = True
     mask = torch.from_numpy(mask).to(dtype=kspace_recons.dtype, device=kspace_recons.device).view(1, 1, 1, -1, 1)
     return mask
+
+
+class PostProcessCMG(nn.Module):
+
+    def __init__(self, resolution=320):
+        super().__init__()
+        self.resolution = resolution
+
+    def forward(self, cmg_output, targets, extra_params):
+        if cmg_output.size(0) > 1:
+            raise NotImplementedError('Only one at a time for now.')
+
+        cmg_target = targets['cmg_targets']
+        # For removing width dimension padding. Recall that complex number form has 2 as last dim size.
+        left = (cmg_output.size(-1) - cmg_target.size(-2)) // 2
+        right = left + cmg_target.size(-2)
+
+        # Cropping width dimension by pad.
+        cmg_recon = nchw_to_kspace(cmg_output[..., left:right])
+
+        assert cmg_recon.shape == cmg_target.shape, 'Reconstruction and target sizes are different.'
+        assert (cmg_recon.size(-3) % 2 == 0) and (cmg_recon.size(-2) % 2 == 0), \
+            'Not impossible but not expected to have sides with odd lengths.'
+
+        kspace_recon = fft2(cmg_recon)
+        img_recon = complex_abs(cmg_recon)
+
+        recons = {'kspace_recons': kspace_recon, 'cmg_recons': cmg_recon, 'img_recons': img_recon}
+
+        if cmg_target.size(1) == 15:
+            top = (img_recon.size(-2) - self.resolution) // 2
+            left = (img_recon.size(-1) - self.resolution) // 2
+            rss_recon = img_recon[:, :, top:top+self.resolution, left:left+self.resolution]
+            rss_recon = root_sum_of_squares(rss_recon, dim=1).squeeze()
+            rss_recon *= extra_params['cmg_scales']
+            recons['rss_recons'] = rss_recon
+
+        return recons  # recons are not rescaled except rss_recons.

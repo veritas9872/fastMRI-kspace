@@ -119,6 +119,8 @@ def ssim(input, target, max_val=None, filter_size=11, sigma=1.5, kernel=None, re
         ssim_val = ssim_val.mean()
     elif reduction == 'sum':
         ssim_val = ssim_val.sum()
+    elif reduction == 'none':
+        pass
     else:
         raise NotImplementedError(f'Invalid reduction method `{reduction}`.')
 
@@ -185,6 +187,8 @@ def ms_ssim(input, target, filter_size=11, sigma=1.5, kernel=None, max_val=None,
         ms_ssim_val = ms_ssim_val.mean()
     elif reduction == 'sum':
         ms_ssim_val = ms_ssim_val.sum()
+    elif reduction == 'none':
+        pass
     else:
         raise NotImplementedError(f'Invalid reduction method `{reduction}`.')
     return ms_ssim_val
@@ -221,6 +225,8 @@ class MSSSIM(nn.Module):
 
         super().__init__()
         self.register_buffer('kernel', _fspecial_gauss_1d(filter_size, sigma))
+        if weights is None:
+            weights = [0.0448, 0.2856, 0.3001, 0.2363, 0.1333]
         self.register_buffer('weights', torch.tensor(weights))
         self.max_val = max_val
         self.reduction = reduction
