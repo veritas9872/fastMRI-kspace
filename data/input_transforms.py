@@ -3,7 +3,8 @@ import torch.nn.functional as F
 
 import numpy as np
 
-from data.data_transforms import to_tensor, ifft2, fft2, complex_abs, apply_info_mask, kspace_to_nchw, ifft1
+from data.data_transforms import to_tensor, ifft2, fft2, complex_abs, apply_info_mask, kspace_to_nchw, ifft1, \
+    complex_center_crop
 
 
 # class InputTransformK:
@@ -543,7 +544,8 @@ class PreProcessCMG:
     k-space is not flipped when the complex image is flipped.
     Also
     """
-    def __init__(self, mask_func, challenge, device, augment_data=False, use_seed=True, divisor=1):
+    def __init__(self, mask_func, challenge, device, augment_data=False,
+                 use_seed=True, center_crop=True, resolution=320, divisor=1):
         assert callable(mask_func), '`mask_func` must be a callable function.'
         if challenge not in ('singlecoil', 'multicoil'):
             raise ValueError(f'Challenge should either be "singlecoil" or "multicoil"')
@@ -553,6 +555,8 @@ class PreProcessCMG:
         self.device = device
         self.augment_data = augment_data
         self.use_seed = use_seed
+        self.center_crop = center_crop
+        self.resolution = resolution  # Only has effect when center_crop is True.
         self.divisor = divisor
 
     def __call__(self, kspace_target, target, attrs, file_name, slice_num):
@@ -574,6 +578,10 @@ class PreProcessCMG:
 
             # Complex image made from down-sampled k-space.
             complex_image = ifft2(masked_kspace)
+
+            if self.center_crop:
+                complex_image = complex_center_crop(complex_image, shape=(self.resolution, self.resolution))
+
             cmg_scale = torch.std(complex_image)
             complex_image /= cmg_scale
 
