@@ -540,9 +540,7 @@ class PreProcessWSK:
 
 class PreProcessCMG:
     """
-    Warning about data augmentation.
-    k-space is not flipped when the complex image is flipped.
-    Also
+    Please note that center cropping does not crop k-space targets. This is a known bug.
     """
     def __init__(self, mask_func, challenge, device, augment_data=False,
                  use_seed=True, center_crop=True, resolution=320, divisor=1):
@@ -592,6 +590,9 @@ class PreProcessCMG:
             # Recall that the Fourier transform is a linear transform.
             kspace_target /= cmg_scale
             cmg_target = ifft2(kspace_target)
+
+            if self.center_crop:
+                cmg_target = complex_center_crop(cmg_target, shape=(self.resolution, self.resolution))
 
             # Data augmentation by flipping images up-down and left-right.
             if self.augment_data:

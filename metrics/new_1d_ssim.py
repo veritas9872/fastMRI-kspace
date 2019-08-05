@@ -273,3 +273,24 @@ class MSSSIMLoss(nn.Module):
 
     def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         return self.one - ms_ssim(input, target, kernel=self.kernel, max_val=self.max_val, weights=self.weights)
+
+
+class LogSSIMLoss(nn.Module):
+    r""" Implementation of ln(1 - SSIM) loss function. Includes epsilon value for identical images.
+    Args:
+        filter_size: (int, optional): the size of gauss kernel
+        sigma: (float, optional): sigma of normal distribution
+        max_val (float or int, optional): value range of input images. (usually 1.0 or 255)
+    """
+
+    def __init__(self, filter_size=11, sigma=1.5, max_val=None, epsilon=0., reduction='mean'):
+        super().__init__()
+        self.register_buffer('kernel', _fspecial_gauss_1d(filter_size, sigma))
+        self.max_val = max_val
+        self.reduction = reduction
+        self.register_buffer('epsilon', torch.tensor(epsilon, dtype=torch.float32))
+
+    def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        # Implement ln(1 - SSIM) loss function.
+        return torch.log1p(
+            self.epsilon - ssim(input, target, max_val=self.max_val, kernel=self.kernel, reduction=self.reduction))

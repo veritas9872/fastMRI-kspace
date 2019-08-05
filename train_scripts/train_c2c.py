@@ -64,10 +64,10 @@ def train_cmg_to_cmg(args):
     else:
         mask_func = UniformMaskFunc(args.center_fractions, args.accelerations)
     
-    input_train_transform = PreProcessCMG(
-        mask_func, args.challenge, device, augment_data=args.augment_data, use_seed=False, divisor=divisor)
-    input_val_transform = PreProcessCMG(
-        mask_func, args.challenge, device, augment_data=False, use_seed=True, divisor=divisor)
+    input_train_transform = PreProcessCMG(mask_func, args.challenge, device, augment_data=args.augment_data,
+                                          use_seed=False, center_crop=args.center_crop, divisor=divisor)
+    input_val_transform = PreProcessCMG(mask_func, args.challenge, device, augment_data=False, use_seed=True,
+                                        center_crop=args.center_crop, divisor=divisor)
     
     output_train_transform = PostProcessCMG()
     output_val_transform = PostProcessCMG()
@@ -121,6 +121,7 @@ if __name__ == '__main__':
         verbose=False,
         use_gt=True,
         augment_data=True,
+        center_crop=True,
 
         # Model specific parameters.
         train_method='C2C',  # Weighted semi-k-space to complex-valued image.
@@ -137,7 +138,7 @@ if __name__ == '__main__':
         # Channel Attention.
         use_ca=True,
         reduction=8,
-        use_gap=True,
+        use_gap=False,
         use_gmp=True,
 
         # Learning rate scheduling.
@@ -148,10 +149,10 @@ if __name__ == '__main__':
         use_slice_metrics=True,
         num_epochs=100,
         sample_rate=1,  # Ratio of the dataset to sample and use.
-        start_slice=0,
-        gpu=1,  # Set to None for CPU mode.
-        num_workers=2,
-        init_lr=2E-2,
+        start_slice=10,
+        gpu=0,  # Set to None for CPU mode.
+        num_workers=4,
+        init_lr=2E-3,
         max_to_keep=1,
         # prev_model_ckpt='',
     )
