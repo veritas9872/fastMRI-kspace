@@ -36,9 +36,15 @@ class Interpolate(nn.Module):
         super().__init__()
         self.scale_factor = scale_factor
         self.mode = mode
+        if mode in ('linear', 'bilinear', 'trilinear'):
+            self.align_corners = False
+        elif mode == 'bicubic':
+            self.align_corners = True
+        else:
+            self.align_corners = None
 
     def forward(self, tensor):
-        return F.interpolate(tensor, scale_factor=self.scale_factor, mode=self.mode, align_corners=False)
+        return F.interpolate(tensor, scale_factor=self.scale_factor, mode=self.mode, align_corners=self.align_corners)
 
 
 class UNet(nn.Module):

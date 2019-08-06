@@ -2,7 +2,7 @@ import torch
 from torch import nn
 import numpy as np
 
-from data.data_transforms import nchw_to_kspace, ifft2, fft2, complex_abs, ifft1, fft1, root_sum_of_squares
+from data.data_transforms import nchw_to_kspace, ifft2, fft2, complex_abs, ifft1, fft1, root_sum_of_squares, center_crop
 
 
 # class OutputReplaceTransformK(nn.Module):
@@ -340,6 +340,38 @@ class PostProcessCMG(nn.Module):
             rss_recon = img_recon[:, :, top:top+self.resolution, left:left+self.resolution]
             rss_recon = root_sum_of_squares(rss_recon, dim=1).squeeze()
             rss_recon *= extra_params['cmg_scales']
+            recons['rss_recons'] = rss_recon
+
+        return recons  # recons are not rescaled except rss_recons.
+
+
+class PostProcessIMG(nn.Module):
+    def __init__(self, resolution=320):
+        super().__init__()
+        self.resolution = resolution
+
+    def forward(self, img_output, targets, extra_params):
+        if img_output.size(0) > 1:
+            raise NotImplementedError('Only one at a time for now.')
+
+        img_target = targets['img_targets']
+        # For removing width dimension padding. Recall that complex number form has 2 as last dim size.
+        left = (img_output.size(-1) - img_target.size(-1)) // 2
+        right = left + img_target.size(-1)
+
+        # Cropping width dimension by pad.
+        img_recon = img_output[..., left:right]
+
+        assert img_recon.shape == img_target.shape, 'Reconstruction and target sizes are different.'
+        assert (img_recon.size(-2) % 2 == 0) and (img_recon.size(-1) % 2 == 0), \
+            'Not impossible but not expected to have sides with odd lengths.'
+
+        recons = {'img_recons': img_recon}
+
+        if img_target.size(1) == 15:
+            rss_recon = center_crop(img_recon, (self.resolution, self.resolution))
+            rss_recon = root_sum_of_squares(rss_recon, dim=1).squeeze()
+            rss_recon *= extra_params['img_scales']
             recons['rss_recons'] = rss_recon
 
         return recons  # recons are not rescaled except rss_recons.

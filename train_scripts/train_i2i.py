@@ -7,16 +7,16 @@ from utils.run_utils import initialize, save_dict_as_json, get_logger, create_ar
 from utils.data_loaders import create_prefetch_data_loaders
 
 from train.subsample import RandomMaskFunc, UniformMaskFunc
-from data.input_transforms import PreProcessCMG
-from data.output_transforms import PostProcessCMG
+from data.input_transforms import PreProcessIMG
+from data.output_transforms import PostProcessIMG
 
-from train.new_model_trainers.img_only import ModelTrainerIMG
+from train.new_model_trainers.img_to_img import ModelTrainerI2I
 from models.att_unet import UNet
 from models.simple_unet import UnetModel
 from metrics.new_1d_ssim import SSIMLoss
 
 
-def train_cmg_to_img(args):
+def train_img_to_img(args):
     # Creating checkpoint and logging directories, as well as the run name.
     ckpt_path = Path(args.ckpt_root)
     ckpt_path.mkdir(exist_ok=True)
@@ -66,13 +66,13 @@ def train_cmg_to_img(args):
     else:
         mask_func = UniformMaskFunc(args.center_fractions, args.accelerations)
 
-    input_train_transform = PreProcessCMG(mask_func, args.challenge, device, augment_data=args.augment_data,
+    input_train_transform = PreProcessIMG(mask_func, args.challenge, device, augment_data=args.augment_data,
                                           use_seed=False, center_crop=args.center_crop, divisor=divisor)
-    input_val_transform = PreProcessCMG(mask_func, args.challenge, device, augment_data=False, use_seed=True,
+    input_val_transform = PreProcessIMG(mask_func, args.challenge, device, augment_data=False, use_seed=True,
                                         center_crop=args.center_crop, divisor=divisor)
 
-    output_train_transform = PostProcessCMG()
-    output_val_transform = PostProcessCMG()
+    output_train_transform = PostProcessIMG()
+    output_val_transform = PostProcessIMG()
 
     # DataLoaders
     train_loader, val_loader = create_prefetch_data_loaders(args)
@@ -83,14 +83,14 @@ def train_cmg_to_img(args):
     )
 
     model = UNet(
-        in_chans=30, out_chans=30, chans=args.chans, num_pool_layers=args.num_pool_layers, num_groups=args.num_groups,
+        in_chans=15, out_chans=15, chans=args.chans, num_pool_layers=args.num_pool_layers, num_groups=args.num_groups,
         negative_slope=args.negative_slope, use_residual=args.use_residual, interp_mode=args.interp_mode,
         use_ca=args.use_ca, reduction=args.reduction, use_gap=args.use_gap, use_gmp=args.use_gmp).to(device)
 
     optimizer = optim.Adam(model.parameters(), lr=args.init_lr)
     scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.lr_red_epochs, gamma=args.lr_red_rate)
 
-    trainer = ModelTrainerIMG(args, model, optimizer, train_loader, val_loader, input_train_transform,
+    trainer = ModelTrainerI2I(args, model, optimizer, train_loader, val_loader, input_train_transform,
                               input_val_transform, output_train_transform, output_val_transform, losses, scheduler)
 
     try:
@@ -125,7 +125,7 @@ if __name__ == '__main__':
         center_crop=True,
 
         # Model specific parameters.
-        train_method='C2I',  # Weighted semi-k-space to complex-valued image.
+        train_method='I2I',  # Weighted semi-k-space to complex-valued image.
         num_groups=16,  # Maybe try 16 now since chans is 64.
         chans=64,
         # num_depth_blocks=3,
@@ -159,4 +159,4 @@ if __name__ == '__main__':
         # prev_model_ckpt='',
     )
     arguments = create_arg_parser(**settings).parse_args()
-    train_cmg_to_img(arguments)
+    train_img_to_img(arguments)

@@ -10,13 +10,12 @@ from train.subsample import RandomMaskFunc, UniformMaskFunc
 from data.input_transforms import PreProcessCMG
 from data.output_transforms import PostProcessCMG
 
-from train.new_model_trainers.img_only import ModelTrainerIMG
-from models.att_unet import UNet
-from models.simple_unet import UnetModel
+from train.new_model_trainers.cmg_and_img import ModelTrainerCI
+from models.deep_unet import UNet
 from metrics.new_1d_ssim import SSIMLoss
 
 
-def train_cmg_to_img(args):
+def train_cmg_and_img(args):
     # Creating checkpoint and logging directories, as well as the run name.
     ckpt_path = Path(args.ckpt_root)
     ckpt_path.mkdir(exist_ok=True)
@@ -38,7 +37,7 @@ def train_cmg_to_img(args):
     log_path = log_path / run_name
     log_path.mkdir(exist_ok=True)
 
-    logger = get_logger(name=__name__)
+    logger = get_logger(name=__name__, save_file=log_path / run_name)
 
     # Assignment inside running code appears to work.
     if (args.gpu is not None) and torch.cuda.is_available():
@@ -78,26 +77,30 @@ def train_cmg_to_img(args):
     train_loader, val_loader = create_prefetch_data_loaders(args)
 
     losses = dict(
-        # img_loss=SSIMLoss(filter_size=7).to(device=device)
-        img_loss=nn.L1Loss()
+        cmg_loss=nn.MSELoss(),
+        img_loss=SSIMLoss(filter_size=7).to(device=device)
+        # img_loss=nn.L1Loss()
     )
 
+    data_chans = 2 if args.challenge == 'singlecoil' else 30  # Multicoil has 15 coils with 2 for real/imag
+
     model = UNet(
-        in_chans=30, out_chans=30, chans=args.chans, num_pool_layers=args.num_pool_layers, num_groups=args.num_groups,
-        negative_slope=args.negative_slope, use_residual=args.use_residual, interp_mode=args.interp_mode,
-        use_ca=args.use_ca, reduction=args.reduction, use_gap=args.use_gap, use_gmp=args.use_gmp).to(device)
+        in_chans=data_chans, out_chans=data_chans, chans=args.chans, num_pool_layers=args.num_pool_layers,
+        num_depth_blocks=args.num_depth_blocks, num_groups=args.num_groups, negative_slope=args.negative_slope,
+        use_residual=args.use_residual, interp_mode=args.interp_mode, use_ca=args.use_ca, reduction=args.reduction,
+        use_gap=args.use_gap, use_gmp=args.use_gmp).to(device)
 
     optimizer = optim.Adam(model.parameters(), lr=args.init_lr)
     scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.lr_red_epochs, gamma=args.lr_red_rate)
 
-    trainer = ModelTrainerIMG(args, model, optimizer, train_loader, val_loader, input_train_transform,
-                              input_val_transform, output_train_transform, output_val_transform, losses, scheduler)
+    trainer = ModelTrainerCI(args, model, optimizer, train_loader, val_loader, input_train_transform,
+                             input_val_transform, output_train_transform, output_val_transform, losses, scheduler)
 
     try:
         trainer.train_model()
     except KeyboardInterrupt:
         trainer.writer.close()
-        logger.warning('Closing summary writer due to KeyboardInterrupt.')
+        # logger.warning(f'Closing TensorBoard writer and flushing remaining outputs due to KeyboardInterrupt.')
 
 
 if __name__ == '__main__':
@@ -125,13 +128,14 @@ if __name__ == '__main__':
         center_crop=True,
 
         # Model specific parameters.
-        train_method='C2I',  # Weighted semi-k-space to complex-valued image.
+        train_method='C2CI',  # Weighted semi-k-space to complex-valued image.
         num_groups=16,  # Maybe try 16 now since chans is 64.
         chans=64,
-        # num_depth_blocks=3,
+        num_depth_blocks=1,
         negative_slope=0.1,
         interp_mode='nearest',
         use_residual=True,
+        img_lambda=1,
 
         # TensorBoard related parameters.
         max_images=8,  # Maximum number of images to save.
@@ -144,19 +148,19 @@ if __name__ == '__main__':
         use_gmp=False,
 
         # Learning rate scheduling.
-        lr_red_epochs=[20, 25],
+        lr_red_epochs=[20, 30, 35],
         lr_red_rate=0.1,
 
         # Variables that change frequently.
         use_slice_metrics=True,
-        num_epochs=30,
-        sample_rate=0.5,  # Ratio of the dataset to sample and use.
+        num_epochs=100,
+        sample_rate=1,  # Ratio of the dataset to sample and use.
         start_slice=10,
         gpu=1,  # Set to None for CPU mode.
-        num_workers=4,
-        init_lr=2E-4,
+        num_workers=3,
+        init_lr=2E-2,
         max_to_keep=1,
         # prev_model_ckpt='',
     )
     arguments = create_arg_parser(**settings).parse_args()
-    train_cmg_to_img(arguments)
+    train_cmg_and_img(arguments)

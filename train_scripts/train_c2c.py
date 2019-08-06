@@ -96,7 +96,6 @@ def train_cmg_to_cmg(args):
         trainer.train_model()
     except KeyboardInterrupt:
         trainer.writer.close()
-        logger.warning(f'Closing TensorBoard writer and flushing remaining outputs due to KeyboardInterrupt.')
 
 
 if __name__ == '__main__':
@@ -126,9 +125,9 @@ if __name__ == '__main__':
         # Model specific parameters.
         train_method='C2C',  # Weighted semi-k-space to complex-valued image.
         num_groups=16,  # Maybe try 16 now since chans is 64.
-        chans=32,
+        chans=64,
         negative_slope=0.1,
-        interp_mode='bilinear',
+        interp_mode='nearest',
         use_residual=True,
 
         # TensorBoard related parameters.
@@ -138,21 +137,21 @@ if __name__ == '__main__':
         # Channel Attention.
         use_ca=True,
         reduction=8,
-        use_gap=False,
-        use_gmp=True,
+        use_gap=True,
+        use_gmp=False,
 
         # Learning rate scheduling.
-        lr_red_epochs=[80, 90, 95],
+        lr_red_epochs=[15, 20],
         lr_red_rate=0.1,
 
         # Variables that change frequently.
         use_slice_metrics=True,
-        num_epochs=100,
-        sample_rate=1,  # Ratio of the dataset to sample and use.
+        num_epochs=25,
+        sample_rate=0.5,  # Ratio of the dataset to sample and use.
         start_slice=10,
-        gpu=0,  # Set to None for CPU mode.
+        gpu=1,  # Set to None for CPU mode.
         num_workers=4,
-        init_lr=2E-3,
+        init_lr=2E-4,
         max_to_keep=1,
         # prev_model_ckpt='',
     )

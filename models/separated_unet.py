@@ -47,7 +47,7 @@ class Interpolate(nn.Module):
         return F.interpolate(tensor, scale_factor=self.scale_factor, mode=self.mode, align_corners=self.align_corners)
 
 
-class UNet(nn.Module):
+class SeparatedUNet(nn.Module):
     def __init__(self, in_chans, out_chans, chans, num_pool_layers, num_depth_blocks, num_groups, negative_slope=0.01,
                  use_residual=True, interp_mode='bilinear', use_ca=True, reduction=16, use_gap=True, use_gmp=True):
         super().__init__()
@@ -63,8 +63,9 @@ class UNet(nn.Module):
         self.interpolate = Interpolate(scale_factor=2, mode=interp_mode)
 
         # First block should have no reduction in feature map size.
-        conv = ConvBlock(in_chans=in_chans, out_chans=chans, stride=1, **kwargs)
-        self.down_sample_layers = nn.ModuleList([conv])
+        self.phase_head = ConvBlock(in_chans=in_chans, out_chans=chans, stride=1, **kwargs)
+        self.amplitude_head = ConvBlock(in_chans=in_chans, out_chans=chans, stride=1, **kwargs)
+        self.down_sample_layers = nn.ModuleList()
 
         ch = chans
         for _ in range(num_pool_layers - 1):
