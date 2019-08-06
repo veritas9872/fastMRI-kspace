@@ -9,9 +9,12 @@ from time import time
 from collections import defaultdict
 
 from utils.run_utils import get_logger
-from utils.train_utils import CheckpointManager, make_grid_triplet, make_k_grid
+from utils.train_utils import CheckpointManager, make_grid_triplet, make_k_grid, make_input_triplet, \
+                            make_input_RSS, make_RSS
 from metrics.my_ssim import ssim_loss
 from metrics.custom_losses import psnr_loss, nmse_loss
+
+from data.data_transforms import root_sum_of_squares, pre_RSS
 
 
 class ModelTrainerIMG:
@@ -52,10 +55,10 @@ class ModelTrainerIMG:
                 raise TypeError('`scheduler` must be a Pytorch Learning Rate Scheduler.')
 
         # Display interval of 0 means no display of validation images on TensorBoard.
-        if args.max_images <= 0:
+        if args.display_images <= 0:
             self.display_interval = 0
         else:
-            self.display_interval = int(len(val_loader.dataset) // (args.max_images * args.batch_size))
+            self.display_interval = int(len(val_loader.dataset) // (args.display_images * args.batch_size))
 
         self.checkpointer = CheckpointManager(model, optimizer, mode='min', save_best_only=args.save_best_only,
                                               ckpt_dir=args.ckpt_path, max_to_keep=args.max_to_keep)
@@ -64,6 +67,7 @@ class ModelTrainerIMG:
         if vars(args).get('prev_model_ckpt'):
             self.checkpointer.load(load_dir=args.prev_model_ckpt, load_optimizer=False)
 
+        self.name = args.name
         self.model = model
         self.optimizer = optimizer
         self.train_loader = train_loader
@@ -83,19 +87,22 @@ class ModelTrainerIMG:
 
     def train_model(self):
         tic_tic = time()
+        self.logger.info(self.name)
         self.logger.info('Beginning Training Loop.')
         for epoch in range(1, self.num_epochs + 1):  # 1 based indexing
             # Training
             tic = time()
             train_epoch_loss, train_epoch_metrics = self._train_epoch(epoch=epoch)
             toc = int(time() - tic)
-            self._log_epoch_outputs(epoch, train_epoch_loss, train_epoch_metrics, elapsed_secs=toc, training=True)
+            self._log_epoch_outputs(epoch, train_epoch_loss, train_epoch_metrics,
+                                    elapsed_secs=toc, training=True, verbose=True)
 
             # Validation
             tic = time()
             val_epoch_loss, val_epoch_metrics = self._val_epoch(epoch=epoch)
             toc = int(time() - tic)
-            self._log_epoch_outputs(epoch, val_epoch_loss, val_epoch_metrics, elapsed_secs=toc, training=False)
+            self._log_epoch_outputs(epoch, val_epoch_loss, val_epoch_metrics,
+                                    elapsed_secs=toc, training=False, verbose=True)
 
             self.checkpointer.save(metric=val_epoch_loss, verbose=True)
 
@@ -136,11 +143,11 @@ class ModelTrainerIMG:
                 if self.use_slice_metrics:
                     slice_metrics = self._get_slice_metrics(recons['img_recons'], targets['img_targets'])
                     step_metrics.update(slice_metrics)
-
                 [epoch_metrics[key].append(value.detach()) for key, value in step_metrics.items()]
 
                 if self.verbose:
                     self._log_step_outputs(epoch, step, step_loss, step_metrics, training=True)
+
 
         # Converted to scalar and dict with scalar forms.
         return self._get_epoch_outputs(epoch, epoch_loss, epoch_metrics, training=True)
@@ -178,7 +185,10 @@ class ModelTrainerIMG:
             epoch_loss.append(step_loss.detach())
 
             if self.use_slice_metrics:
-                slice_metrics = self._get_slice_metrics(recons['img_recons'], targets['img_targets'])
+                # RSS
+                rss_img_recons = (recons['img_recons'] ** 2).sum(dim=0).sqrt()
+                rss_img_targets = (targets['img_targets'] ** 2).sum(dim=0).sqrt()
+                slice_metrics = self._get_slice_metrics(rss_img_recons, rss_img_targets)
                 step_metrics.update(slice_metrics)
 
             [epoch_metrics[key].append(value.detach()) for key, value in step_metrics.items()]
@@ -190,14 +200,19 @@ class ModelTrainerIMG:
             # Condition ensures that self.display_interval != 0 and that the step is right for display.
             if self.display_interval and (step % self.display_interval == 0):
                 img_recon_grid, img_target_grid, img_delta_grid = \
-                    make_grid_triplet(recons['img_recons'], targets['img_targets'])
+                    make_RSS(recons['img_recons'], targets['img_targets'])
+                if epoch == 1:
+                    img_input_grid = make_input_RSS(extra_params['img_inputs'])
                 kspace_recon_grid = make_k_grid(recons['kspace_recons'], self.smoothing_factor)
                 kspace_target_grid = make_k_grid(targets['kspace_targets'], self.smoothing_factor)
 
                 self.writer.add_image(f'k-space_Recons/{step}', kspace_recon_grid, epoch, dataformats='HW')
                 self.writer.add_image(f'k-space_Targets/{step}', kspace_target_grid, epoch, dataformats='HW')
-                self.writer.add_image(f'Image_Recons/{step}', img_recon_grid, epoch, dataformats='HW')
-                self.writer.add_image(f'Image_Targets/{step}', img_target_grid, epoch, dataformats='HW')
+                if epoch == 1:
+                    self.writer.add_image(f'Val_Image_Inputs/{step}', img_input_grid, epoch, dataformats='HW')
+                    self.writer.add_image(f'Val_Image_Recons/{step}', img_input_grid, epoch, dataformats='HW')
+                self.writer.add_image(f'Val_Image_Recons/{step}', img_recon_grid, epoch, dataformats='HW')
+                self.writer.add_image(f'Val_Image_Targets/{step}', img_target_grid, epoch, dataformats='HW')
                 self.writer.add_image(f'Image_Deltas/{step}', img_delta_grid, epoch, dataformats='HW')
 
         epoch_loss, epoch_metrics = self._get_epoch_outputs(epoch, epoch_loss, epoch_metrics, training=False)
@@ -206,9 +221,12 @@ class ModelTrainerIMG:
     def _val_step(self, inputs, targets, extra_params):
         outputs = self.model(inputs)
         recons = self.output_transform(outputs, targets, extra_params)
+
+        # Expects a single loss. No loss decomposition within domain implemented yet.
         cmg_loss = self.losses['cmg_loss'](recons['cmg_recons'], targets['cmg_targets'])
         img_loss = self.losses['img_loss'](recons['img_recons'], targets['img_targets'])
         step_loss = cmg_loss + self.img_lambda * img_loss
+
         step_metrics = {'cmg_loss': cmg_loss, 'img_loss': img_loss}
         return recons, step_loss, step_metrics
 
@@ -224,6 +242,36 @@ class ModelTrainerIMG:
         slice_nmse = nmse_loss(img_recons, img_targets)
 
         return {'slice_ssim': slice_ssim, 'slice_nmse': slice_nmse, 'slice_psnr': slice_psnr}
+
+    @staticmethod
+    def _get_accel_slice_metrics(img_recons, img_targets, acceleration):
+
+        img_recons = img_recons.detach()  # Just in case.
+        img_targets = img_targets.detach()
+
+        max_range = img_targets.max() - img_targets.min()
+        slice_ssim = ssim_loss(img_recons, img_targets, max_val=max_range)
+        slice_psnr = psnr_loss(img_recons, img_targets, data_range=max_range)
+        slice_nmse = nmse_loss(img_recons, img_targets)
+
+        if acceleration == 2:
+            slice_ssim_2 = slice_ssim
+            slice_psnr_2 = slice_psnr
+            slice_nmse_2 = slice_nmse
+            out_dict = {'slice_ssim_2': slice_ssim_2, 'slice_nmse_2': slice_nmse_2, 'slice_psnr_2': slice_psnr_2}
+        elif acceleration == 4:
+            slice_ssim_4 = slice_ssim
+            slice_psnr_4 = slice_psnr
+            slice_nmse_4 = slice_nmse
+            out_dict = {'slice_ssim_4': slice_ssim_4, 'slice_nmse_4': slice_nmse_4, 'slice_psnr_4': slice_psnr_4}
+        elif acceleration == 8:
+            slice_ssim_8 = slice_ssim
+            slice_psnr_8 = slice_psnr
+            slice_nmse_8 = slice_nmse
+            out_dict = {'slice_ssim_8': slice_ssim_8, 'slice_nmse_8': slice_nmse_8, 'slice_psnr_8': slice_psnr_8}
+
+        return out_dict
+
 
     def _get_epoch_outputs(self, epoch, epoch_loss, epoch_metrics, training=True):
         mode = 'Training' if training else 'Validation'
@@ -259,12 +307,17 @@ class ModelTrainerIMG:
         for key, value in step_metrics.items():
             self.logger.info(f'Epoch {epoch:03d} Step {step:03d}: {mode} {key}: {value.item():.4e}')
 
-    def _log_epoch_outputs(self, epoch, epoch_loss, epoch_metrics, elapsed_secs, training=True):
+    def _log_epoch_outputs(self, epoch, epoch_loss, epoch_metrics, elapsed_secs, training=True, verbose = True):
         mode = 'Training' if training else 'Validation'
         self.logger.info(f'Epoch {epoch:03d} {mode}. loss: {epoch_loss:.4e}, '
                          f'Time: {elapsed_secs // 60} min {elapsed_secs % 60} sec')
         self.writer.add_scalar(f'{mode}_epoch_loss', scalar_value=epoch_loss, global_step=epoch)
 
-        for key, value in epoch_metrics.items():
-            self.logger.info(f'Epoch {epoch:03d} {mode}. {key}: {value:.4e}')
-            self.writer.add_scalar(f'{mode}_epoch_{key}', scalar_value=value, global_step=epoch)
+        if verbose:
+            for key, value in epoch_metrics.items():
+                self.logger.info(f'Epoch {epoch:03d} {mode}. {key}: {value:.4e}')
+                self.writer.add_scalar(f'{mode}_epoch_{key}', scalar_value=value, global_step=epoch)
+
+    def _plot_trainval(self, epoch, train_epoch_loss, val_epoch_loss):
+        self.writer.add_scalars('Loss', {'Train loss': train_epoch_loss,
+                                         'Val loss': val_epoch_loss}, global_step=epoch)

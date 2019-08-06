@@ -4,6 +4,7 @@ from math import ceil
 
 import h5py
 from torch.utils.data import Dataset
+from data.data_transforms import complex_center_crop, to_tensor
 
 
 class SliceData(Dataset):
@@ -69,13 +70,14 @@ class SliceData(Dataset):
 
 class CustomSliceData(Dataset):
 
-    def __init__(self, root, transform, challenge, sample_rate=1, start_slice=0, use_gt=False):
+    def __init__(self, root, transform, challenge, sample_rate=1, start_slice=0, use_gt=False, center_crop=True):
         if challenge not in ('singlecoil', 'multicoil'):
             raise ValueError('challenge should be either "singlecoil" or "multicoil"')
 
         self.use_gt = use_gt
 
         self.transform = transform
+        self.center_crop = center_crop
         self.recons_key = 'reconstruction_esc' if challenge == 'singlecoil' else 'reconstruction_rss'
 
         self.examples = list()
@@ -111,3 +113,42 @@ class CustomSliceData(Dataset):
                 target_slice = None
 
         return self.transform(k_slice, target_slice, attrs, file_path.name, slice_num)
+
+
+class CustomSliceTestData(Dataset):
+
+    def __init__(self, root, transform, challenge, sample_rate=1, start_slice=0):
+        if challenge not in ('singlecoil', 'multicoil'):
+            raise ValueError('challenge should be either "singlecoil" or "multicoil"')
+
+        self.transform = transform
+        self.examples = list()
+        files = list(pathlib.Path(root).iterdir())
+
+        if not files:  # If the list is empty for any reason
+            raise FileNotFoundError('Sorry! No files present in this directory. '
+                                    'Please check if your disk has been loaded.')
+
+        print(f'Initializing {root}.')
+
+        if sample_rate < 1:
+            random.shuffle(files)
+            num_files = ceil(len(files) * sample_rate)
+            files = files[:num_files]
+
+        for file_name in sorted(files):
+            kspace = h5py.File(file_name, mode='r')['kspace']
+            num_slices = kspace.shape[0]
+            self.examples += [(file_name, slice_num) for slice_num in range(start_slice, num_slices)]
+
+    def __len__(self):
+        return len(self.examples)
+
+    def __getitem__(self, idx):
+        file_path, slice_num = self.examples[idx]
+        with h5py.File(file_path, mode='r') as data:
+            attrs = dict(data.attrs)
+            k_slice = data['kspace'][slice_num]
+            k_slice = to_tensor(k_slice)
+
+        return k_slice, attrs, file_path.name, slice_num

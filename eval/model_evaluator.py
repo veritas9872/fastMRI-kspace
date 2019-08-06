@@ -2,11 +2,15 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader
 
+from models.fc_unet import FCUnet, Unet
 import numpy as np
 from tqdm import tqdm
 import h5py
 from utils.train_utils import load_model_from_checkpoint
 from utils.run_utils import create_arg_parser
+
+from data.test_data_transforms import TestPrefetch2Device, TestPreProcessCC, TestOutputTransformCC
+from data.mri_data import CustomSliceTestData
 
 from pathlib import Path
 from collections import defaultdict
@@ -32,15 +36,16 @@ class ModelEvaluator:
 
     def _create_reconstructions(self, data_loader):
         reconstructions = defaultdict(list)
-
-        for ds_slices, file_names, s_idxs, extra_params in tqdm(data_loader):
-            recons = self.model(ds_slices.to(self.device))
-            recons = self.post_processing(recons, extra_params).cpu().numpy()
+        for ds_slices, attrs, file_names, s_idxs in tqdm(data_loader):
+            inputs, extra_params = self.pre_processing(ds_slices.to(device=self.device), file_names, s_idxs)
+            recons = self.model(inputs)
+            recons = self.post_processing(recons, extra_params)['cmg_recons'].cpu().numpy()
 
             for idx in range(recons.shape[0]):
                 file_name = Path(file_names[idx]).name
                 reconstructions[file_name].append((int(s_idxs[idx]), recons[idx, ...].squeeze()))
 
+        import ipdb; ipdb.set_trace()
         reconstructions = {
             file_name: np.stack([recon for _, recon in sorted(recons_list)])
             for file_name, recons_list in reconstructions.items()
@@ -49,7 +54,7 @@ class ModelEvaluator:
         return reconstructions
 
     def _create_data_loader(self):
-        # dataset = HDF5Dataset(root=self.data_dir, transform=self.pre_processing, training=False)
+        dataset = CustomSliceTestData(root=self.data_dir, transform=None, challenge='multicoil')
         data_loader = DataLoader(dataset, batch_size=1, num_workers=1, pin_memory=True)
         return data_loader
 
@@ -84,8 +89,8 @@ def main(model, args):
 
     print(f'Device {device} has been selected.')
 
-    pre_processing = InputTestTransform()
-    post_processing = OutputReconstructionTransform()
+    pre_processing = TestPreProcessCC(challenge='multicoil', device=0)
+    post_processing = TestOutputTransformCC()
 
     evaluator = ModelEvaluator(
         model, args.checkpoint_path, pre_processing, post_processing, args.data_dir, args.out_dir, device)
@@ -97,16 +102,24 @@ if __name__ == '__main__':
     print(f'Current Working Directory: {Path.cwd()}')
     defaults = dict(
         gpu=0,  # Set to None for CPU mode.
-        data_dir='/home/veritas/PycharmProjects/fastMRI-GAN/images/multicoil_test',
-        checkpoint_path='/home/veritas/PycharmProjects/fastMRI-GAN/checkpoints/'
-                        'WGANGP/Trial 07  2019-06-25 11-44-20/Generator/ckpt_001.tar',
+        data_dir='/media/harry/fastmri/fastMRI_data/multicoil_test_test',
+        checkpoint_path='/home/harry/PycharmProjects/fastMRI-kspace/checkpoints/'
+                        'IMG/[IMG]ResUnet/ckpt_052.tar',
 
-        out_dir='./wgan_gp_test'  # Change this every time! Attempted overrides will throw errors by design.
+        out_dir='./ResUnet'  # Change this every time! Attempted overrides will throw errors by design.
+    )
+
+    # Model settings
+    settings = dict(
+        data_chans=30,  # multi_coil,
+        chans=64,  # Unet channel size
+        num_pool_layers=5,  # Unet depth
     )
 
     parser = create_arg_parser(**defaults).parse_args()
 
     # Change this part when a different model is being used.
-    unet = UnetModel(in_chans=1, out_chans=1, chans=32, num_pool_layers=4, drop_prob=0)
+    model = Unet(in_chans=settings['data_chans'], out_chans=settings['data_chans'], chans=settings['chans'],
+                 num_pool_layers=settings['num_pool_layers'])
 
-    main(unet, parser)
+    main(model, parser)

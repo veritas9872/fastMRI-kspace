@@ -22,7 +22,7 @@ def apply_mask(data, mask_func, seed=None):
     shape[:-3] = 1
     mask, acceleration = mask_func(shape, seed)
     mask = mask.to(data.device)  # Changed this part here for Pre-loading on GPU.
-    return data * mask, mask, acceleration
+    return data * mask, mask
 
 
 def apply_PCmask(data, mask_func, seed=None):

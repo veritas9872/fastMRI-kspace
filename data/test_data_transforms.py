@@ -1,9 +1,12 @@
 import numpy as np
 import pytest
 import torch
+from torch import nn
 
 from train.subsample import MaskFunc
 from data import data_transforms
+from data.data_transforms import to_tensor, fft2, ifft2, complex_abs, \
+    complex_center_crop, kspace_to_nchw, nchw_to_kspace
 
 
 def create_tensor(shape):
@@ -188,6 +191,90 @@ def test_reversibility(shape, scale):
     tensor = torch.rand(shape) * 20 - 10
     new = data_transforms.exp_weighting(data_transforms.log_weighting(tensor, scale), scale)
     assert torch.allclose(tensor, new)
+
+
+class TestPrefetch2Device:
+    """
+    Fetches input data to GPU device.
+    Using this to minimize overhead from passing tensors on device from one process to another.
+    Also, on HDD devices this will give the data gathering process more time to get data.
+
+    """
+    def __init__(self, device):
+        self.device = device
+
+    def __call__(self, k_slice, attrs, file_name, slice_num):
+        if k_slice.ndim == 2:  # For singlecoil. Makes data processing later on much easier.
+            k_slice = np.expand_dims(k_slice, axis=0)
+        elif k_slice.ndim != 3:  # Prevents possible errors.
+            raise TypeError('Invalid slice type')
+
+        # I hope that async copy works for passing between processes but I am not sure.
+        kspace_input = to_tensor(k_slice).to(device=self.device, non_blocking=True)
+
+        return kspace_input, attrs, file_name, slice_num
+
+
+class TestPreProcessCC:
+    def __init__(self, challenge, device, divisor=1):
+        if challenge not in ('singlecoil', 'multicoil'):
+            raise ValueError(f'Challenge should either be "singlecoil" or "multicoil"')
+        self.challenge = challenge
+        self.device = device
+        self.divisor = divisor
+
+    def __call__(self, kspace_input, file_name, slice_num):
+        assert isinstance(kspace_input, torch.Tensor)
+        if kspace_input.dim() == 4:  # If the collate function does not expand dimensions.
+            kspace_input = kspace_input.unsqueeze(dim=0)
+        elif kspace_input.dim() != 5:  # Expanded k-space should have 5 dimensions.
+            raise RuntimeError('k-space target has invalid shape!')
+
+        if kspace_input.size(0) != 1:
+            raise NotImplementedError('Batch size should be 1 for now.')
+
+        with torch.no_grad():
+            # Apply mask
+
+            k_scale = torch.std(kspace_input)
+            k_scaling = torch.tensor(1) / k_scale
+
+            kspace_input *= k_scaling  # Multiplication is faster than division.
+
+            full_im_input = ifft2(kspace_input)
+            cc_im_input = complex_center_crop(full_im_input, (320, 320))
+
+            cmg_input = kspace_to_nchw(cc_im_input)
+            img_input = complex_abs(cc_im_input)
+
+            extra_params = {'img_inputs': img_input, 'k_scales': k_scale}
+
+            margin = kspace_input.size(-1) % self.divisor
+            if margin > 0:
+                pad = [(self.divisor - margin) // 2, (1 + self.divisor - margin) // 2]
+            else:  # This is a temporary fix to prevent padding by half the divisor when margin=0.
+                pad = [0, 0]
+
+            # This pads at the last dimension of a tensor with 0.
+            inputs = cmg_input
+
+        return inputs, extra_params
+
+
+class TestOutputTransformCC(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, cmg_outputs, extra_params):
+
+        cmg_recons_toim = nchw_to_kspace(cmg_outputs)
+        img_recons = complex_abs(cmg_recons_toim)
+
+        kspace_recons = fft2(cmg_recons_toim)
+
+        recons = {'kspace_recons': kspace_recons, 'cmg_recons': cmg_outputs, 'img_recons': img_recons}
+
+        return recons  # Returning scaled reconstructions. Not rescaled.
 
 
 if __name__ == '__main__':

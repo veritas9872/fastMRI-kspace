@@ -124,7 +124,7 @@ class CheckpointManager:
         print('Done')
 
 
-def load_model_from_checkpoint(model, load_dir):
+def load_model_from_checkpoint(model, load_dir, strict=False):
     """
     A simple function for loading checkpoints without having to use Checkpoint Manager. Very useful for evaluation.
     Checkpoint manager was designed for loading checkpoints before resuming training.
@@ -135,7 +135,7 @@ def load_model_from_checkpoint(model, load_dir):
     assert isinstance(model, nn.Module), 'Model must be a Pytorch module.'
     assert Path(load_dir).exists(), 'The specified directory does not exist'
     save_dict = torch.load(load_dir)
-    model.load_state_dict(save_dict['model_state_dict'])
+    model.load_state_dict(save_dict['model_state_dict'], strict=strict)
     return model  # Not actually necessary to return the model but doing so anyway.
 
 
@@ -250,7 +250,7 @@ def create_custom_datasets(args, transform=None):
         challenge=args.challenge,
         sample_rate=args.sample_rate,
         start_slice=args.start_slice,
-        use_gt=False
+        use_gt=False,
     )
 
     val_dataset = CustomSliceData(
@@ -259,16 +259,13 @@ def create_custom_datasets(args, transform=None):
         challenge=args.challenge,
         sample_rate=args.sample_rate,
         start_slice=args.start_slice,
-        use_gt=False
+        use_gt=False,
     )
     return train_dataset, val_dataset
 
 
 def create_custom_data_loaders(args, transform=None):
     train_dataset, val_dataset = create_custom_datasets(args, transform)
-
-    if args.batch_size > 1:
-        raise NotImplementedError('Batch size should be 1 for now.')
 
     collate_fn = single_batch_collate_fn
 
@@ -328,6 +325,76 @@ def make_grid_triplet(image_recons, image_targets):
     deltas = image_targets - image_recons
 
     return image_recons, image_targets, deltas
+
+
+def make_RSS(image_recons, image_targets):
+
+    # Simple hack. Just use the first element if the input is a list for batching implementation.
+    if isinstance(image_recons, list) and isinstance(image_targets, list):
+        # Recall that in the mini-batched implementation, the outputs are lists of 3D Tensors.
+        image_recons = image_recons[0].unsqueeze(dim=0)
+        image_targets = image_targets[0].unsqueeze(dim=0)
+
+    if image_recons.size(0) > 1:
+        raise NotImplementedError('Mini-batch size greater than 1 has not been implemented yet.')
+
+    assert image_recons.size() == image_targets.size()
+
+    # Send to CPU if necessary. Assumes batch size of 1.
+    # Result shape : 15 * 320 * 320
+    image_recons = image_recons.detach().squeeze(dim=0)
+    image_targets = image_targets.detach().squeeze(dim=0)
+
+    if image_recons.size(0) == 15:
+        image_recons = (image_recons ** 2).sum(dim=0).sqrt()
+        image_targets = (image_targets ** 2).sum(dim=0).sqrt()
+
+    large = torch.max(image_targets)
+    small = torch.min(image_targets)
+    diff = large - small
+
+    # Scale again
+    image_recons = (image_recons.clamp(min=small, max=large) - small) * (torch.tensor(1) / diff)
+    image_targets = (image_targets - small) * (torch.tensor(1) / diff)
+
+    image_recons = image_recons.squeeze().cpu()
+    image_targets = image_targets.squeeze().cpu()
+
+    deltas = image_targets - image_recons
+
+    return image_recons, image_targets, deltas
+
+
+def make_input_RSS(image_inputs):
+
+    image_inputs = image_inputs.detach().squeeze(dim=0)
+
+    # RSS
+    image_inputs = (image_inputs ** 2).sum(dim=0).sqrt()
+
+    large = torch.max(image_inputs)
+    small = torch.min(image_inputs)
+    diff = large - small
+
+    image_inputs = (image_inputs.clamp(min=small, max=large) - small) * (torch.tensor(1) / diff)
+
+    image_inputs = image_inputs.squeeze().cpu()
+
+    return image_inputs
+
+
+def make_input_triplet(image_inputs):
+
+    large = torch.max(image_inputs)
+    small = torch.min(image_inputs)
+    diff = large - small
+
+    image_inputs = (image_inputs.clamp(min=small, max=large) - small) * (torch.tensor(1) / diff)
+    image_inputs = image_inputs.detach().squeeze(dim=0)
+    image_inputs = torch.cat(torch.chunk(image_inputs.view(-1, image_inputs.size(-1)), chunks=5, dim=0), dim=1)
+    image_inputs = image_inputs.squeeze().cpu()
+
+    return image_inputs
 
 
 def make_k_grid(kspace_recons, smoothing_factor=8):

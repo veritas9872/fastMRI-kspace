@@ -57,12 +57,13 @@ def ssim_loss(input, target, max_val, filter_size=11, k1=0.01, k2=0.03,
         raise RuntimeError(f'The input device {input.device} and target device {target.device} do not match.')
 
     dim = input.dim()
-    if dim == 2:  # Expand dims if the inputs have too few of them. This does not copy data.
+
+    if dim == 2:  # Expa
         input = input.expand(1, 1, input.dim(-2), input.dim(-1))
         target = target.expand(1, 1, target.dim(-2), target.dim(-1))
     elif dim == 3:
-        input = input.expand(1, input.dim(-3), input.dim(-2), input.dim(-1))
-        target = target.expand(1, target.dim(-3), target.dim(-2), target.dim(-1))
+        input = input.unsqueeze(dim=0)
+        target = target.unsqueeze(dim=0)
     elif dim != 4:
         raise ValueError('Expected 2, 3, or 4 dimensions (got {})'.format(dim))
 

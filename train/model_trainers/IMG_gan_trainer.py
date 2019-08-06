@@ -11,13 +11,15 @@ from collections import defaultdict
 from utils.run_utils import get_logger
 from utils.train_utils import CheckpointManager, make_grid_triplet, make_k_grid, make_input_triplet, \
                             make_input_RSS, make_RSS
+from utils.train_utils_gan import GANCheckpointManager, load_gan_model_from_checkpoint
+
 from metrics.my_ssim import ssim_loss
 from metrics.custom_losses import psnr_loss, nmse_loss
 
 from data.data_transforms import root_sum_of_squares, pre_RSS
 
 
-class ModelTrainerIMG:
+class ModelTrainerIMGgan:
     """
     Model Trainer for k-space learning or complex image learning
     with losses in complex image domains and real valued image domains.
@@ -25,16 +27,16 @@ class ModelTrainerIMG:
     while all losses are obtained from either complex images or real-valued images.
     """
 
-    def __init__(self, args, model, optimizer, train_loader, val_loader,
-                 input_train_transform, input_val_transform, output_transform, losses, scheduler=None):
+    def __init__(self, args, modelG, modelD, optimizerG, optimizerD, train_loader, val_loader, input_train_transform,
+                 input_val_transform, output_transform, losses, schedulerG=None, schedulerD=None):
 
         multiprocessing.set_start_method(method='spawn')
 
         self.logger = get_logger(name=__name__, save_file=args.log_path / args.run_name)
 
         # Checking whether inputs are correct.
-        assert isinstance(model, nn.Module), '`model` must be a Pytorch Module.'
-        assert isinstance(optimizer, optim.Optimizer), '`optimizer` must be a Pytorch Optimizer.'
+        assert isinstance(modelG, nn.Module), '`model` must be a Pytorch Module.'
+        assert isinstance(optimizerG, optim.Optimizer), '`optimizer` must be a Pytorch Optimizer.'
         assert isinstance(train_loader, DataLoader) and isinstance(val_loader, DataLoader), \
             '`train_loader` and `val_loader` must be Pytorch DataLoader objects.'
 
@@ -46,10 +48,18 @@ class ModelTrainerIMG:
         # 'losses' is expected to be a dictionary.
         losses = nn.ModuleDict(losses)
 
-        if scheduler is not None:
-            if isinstance(scheduler, optim.lr_scheduler.ReduceLROnPlateau):
+        if schedulerG is not None:
+            if isinstance(schedulerG, optim.lr_scheduler.ReduceLROnPlateau):
                 self.metric_scheduler = True
-            elif isinstance(scheduler, optim.lr_scheduler._LRScheduler):
+            elif isinstance(schedulerG, optim.lr_scheduler._LRScheduler):
+                self.metric_scheduler = False
+            else:
+                raise TypeError('`scheduler` must be a Pytorch Learning Rate Scheduler.')
+
+        if schedulerD is not None:
+            if isinstance(schedulerD, optim.lr_scheduler.ReduceLROnPlateau):
+                self.metric_scheduler = True
+            elif isinstance(schedulerD, optim.lr_scheduler._LRScheduler):
                 self.metric_scheduler = False
             else:
                 raise TypeError('`scheduler` must be a Pytorch Learning Rate Scheduler.')
@@ -60,30 +70,34 @@ class ModelTrainerIMG:
         else:
             self.display_interval = int(len(val_loader.dataset) // (args.display_images * args.batch_size))
 
-        self.checkpointer = CheckpointManager(model, optimizer, mode='min', save_best_only=args.save_best_only,
-                                              ckpt_dir=args.ckpt_path, max_to_keep=args.max_to_keep)
+        self.checkpointer = GANCheckpointManager(modelG, modelD, optimizerG, optimizerD, mode='min',
+                                                 save_best_only=args.save_best_only,
+                                                 ckpt_dir=args.ckpt_path, max_to_keep=args.max_to_keep)
 
         # loading from checkpoint if specified.
         if vars(args).get('prev_model_ckpt'):
             self.checkpointer.load(load_dir=args.prev_model_ckpt, load_optimizer=False)
 
         self.name = args.name
-        self.model = model
-        self.optimizer = optimizer
+        self.modelG = modelG
+        self.modelD = modelD
+        self.optimizerG = optimizerG
+        self.optimizerD = optimizerD
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.input_train_transform = input_train_transform
         self.input_val_transform = input_val_transform
         self.output_transform = output_transform
         self.losses = losses
-        self.scheduler = scheduler
+        self.schedulerG = schedulerG
+        self.schedulerD = schedulerD
 
         self.verbose = args.verbose
         self.num_epochs = args.num_epochs
         self.smoothing_factor = args.smoothing_factor
         self.use_slice_metrics = args.use_slice_metrics
-        self.img_lambda1 = torch.tensor(args.img_lambda1, dtype=torch.float32, device=args.device)
-        self.img_lambda2 = torch.tensor(args.img_lambda2, dtype=torch.float32, device=args.device)
+        self.img_lambda = torch.tensor(args.img_lambda, dtype=torch.float32, device=args.device)
+        self.GAN_lambda = torch.tensor(args.GAN_lambda, dtype=torch.float32, device=args.device)
         self.writer = SummaryWriter(str(args.log_path))
 
     def train_model(self):
@@ -93,25 +107,27 @@ class ModelTrainerIMG:
         for epoch in range(1, self.num_epochs + 1):  # 1 based indexing
             # Training
             tic = time()
-            train_epoch_loss, train_epoch_metrics = self._train_epoch(epoch=epoch)
+            train_epoch_G_loss, train_epoch_D_loss, train_epoch_metrics = self._train_epoch(epoch=epoch)
             toc = int(time() - tic)
-            self._log_epoch_outputs(epoch, train_epoch_loss, train_epoch_metrics,
+            self._log_epoch_outputs(epoch, train_epoch_G_loss, train_epoch_D_loss, train_epoch_metrics,
                                     elapsed_secs=toc, training=True, verbose=True)
 
             # Validation
             tic = time()
             val_epoch_loss, val_epoch_metrics = self._val_epoch(epoch=epoch)
             toc = int(time() - tic)
-            self._log_epoch_outputs(epoch, val_epoch_loss, val_epoch_metrics,
+            self._log_epoch_outputs_val(epoch, val_epoch_loss, val_epoch_metrics,
                                     elapsed_secs=toc, training=False, verbose=True)
 
             self.checkpointer.save(metric=val_epoch_loss, verbose=True)
 
-            if self.scheduler is not None:
+            if self.schedulerG is not None:
                 if self.metric_scheduler:  # If the scheduler is a metric based scheduler, include metrics.
-                    self.scheduler.step(metrics=val_epoch_loss)
+                    self.schedulerG.step(metrics=val_epoch_loss)
+                    self.schedulerD.step(metrics=val_epoch_loss)
                 else:
-                    self.scheduler.step()
+                    self.schedulerG.step()
+                    self.schedulerD.step()
 
         # Finishing Training Loop
         self.writer.close()  # Flushes remaining data to TensorBoard.
@@ -120,10 +136,12 @@ class ModelTrainerIMG:
                          f'{toc_toc // 3600} hr {(toc_toc // 60) % 60} min {toc_toc % 60} sec.')
 
     def _train_epoch(self, epoch):
-        self.model.train()
+        self.modelG.train()
+        self.modelD.train()
         torch.autograd.set_grad_enabled(True)
 
-        epoch_loss = list()  # Appending values to list due to numerical underflow.
+        epoch_G_loss = list()  # Appending values to list due to numerical underflow.
+        epoch_D_loss = list()
         epoch_metrics = defaultdict(list)
 
         data_loader = enumerate(self.train_loader, start=1)
@@ -136,54 +154,62 @@ class ModelTrainerIMG:
                 inputs, targets, extra_params = self.input_train_transform(*data)
 
             # 'recons' is a dictionary containing k-space, complex image, and real image reconstructions.
-            recons, step_loss, step_metrics = self._train_step(inputs, targets, extra_params)
-            epoch_loss.append(step_loss.detach())  # Perhaps not elegant, but underflow makes this necessary.
+            recons, step_G_loss, step_metrics = self._train_step_G(inputs, targets, extra_params)
+            # Update discriminator 3 times
+            step_D_loss = self._train_step_D(targets['cmg_targets'], recons['cmg_recons'])
+            step_D_loss = step_D_loss + self._train_step_D(targets['cmg_targets'], recons['cmg_recons'])
+            step_D_loss = step_D_loss + self._train_step_D(targets['cmg_targets'], recons['cmg_recons'])
+            epoch_G_loss.append(step_G_loss.detach())  # Perhaps not elegant, but underflow makes this necessary.
+            epoch_D_loss.append(step_D_loss.detach())
 
             # Gradients are not calculated so as to boost speed and remove weird errors.
             with torch.no_grad():  # Update epoch loss and metrics
                 if self.use_slice_metrics:
                     slice_metrics = self._get_slice_metrics(recons['img_recons'], targets['img_targets'])
                     step_metrics.update(slice_metrics)
-                    # # Calculate metrics only for uniform random sampling / DO NOT INCLUDE UNIFORM SAMPLING
-                    # if extra_params['mask_choice'] == 'Uniform_random':
-                    #     slice_metrics = self._get_slice_metrics(recons['img_recons'], targets['img_targets'])
-                    #     step_metrics.update(slice_metrics)
-
                 [epoch_metrics[key].append(value.detach()) for key, value in step_metrics.items()]
 
                 if self.verbose:
-                    self._log_step_outputs(epoch, step, step_loss, step_metrics, training=True)
+                    self._log_step_outputs(epoch, step, step_G_loss, step_D_loss, step_metrics, training=True)
 
-                # if self.display_interval and (step % self.display_interval == 0):
-                #     img_recon_grid, img_target_grid, img_delta_grid = \
-                #         make_RSS(recons['img_recons'], targets['img_targets'])
-                #     if epoch == 1:
-                #         img_input_grid = make_input_RSS(extra_params['img_inputs'])
-                #     if epoch == 1:
-                #         self.writer.add_image(f'Train_Image_Inputs/{step}', img_input_grid, epoch, dataformats='HW')
-                #     self.writer.add_image(f'Train_Image_Recons/{step}', img_recon_grid, epoch, dataformats='HW')
-                #     self.writer.add_image(f'Train_Image_Target/{step}', img_target_grid, epoch, dataformats='HW')
 
         # Converted to scalar and dict with scalar forms.
-        return self._get_epoch_outputs(epoch, epoch_loss, epoch_metrics, training=True)
+        return self._get_epoch_outputs(epoch, epoch_G_loss, epoch_D_loss, epoch_metrics, training=True)
 
-    def _train_step(self, inputs, targets, extra_params):
-        self.optimizer.zero_grad()
-        outputs = self.model(inputs)
+    def _train_step_G(self, inputs, targets, extra_params):
+        self.optimizerG.zero_grad()
+        outputs = self.modelG(inputs)
         recons = self.output_transform(outputs, targets, extra_params)
-
         # Expects a single loss. No loss decomposition within domain implemented yet.
         cmg_loss = self.losses['cmg_loss'](recons['cmg_recons'], targets['cmg_targets'])
-        img_loss1 = self.losses['img_loss1'](recons['img_recons'], targets['img_targets'])
-        img_loss2 = self.losses['img_loss2'](recons['img_recons'], targets['img_targets'])
-        step_loss = cmg_loss + self.img_lambda1 * img_loss1 + self.img_lambda2 * img_loss2
+        img_loss = self.losses['img_loss'](recons['img_recons'], targets['img_targets'])
+        GAN_input = (recons['cmg_recons'] ** 2).sum(dim=1).sqrt().unsqueeze(dim=0)
+        GAN_loss = self.losses['GAN_loss'](self.modelD(GAN_input), True)
+        step_loss = cmg_loss + self.img_lambda * img_loss + self.GAN_lambda * GAN_loss
         step_loss.backward()
-        self.optimizer.step()
-        step_metrics = {'cmg_loss': cmg_loss, 'img_loss1': img_loss1, 'img_loss2': img_loss2}
+        self.optimizerG.step()
+        step_metrics = {'cmg_loss': cmg_loss, 'img_loss': img_loss, 'GAN_loss': GAN_loss}
         return recons, step_loss, step_metrics
 
+    def _train_step_D(self, real, fake):
+        self.optimizerD.zero_grad()
+        # Real
+        rss_real = (real ** 2).sum(dim=1).sqrt().unsqueeze(dim=0)
+        pred_real = self.modelD(rss_real)
+        loss_D_real = self.losses['GAN_loss'](pred_real, True)
+        # Fake
+        rss_fake = (fake ** 2).sum(dim=1).sqrt().unsqueeze(dim=0)
+        pred_fake = self.modelD(rss_fake.detach())
+        loss_D_fake = self.losses['GAN_loss'](pred_fake, False)
+        # Combined loss and calculate gradients
+        loss_D = (loss_D_fake + loss_D_real) * 0.5
+        loss_D.backward()
+        self.optimizerD.step()
+        return loss_D
+
     def _val_epoch(self, epoch):
-        self.model.eval()
+        self.modelG.eval()
+        self.modelD.eval()
         torch.autograd.set_grad_enabled(False)
 
         epoch_loss = list()
@@ -201,8 +227,7 @@ class ModelTrainerIMG:
             epoch_loss.append(step_loss.detach())
 
             if self.use_slice_metrics:
-                # rss_img_recons, rss_img_targets = pre_RSS(recons['img_recons'], targets['img_targets'])
-                # This RSS computation is extremely slow
+                # RSS
                 rss_img_recons = (recons['img_recons'] ** 2).sum(dim=0).sqrt()
                 rss_img_targets = (targets['img_targets'] ** 2).sum(dim=0).sqrt()
                 slice_metrics = self._get_slice_metrics(rss_img_recons, rss_img_targets)
@@ -211,16 +236,13 @@ class ModelTrainerIMG:
             [epoch_metrics[key].append(value.detach()) for key, value in step_metrics.items()]
 
             if self.verbose:
-                self._log_step_outputs(epoch, step, step_loss, step_metrics, training=False)
+                self._log_step_outputs_val(epoch, step, step_loss, step_metrics, training=False)
 
             # Save images to TensorBoard.
             # Condition ensures that self.display_interval != 0 and that the step is right for display.
             if self.display_interval and (step % self.display_interval == 0):
-                # img_recon_grid, img_target_grid, img_delta_grid = \
-                #     make_grid_triplet(recons['img_recons'], targets['img_targets'])
                 img_recon_grid, img_target_grid, img_delta_grid = \
                     make_RSS(recons['img_recons'], targets['img_targets'])
-                # img_input_grid = make_input_triplet(extra_params['img_inputs'])
                 if epoch == 1:
                     img_input_grid = make_input_RSS(extra_params['img_inputs'])
                 kspace_recon_grid = make_k_grid(recons['kspace_recons'], self.smoothing_factor)
@@ -230,21 +252,24 @@ class ModelTrainerIMG:
                 self.writer.add_image(f'k-space_Targets/{step}', kspace_target_grid, epoch, dataformats='HW')
                 if epoch == 1:
                     self.writer.add_image(f'Val_Image_Inputs/{step}', img_input_grid, epoch, dataformats='HW')
+                    self.writer.add_image(f'Val_Image_Recons/{step}', img_input_grid, epoch, dataformats='HW')
                 self.writer.add_image(f'Val_Image_Recons/{step}', img_recon_grid, epoch, dataformats='HW')
                 self.writer.add_image(f'Val_Image_Targets/{step}', img_target_grid, epoch, dataformats='HW')
                 self.writer.add_image(f'Image_Deltas/{step}', img_delta_grid, epoch, dataformats='HW')
 
-        epoch_loss, epoch_metrics = self._get_epoch_outputs(epoch, epoch_loss, epoch_metrics, training=False)
+        epoch_loss, epoch_metrics = self._get_epoch_outputs_val(epoch, epoch_loss, epoch_metrics, training=False)
         return epoch_loss, epoch_metrics
 
     def _val_step(self, inputs, targets, extra_params):
-        outputs = self.model(inputs)
+        outputs = self.modelG(inputs)
         recons = self.output_transform(outputs, targets, extra_params)
+
+        # Expects a single loss. No loss decomposition within domain implemented yet.
         cmg_loss = self.losses['cmg_loss'](recons['cmg_recons'], targets['cmg_targets'])
-        img_loss1 = self.losses['img_loss1'](recons['img_recons'], targets['img_targets'])
-        img_loss2 = self.losses['img_loss2'](recons['img_recons'], targets['img_targets'])
-        step_loss = cmg_loss + self.img_lambda1 * img_loss1 + self.img_lambda2 * img_loss2
-        step_metrics = {'cmg_loss': cmg_loss, 'img_loss1': img_loss1, 'img_loss2': img_loss2}
+        img_loss = self.losses['img_loss'](recons['img_recons'], targets['img_targets'])
+        step_loss = cmg_loss + self.img_lambda * img_loss
+
+        step_metrics = {'cmg_loss': cmg_loss, 'img_loss': img_loss}
         return recons, step_loss, step_metrics
 
     @staticmethod
@@ -289,8 +314,37 @@ class ModelTrainerIMG:
 
         return out_dict
 
+    def _get_epoch_outputs(self, epoch, epoch_G_loss, epoch_D_loss, epoch_metrics, training=True):
+        mode = 'Training' if training else 'Validation'
+        num_slices = len(self.train_loader.dataset) if training else len(self.val_loader.dataset)
 
-    def _get_epoch_outputs(self, epoch, epoch_loss, epoch_metrics, training=True):
+        # Checking for nan values.
+        epoch_G_loss = torch.stack(epoch_G_loss)
+        epoch_D_loss = torch.stack(epoch_D_loss)
+        is_finite = torch.isfinite(epoch_G_loss)
+        num_nans = (is_finite.size(0) - is_finite.sum()).item()
+
+        if num_nans > 0:
+            self.logger.warning(f'Epoch {epoch} {mode}: {num_nans} NaN values present in {num_slices} slices')
+            epoch_G_loss = torch.mean(epoch_G_loss[is_finite]).item()
+        else:
+            epoch_G_loss = torch.mean(epoch_G_loss).item()
+            epoch_D_loss = torch.mean(epoch_D_loss).item()
+
+        for key, value in epoch_metrics.items():
+            epoch_metric = torch.stack(value)
+            is_finite = torch.isfinite(epoch_metric)
+            num_nans = (is_finite.size(0) - is_finite.sum()).item()
+
+            if num_nans > 0:
+                self.logger.warning(f'Epoch {epoch} {mode} {key}: {num_nans} NaN values present in {num_slices} slices')
+                epoch_metrics[key] = torch.mean(epoch_metric[is_finite]).item()
+            else:
+                epoch_metrics[key] = torch.mean(epoch_metric).item()
+
+        return epoch_G_loss, epoch_D_loss, epoch_metrics
+
+    def _get_epoch_outputs_val(self, epoch, epoch_loss, epoch_metrics, training=True):
         mode = 'Training' if training else 'Validation'
         num_slices = len(self.train_loader.dataset) if training else len(self.val_loader.dataset)
 
@@ -298,7 +352,6 @@ class ModelTrainerIMG:
         epoch_loss = torch.stack(epoch_loss)
         is_finite = torch.isfinite(epoch_loss)
         num_nans = (is_finite.size(0) - is_finite.sum()).item()
-        import ipdb; ipdb.set_trace()
         if num_nans > 0:
             self.logger.warning(f'Epoch {epoch} {mode}: {num_nans} NaN values present in {num_slices} slices')
             epoch_loss = torch.mean(epoch_loss[is_finite]).item()
@@ -318,13 +371,33 @@ class ModelTrainerIMG:
 
         return epoch_loss, epoch_metrics
 
-    def _log_step_outputs(self, epoch, step, step_loss, step_metrics, training=True):
+    def _log_step_outputs(self, epoch, step, step_G_loss, step_D_loss, step_metrics, training=True):
+        mode = 'Training' if training else 'Validation'
+        self.logger.info(f'Epoch {epoch:03d} Step {step:03d} {mode} loss: {step_G_loss.item():.4e}')
+        self.logger.info(f'Epoch {epoch:03d} Step {step:03d} {mode} loss: {step_D_loss.item():.4e}')
+        for key, value in step_metrics.items():
+            self.logger.info(f'Epoch {epoch:03d} Step {step:03d}: {mode} {key}: {value.item():.4e}')
+
+    def _log_step_outputs_val(self, epoch, step, step_loss, step_metrics, training=True):
         mode = 'Training' if training else 'Validation'
         self.logger.info(f'Epoch {epoch:03d} Step {step:03d} {mode} loss: {step_loss.item():.4e}')
         for key, value in step_metrics.items():
             self.logger.info(f'Epoch {epoch:03d} Step {step:03d}: {mode} {key}: {value.item():.4e}')
 
-    def _log_epoch_outputs(self, epoch, epoch_loss, epoch_metrics, elapsed_secs, training=True, verbose = True):
+    def _log_epoch_outputs(self, epoch, epoch_G_loss, epoch_D_loss, epoch_metrics,
+                           elapsed_secs, training=True, verbose=True):
+        mode = 'Training' if training else 'Validation'
+        self.logger.info(f'Epoch {epoch:03d} {mode}. G_loss: {epoch_G_loss:.4e}, D_loss: {epoch_D_loss:.4e}'
+                         f'Time: {elapsed_secs // 60} min {elapsed_secs % 60} sec')
+        self.writer.add_scalar(f'{mode}_epoch_G_loss', scalar_value=epoch_G_loss, global_step=epoch)
+        self.writer.add_scalar(f'{mode}_epoch_D_loss', scalar_value=epoch_D_loss, global_step=epoch)
+
+        if verbose:
+            for key, value in epoch_metrics.items():
+                self.logger.info(f'Epoch {epoch:03d} {mode}. {key}: {value:.4e}')
+                self.writer.add_scalar(f'{mode}_epoch_{key}', scalar_value=value, global_step=epoch)
+
+    def _log_epoch_outputs_val(self, epoch, epoch_loss, epoch_metrics, elapsed_secs, training=True, verbose = True):
         mode = 'Training' if training else 'Validation'
         self.logger.info(f'Epoch {epoch:03d} {mode}. loss: {epoch_loss:.4e}, '
                          f'Time: {elapsed_secs // 60} min {elapsed_secs % 60} sec')

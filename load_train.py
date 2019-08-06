@@ -2,20 +2,19 @@ import torch
 from torch import nn, optim
 from torchsummary import summary
 from pathlib import Path
-import random
 
 from utils.run_utils import initialize, save_dict_as_json, get_logger, create_arg_parser
 from utils.train_utils import create_custom_data_loaders, load_model_from_checkpoint
 
-from train.subsample import MaskFunc, UniformMaskFunc, RandomMaskFunc
-from data.k2wgt import k2wgt, k2wgt_v2
-from data.input_transforms import Prefetch2Device, TrainPreProcessK, TrainPreProcessCCK, TrainPreProcessCCWeightK, \
-                                  TrainPreProcessNormCCK, TrainPreProcessCroppedK
+from train.subsample import MaskFunc, UniformMaskFunc
+from data.k2wgt import k2wgt
+from data.input_transforms import Prefetch2Device, TrainPreProcessK, TrainPreProcessCCK, TrainPreProcessCCWeightK
 from data.output_transforms import OutputReplaceTransformK, OutputWeightTransformK, \
-                                   OutputTransformK, OutputStackTransformK, OutputTransformNormK, OutputReplaceTransformCroppedK
+     OutputTransformK, OutputStackTransformK
 
-from models.fc_unet import FCUnet, Unet
-from models.attention_unet import UnetA
+from models.ks_unet import UnetKS
+from models.attention_unet import UnetA, DAUnetA
+from models.ase_unet import UnetASE
 from train.model_trainers.model_trainer_IMG2 import ModelTrainerIMG
 from metrics.custom_losses import CSSIM
 
@@ -77,12 +76,8 @@ def train_img(args):
 
     data_prefetch = Prefetch2Device(device)
 
-    input_train_transform = TrainPreProcessCroppedK(mask_func, args.challenge, args.device,
-                                                     use_seed=False, divisor=divisor)
-    input_val_transform = TrainPreProcessCroppedK(mask_func, args.challenge, args.device,
-                                                   use_seed=True, divisor=divisor)
-    # input_train_transform = TrainPreProcessCCWeightK(mask_func, args.challenge, args.device, use_seed=False, divisor=divisor)
-    # input_val_transform = TrainPreProcessCCWeightK(mask_func, args.challenge, args.device, use_seed=True, divisor=divisor)
+    input_train_transform = TrainPreProcessCCK(mask_func, args.challenge, args.device, use_seed=False, divisor=divisor)
+    input_val_transform = TrainPreProcessCCK(mask_func, args.challenge, args.device, use_seed=True, divisor=divisor)
 
     # DataLoaders
     train_loader, val_loader = create_custom_data_loaders(args, transform=data_prefetch)
@@ -93,18 +88,19 @@ def train_img(args):
         img_loss2=nn.L1Loss(reduction='mean')
     )
 
-    output_transform = OutputReplaceTransformCroppedK()
+    # output_transform = OutputReplaceTransformK()
+    # output_transform = OutputWeightTransformK()
+    output_transform = OutputTransformK()
 
     data_chans = 2 if args.challenge == 'singlecoil' else 30  # Multicoil has 15 coils with 2 for real/imag
+    # data_chans = 120
 
-    model = Unet(in_chans=data_chans, out_chans=data_chans, chans=args.chans,
-                 num_pool_layers=args.num_pool_layers).to(device)
+    model = DAUnetA(in_chans=data_chans, out_chans=data_chans, chans=args.chans,
+                    num_pool_layers=args.num_pool_layers).to(device)
 
-    # If you have to load, uncomment
-    # load_dir = './checkpoints/IMG/FC_2_4/ckpt_012.tar'
-    # load_model_from_checkpoint(model, load_dir, strict=False)
 
-    optimizer = optim.Adam(model.parameters(), lr=args.init_lr)
+
+    optimizer = optim.Adam(model.parameters(), lr=args.init_lr, weight_decay=1e-4)
 
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=args.lr_red_epoch, gamma=args.lr_red_rate)
 
@@ -118,37 +114,41 @@ def train_img(args):
 if __name__ == '__main__':
     settings = dict(
         # Variables that almost never change.
-        name = 'FCUnet_convergence',  # Please do change this every time Harry
+        name = 'example',
         challenge='multicoil',
-        data_root='/media/harry/fastmri/fastMRI_data',
+        data_root='/media/harry/mri/fastMRI_data',
         log_root='./logs',
         ckpt_root='./checkpoints',
         batch_size=1,  # This MUST be 1 for now.
         chans=64,
-        num_pool_layers=5,
+        num_pool_layers=4,
         save_best_only=True,
         center_fractions=[0.16, 0.08],
         accelerations=[2, 4],
         smoothing_factor=8,
 
         # Variables that occasionally change.
-        display_images=10,  # Maximum number of images to save.
-        num_workers=4,
-        init_lr=3e-3,
+        display_images=6,  # Maximum number of images to save.
+        num_workers=1,
+        init_lr=1e-5,
         gpu=0,  # Set to None for CPU mode.
         max_to_keep=1,
         img_lambda1=10,
         img_lambda2=2,
 
         start_slice=10,
+        min_ext_size=3,
+        max_ext_size=11,
 
         # Variables that change frequently.
-        sample_rate=0.01,
-        num_epochs=200,
+        sample_rate=1,
+        num_epochs=50,
         verbose=False,
         use_slice_metrics=True,  # Using slice metrics causes a 30% increase in training time.
-        lr_red_epoch=50,
+        lr_red_epoch=40,
         lr_red_rate=0.1,
     )
     options = create_arg_parser(**settings).parse_args()
     train_img(options)
+
+

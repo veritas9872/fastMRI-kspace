@@ -4,15 +4,19 @@ from torchsummary import summary
 from pathlib import Path
 
 from utils.run_utils import initialize, save_dict_as_json, get_logger, create_arg_parser
-from utils.train_utils import create_custom_data_loaders
+from utils.train_utils import create_custom_data_loaders, load_model_from_checkpoint
 
-from train.subsample import MaskFunc
-from data.input_transforms import Prefetch2Device, TrainPreProcessK
-from data.output_transforms import OutputReplaceTransformK
+from train.subsample import MaskFunc, UniformMaskFunc
+from data.k2wgt import k2wgt
+from data.input_transforms import Prefetch2Device, TrainPreProcessK, TrainPreProcessCCK, \
+                                  TrainPreProcessCCWeightK, TrainPreProcessCCSplitK
+from data.output_transforms import OutputReplaceTransformK, OutputWeightTransformK, \
+     OutputTransformK, OutputStackTransformK
 
 from models.ks_unet import UnetKS
-from models.ks_attention_unet import UnetKSA
-from train.model_trainers.model_trainer_IMG import ModelTrainerIMG
+from models.attention_unet import UnetA
+from models.ase_unet import UnetASE
+from train.model_trainers.model_trainer_stack import ModelTrainerIMG
 from metrics.custom_losses import CSSIM
 
 
@@ -65,39 +69,30 @@ def train_img(args):
     # UNET architecture requires that all inputs be dividable by some power of 2.
     divisor = 2 ** args.num_pool_layers
 
-    mask_func = MaskFunc(args.center_fractions, args.accelerations)
+    mask_func = UniformMaskFunc(args.center_fractions, args.accelerations)
 
     data_prefetch = Prefetch2Device(device)
 
-    input_train_transform = TrainPreProcessK(mask_func, args.challenge, args.device, use_seed=False, divisor=divisor)
-    input_val_transform = TrainPreProcessK(mask_func, args.challenge, args.device, use_seed=True, divisor=divisor)
-
-    # train_transform = InputTransformK(mask_func, args.challenge, args.device, use_seed=False, divisor=divisor)
-    # val_transform = InputTransformK(mask_func, args.challenge, args.device, use_seed=True, divisor=divisor)
+    input_train_transform = TrainPreProcessCCSplitK(mask_func, args.challenge, args.device, use_seed=False, divisor=divisor)
+    input_val_transform = TrainPreProcessCCSplitK(mask_func, args.challenge, args.device, use_seed=True, divisor=divisor)
 
     # DataLoaders
     train_loader, val_loader = create_custom_data_loaders(args, transform=data_prefetch)
 
     losses = dict(
         cmg_loss=nn.MSELoss(reduction='mean'),
-        img_loss=CSSIM(filter_size=7)
+        img_loss1=CSSIM(filter_size=7),
+        img_loss2=nn.L1Loss(reduction='mean')
     )
 
-    output_transform = OutputReplaceTransformK()
+    output_transform = OutputStackTransformK()
 
-    data_chans = 2 if args.challenge == 'singlecoil' else 30  # Multicoil has 15 coils with 2 for real/imag
+    data_chans = 120
 
-    # model = UnetKS(in_chans=data_chans, out_chans=data_chans, ext_chans=args.chans, chans=args.chans,
-    #                num_pool_layers=args.num_pool_layers, min_ext_size=args.min_ext_size, max_ext_size=args.max_ext_size,
-    #                use_ext_bias=True).to(device)
+    model = UnetA(in_chans=data_chans, out_chans=data_chans, chans=args.chans,
+                  num_pool_layers=args.num_pool_layers).to(device)
 
-    model = UnetKSA(in_chans=data_chans, out_chans=data_chans, ext_chans=args.chans, chans=args.chans,
-                   num_pool_layers=args.num_pool_layers, min_ext_size=args.min_ext_size, max_ext_size=args.max_ext_size,
-                   use_ext_bias=True).to(device)
-
-    # summary(model, input_size=(30, 640, 368))
-
-    optimizer = optim.Adam(model.parameters(), lr=args.init_lr)
+    optimizer = optim.Adam(model.parameters(), lr=args.init_lr, weight_decay=1e-4)
 
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=args.lr_red_epoch, gamma=args.lr_red_rate)
 
@@ -111,6 +106,7 @@ def train_img(args):
 if __name__ == '__main__':
     settings = dict(
         # Variables that almost never change.
+        name = 'example',
         challenge='multicoil',
         data_root='/media/harry/mri/fastMRI_data',
         log_root='./logs',
@@ -119,30 +115,30 @@ if __name__ == '__main__':
         chans=32,
         num_pool_layers=4,
         save_best_only=True,
-        center_fractions=[0.16, 0.08],
-        accelerations=[2, 4],
+        center_fractions=[0.16],
+        accelerations=[2],
         smoothing_factor=8,
 
         # Variables that occasionally change.
-        max_images=6,  # Maximum number of images to save.
+        display_images=6,  # Maximum number of images to save.
         num_workers=1,
-        init_lr=1E-4,
+        init_lr=3e-5,
         gpu=0,  # Set to None for CPU mode.
         max_to_keep=1,
-        img_lambda=10,
+        img_lambda1=10,
+        img_lambda2=2,
 
         start_slice=10,
         min_ext_size=3,
         max_ext_size=11,
 
         # Variables that change frequently.
-        sample_rate=0.1,
-        num_epochs=50,
+        sample_rate=1,
+        num_epochs=100,
         verbose=False,
         use_slice_metrics=True,  # Using slice metrics causes a 30% increase in training time.
         lr_red_epoch=40,
         lr_red_rate=0.1,
-        # prev_model_ckpt='',
     )
     options = create_arg_parser(**settings).parse_args()
     train_img(options)

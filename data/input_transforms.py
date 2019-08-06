@@ -89,6 +89,65 @@ class Prefetch2Device:
         return kspace_target, target, attrs, file_name, slice_num
 
 
+class TrainPreProcessCC:
+    def __init__(self, mask_func, challenge, device, use_seed=True, divisor=1):
+        if challenge not in ('singlecoil', 'multicoil'):
+            raise ValueError(f'Challenge should either be "singlecoil" or "multicoil"')
+        self.mask_func = mask_func
+        self.challenge = challenge
+        self.device = device
+        self.use_seed = use_seed
+        self.divisor = divisor
+
+    def __call__(self, kspace_target, target, attrs, file_name, slice_num):
+        assert isinstance(kspace_target, torch.Tensor)
+        if kspace_target.dim() == 4:  # If the collate function does not expand dimensions.
+            kspace_target = kspace_target.unsqueeze(dim=0)
+        elif kspace_target.dim() != 5:  # Expanded k-space should have 5 dimensions.
+            raise RuntimeError('k-space target has invalid shape!')
+
+        if kspace_target.size(0) != 1:
+            raise NotImplementedError('Batch size should be 1 for now.')
+
+        with torch.no_grad():
+            # Apply mask
+            seed = None if not self.use_seed else tuple(map(ord, file_name))
+            masked_kspace, mask = apply_mask(kspace_target, self.mask_func, seed)
+
+            k_scale = torch.std(masked_kspace)
+            k_scaling = torch.tensor(1) / k_scale
+
+            masked_kspace *= k_scaling  # Multiplication is faster than division.
+
+            full_im_target = ifft2(kspace_target) * k_scaling
+            cmg_target_toim = complex_center_crop(full_im_target, (320, 320))
+            kspace_target = fft2(cmg_target_toim)
+            cmg_target = kspace_to_nchw(cmg_target_toim)
+            img_target = complex_abs(cmg_target_toim)
+
+            full_im_input = ifft2(masked_kspace)
+            cc_im_input = complex_center_crop(full_im_input, (320, 320))
+
+            cmg_input = kspace_to_nchw(cc_im_input)
+            img_input = complex_abs(cc_im_input)
+
+            extra_params = {'img_inputs': img_input, 'k_scales': k_scale}
+
+            # Use plurals as keys to reduce confusion.
+            targets = {'kspace_targets': kspace_target, 'cmg_targets': cmg_target, 'img_targets': img_target}
+
+            margin = masked_kspace.size(-1) % self.divisor
+            if margin > 0:
+                pad = [(self.divisor - margin) // 2, (1 + self.divisor - margin) // 2]
+            else:  # This is a temporary fix to prevent padding by half the divisor when margin=0.
+                pad = [0, 0]
+
+            # This pads at the last dimension of a tensor with 0.
+            inputs = cmg_input
+
+        return inputs, targets, extra_params
+
+
 class TrainPreProcessK:
     def __init__(self, mask_func, challenge, device, use_seed=True, divisor=1):
         if challenge not in ('singlecoil', 'multicoil'):
@@ -238,7 +297,7 @@ class TrainPreProcessCroppedK:
         with torch.no_grad():
             # Apply mask
             seed = None if not self.use_seed else tuple(map(ord, file_name))
-            masked_kspace, mask, acceleration = apply_mask(kspace_target, self.mask_func, seed)
+            masked_kspace, mask= apply_mask(kspace_target, self.mask_func, seed)
             k_scale = torch.std(masked_kspace)
             k_scaling = torch.tensor(1) / k_scale
 
@@ -251,8 +310,7 @@ class TrainPreProcessCroppedK:
 
             masked_kspace = kspace_to_nchw(masked_kspace)
 
-            extra_params = {'k_scales': k_scale, 'masks': mask, 'img_inputs': visualize_im,
-                            'acceleration': acceleration}
+            extra_params = {'k_scales': k_scale, 'masks': mask, 'img_inputs': visualize_im}
 
             # Target must be on the same scale as the inputs for scale invariance of data.
             # kspace_target *= (torch.tensor(1) / k_scale)

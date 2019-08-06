@@ -8,16 +8,13 @@ from utils.run_utils import initialize, save_dict_as_json, get_logger, create_ar
 from utils.train_utils import create_custom_data_loaders, load_model_from_checkpoint
 
 from train.subsample import MaskFunc, UniformMaskFunc, RandomMaskFunc
-from data.k2wgt import k2wgt, k2wgt_v2
-from data.input_transforms import Prefetch2Device, TrainPreProcessK, TrainPreProcessCCK, TrainPreProcessCCWeightK, \
-                                  TrainPreProcessNormCCK, TrainPreProcessCroppedK
-from data.output_transforms import OutputReplaceTransformK, OutputWeightTransformK, \
-                                   OutputTransformK, OutputStackTransformK, OutputTransformNormK, OutputReplaceTransformCroppedK
+from data.input_transforms import Prefetch2Device, TrainPreProcessCC
+from data.output_transforms import OutputTransformCC
 
 from models.fc_unet import FCUnet, Unet
-from models.attention_unet import UnetA
-from train.model_trainers.model_trainer_IMG2 import ModelTrainerIMG
-from metrics.custom_losses import CSSIM
+from models.networks_unet import UnetBlock1
+from models.Discriminator import GANLoss, NLayerDiscriminator
+from train.model_trainers.IMG_gan_trainer import ModelTrainerIMGgan
 
 
 def train_img(args):
@@ -69,47 +66,45 @@ def train_img(args):
     # UNET architecture requires that all inputs be dividable by some power of 2.
     divisor = 2 ** args.num_pool_layers
 
-    # tmp = torch.zeros([1, 15, 320, 320, 2])
-    # _, weight_map = k2wgt(tmp)
-    # weight_map = weight_map.to('cuda:0')
-
     mask_func = MaskFunc(args.center_fractions, args.accelerations)
 
     data_prefetch = Prefetch2Device(device)
 
-    input_train_transform = TrainPreProcessCroppedK(mask_func, args.challenge, args.device,
-                                                     use_seed=False, divisor=divisor)
-    input_val_transform = TrainPreProcessCroppedK(mask_func, args.challenge, args.device,
-                                                   use_seed=True, divisor=divisor)
-    # input_train_transform = TrainPreProcessCCWeightK(mask_func, args.challenge, args.device, use_seed=False, divisor=divisor)
-    # input_val_transform = TrainPreProcessCCWeightK(mask_func, args.challenge, args.device, use_seed=True, divisor=divisor)
+    input_train_transform = TrainPreProcessCC(mask_func, args.challenge, args.device,
+                                              use_seed=False, divisor=divisor)
+    input_val_transform = TrainPreProcessCC(mask_func, args.challenge, args.device,
+                                            use_seed=True, divisor=divisor)
 
     # DataLoaders
     train_loader, val_loader = create_custom_data_loaders(args, transform=data_prefetch)
 
     losses = dict(
         cmg_loss=nn.MSELoss(reduction='mean'),
-        img_loss1=CSSIM(filter_size=7),
-        img_loss2=nn.L1Loss(reduction='mean')
+        img_loss=nn.L1Loss(reduction='mean'),
+        GAN_loss=GANLoss(args.gan_mode).to(device) # Change this part
     )
 
-    output_transform = OutputReplaceTransformCroppedK()
+    output_transform = OutputTransformCC()
 
     data_chans = 2 if args.challenge == 'singlecoil' else 30  # Multicoil has 15 coils with 2 for real/imag
 
-    model = Unet(in_chans=data_chans, out_chans=data_chans, chans=args.chans,
-                 num_pool_layers=args.num_pool_layers).to(device)
+    modelG = Unet(in_chans=data_chans, out_chans=data_chans, chans=args.chans,
+                  num_pool_layers=args.num_pool_layers).to(device)
+    modelD = NLayerDiscriminator(input_nc=1).to(device)
 
     # If you have to load, uncomment
     # load_dir = './checkpoints/IMG/FC_2_4/ckpt_012.tar'
     # load_model_from_checkpoint(model, load_dir, strict=False)
 
-    optimizer = optim.Adam(model.parameters(), lr=args.init_lr)
+    optimizerG = optim.Adam(modelG.parameters(), lr=args.init_lr)
+    optimizerD = optim.Adam(modelD.parameters(), lr=args.init_lr)
 
-    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=args.lr_red_epoch, gamma=args.lr_red_rate)
+    schedulerG = optim.lr_scheduler.StepLR(optimizerG, step_size=args.lr_red_epoch, gamma=args.lr_red_rate)
+    schedulerD = optim.lr_scheduler.StepLR(optimizerD, step_size=args.lr_red_epoch, gamma=args.lr_red_rate)
 
-    trainer = ModelTrainerIMG(args, model, optimizer, train_loader, val_loader,
-                              input_train_transform, input_val_transform, output_transform, losses, scheduler)
+    trainer = ModelTrainerIMGgan(args, modelG, modelD, optimizerG, optimizerD, train_loader, val_loader,
+                                 input_train_transform, input_val_transform, output_transform, losses,
+                                 schedulerG, schedulerD)
 
     # TODO: Implement logging of model, losses, transforms, etc.
     trainer.train_model()
@@ -118,7 +113,7 @@ def train_img(args):
 if __name__ == '__main__':
     settings = dict(
         # Variables that almost never change.
-        name = 'FCUnet_convergence',  # Please do change this every time Harry
+        name='gan_image',  # Please do change this every time Harry
         challenge='multicoil',
         data_root='/media/harry/fastmri/fastMRI_data',
         log_root='./logs',
@@ -134,16 +129,17 @@ if __name__ == '__main__':
         # Variables that occasionally change.
         display_images=10,  # Maximum number of images to save.
         num_workers=4,
-        init_lr=3e-3,
+        init_lr=3e-4,
         gpu=0,  # Set to None for CPU mode.
         max_to_keep=1,
-        img_lambda1=10,
-        img_lambda2=2,
+        img_lambda=10,
+        GAN_lambda=5e-2,
+        gan_mode='lsgan',
 
         start_slice=10,
 
         # Variables that change frequently.
-        sample_rate=0.01,
+        sample_rate=1,
         num_epochs=200,
         verbose=False,
         use_slice_metrics=True,  # Using slice metrics causes a 30% increase in training time.

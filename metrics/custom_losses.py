@@ -30,6 +30,68 @@ class CSSIM(nn.Module):  # Complementary SSIM
                              sigma=self.sigma, reduction=self.reduction)
 
 
+class logSSIMLoss(nn.Module):  # log (1 - SSIM)
+    def __init__(self, filter_size=7, k1=0.01, k2=0.03, sigma=1.5, reduction='mean'):
+        super().__init__()
+        # self.max_val = default_range
+        self.filter_size = filter_size
+        self.k1 = k1
+        self.k2 = k2
+        self.sigma = sigma
+        self.reduction = reduction
+
+    def forward(self, input, target, max_val=None):
+        assert input.shape == target.shape, 'Input and target sizes do not match.'
+        assert input.device == target.device, 'Input and target are on different devices.'
+
+        true_range = target.max() - target.min()
+
+        if max_val is None:
+            max_val = true_range
+        elif max_val < true_range:
+            raise RuntimeWarning('Given value range is smaller than actual range of values.')
+
+        cSSIM = 1 - ssim_loss(input, target, max_val=max_val, filter_size=self.filter_size, k1=self.k1, k2=self.k2,
+                             sigma=self.sigma, reduction=self.reduction)
+
+        # Addition of epsilon for numerical stability
+        eps = 1e-3
+        log_cSSIM = torch.log10(cSSIM + eps)
+
+        return log_cSSIM
+
+
+class collaSSIMLoss(nn.Module):  # -log(1 + SSIM)
+    def __init__(self, filter_size=7, k1=0.01, k2=0.03, sigma=1.5, reduction='mean'):
+        super().__init__()
+        # self.max_val = default_range
+        self.filter_size = filter_size
+        self.k1 = k1
+        self.k2 = k2
+        self.sigma = sigma
+        self.reduction = reduction
+
+    def forward(self, input, target, max_val=None):
+        assert input.shape == target.shape, 'Input and target sizes do not match.'
+        assert input.device == target.device, 'Input and target are on different devices.'
+
+        true_range = target.max() - target.min()
+
+        if max_val is None:
+            max_val = true_range
+        elif max_val < true_range:
+            raise RuntimeWarning('Given value range is smaller than actual range of values.')
+
+        cSSIM = 1 + ssim_loss(input, target, max_val=max_val, filter_size=self.filter_size, k1=self.k1, k2=self.k2,
+                              sigma=self.sigma, reduction=self.reduction)
+
+        # Addition of epsilon for numerical stability
+        eps = 1e-3
+        log_cSSIM = -torch.log10(cSSIM + eps)
+
+        return log_cSSIM
+
+
 class MySSIM(nn.Module):
     def __init__(self, filter_size=7, k1=0.01, k2=0.03, sigma=1.5, reduction='mean'):
         super().__init__()

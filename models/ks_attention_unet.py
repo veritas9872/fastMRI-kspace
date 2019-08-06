@@ -89,6 +89,30 @@ class CCAMBlock(nn.Module):
         return y
 
 
+class ChannelAttention(nn.Module):
+    def __init__(self, in_chans):
+        super().__init__()
+        self.gap = nn.AdaptiveAvgPool2d(1)
+        self.MLP1 = nn.Linear(in_chans, int(in_chans / 16))
+        self.MLP2 = nn.Linear(int(in_chans / 16), in_chans)
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, tensor):
+        y = self.gap(tensor)
+        y = y.view(tensor.shape[0], 1, 1, -1)
+        y = self.MLP1(y)
+        y = self.MLP2(y)
+        y = self.sigmoid(y)
+        y = y.view(y.shape[0], -1, 1, 1)
+        y = torch.mul(tensor, y)
+
+        return y
+
+        # Maybe batch-norm the two pooling types to make their scales more similar.
+        att = self.sigmoid(gap + gmp)
+        return tensor * att
+
+
 class Bilinear(nn.Module):
     def __init__(self):
         super().__init__()
@@ -102,16 +126,12 @@ class UnetKSA(nn.Module):
                  min_ext_size, max_ext_size, use_ext_bias=True):
 
         super().__init__()
-        # Maybe change these to optional settings later.
-        # self.extractor = DilatedSignalExtractor(
-        #     in_chans=in_chans, out_chans=chans, ext_chans=ext_chans,
-        #     min_ext_size=min_ext_size, max_ext_size=max_ext_size, use_bias=use_ext_bias)
 
         self.extractor = AsymmetricSignalExtractor(
             in_chans=in_chans, out_chans=chans, ext_chans=ext_chans,
             min_ext_size=min_ext_size, max_ext_size=max_ext_size, use_bias=use_ext_bias)
 
-        self.ccam1 = CCAMBlock(chans, (640, 368))
+        self.cam = ChannelAttention(chans)
         self.pool = nn.AvgPool2d(2)
         self.interp = Bilinear()
 
@@ -120,10 +140,7 @@ class UnetKSA(nn.Module):
 
         for n in range(num_pool_layers - 1):
             conv = ConvBlock(in_chans=ch, out_chans=ch * 2)
-            # down_ccam = CCAMBlock(ch * 2, (math.floor(640 / (n+2)), math.floor(368 / (n+2))))
             self.down_sample_layers.append(conv)
-            # if n < 2:
-            #     self.down_sample_layers.append(down_ccam)
             ch *= 2
 
         self.conv_mid = ConvBlock(in_chans=ch, out_chans=ch)
@@ -132,6 +149,7 @@ class UnetKSA(nn.Module):
         for n in range(num_pool_layers - 1):
             conv = ConvBlock(in_chans=ch * 2, out_chans=ch // 2)
             self.up_sample_layers.append(conv)
+            #self.up_sample_layers.append(self.cam)
             ch //= 2
         else:
             conv = ConvBlock(in_chans=ch * 2, out_chans=ch)
@@ -142,7 +160,7 @@ class UnetKSA(nn.Module):
     def forward(self, tensor):
         stack = list()
         output = self.extractor(tensor)
-        output = self.ccam1(output)
+        output = self.cam(output)
         stack.append(output)
         output = self.pool(output)
 
