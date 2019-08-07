@@ -761,7 +761,7 @@ class PreProcessIMG:
     Pre-processing for image-to-image learning.
     """
     def __init__(self, mask_func, challenge, device, augment_data=False,
-                 use_seed=True, center_crop=True, resolution=320, divisor=1):
+                 use_seed=True, crop_center=True, resolution=320, divisor=1):
         assert callable(mask_func), '`mask_func` must be a callable function.'
         if challenge not in ('singlecoil', 'multicoil'):
             raise ValueError(f'Challenge should either be "singlecoil" or "multicoil"')
@@ -771,7 +771,7 @@ class PreProcessIMG:
         self.device = device
         self.augment_data = augment_data
         self.use_seed = use_seed
-        self.center_crop = center_crop
+        self.crop_center = crop_center
         self.resolution = resolution  # Only has effect when center_crop is True.
         self.divisor = divisor
 
@@ -794,7 +794,7 @@ class PreProcessIMG:
 
             image = complex_abs(ifft2(masked_kspace))
 
-            if self.center_crop:
+            if self.crop_center:
                 image = center_crop(image, shape=(self.resolution, self.resolution))
 
             img_scale = torch.std(image)
@@ -807,7 +807,7 @@ class PreProcessIMG:
             img_target = complex_abs(ifft2(kspace_target))
             img_target /= img_scale
 
-            if self.center_crop:
+            if self.crop_center:
                 img_target = center_crop(img_target, shape=(self.resolution, self.resolution))
 
             # Data augmentation by flipping images up-down and left-right.

@@ -184,8 +184,7 @@ def ms_ssim(input, target, filter_size=11, sigma=1.5, kernel=None, max_val=None,
         input = F.avg_pool2d(input, kernel_size=2, padding=padding)
         target = F.avg_pool2d(target, kernel_size=2, padding=padding)
 
-    mcs = torch.stack(mcs, dim=0)  # mcs, (level, batch)
-    # weights, (level)
+    mcs = torch.stack(mcs, dim=0)  # mcs, (level, batch)  # weights, (level)
     ms_ssim_val = torch.prod((mcs[:-1] ** weights[:-1].unsqueeze(1)) * (ssim_val ** weights[-1]), dim=0)  # (batch, )
 
     if reduction == 'mean':

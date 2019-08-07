@@ -11,9 +11,9 @@ from data.input_transforms import PreProcessIMG
 from data.output_transforms import PostProcessIMG
 
 from train.new_model_trainers.img_to_img import ModelTrainerI2I
+# from models.deep_unet import UNet
 from models.att_unet import UNet
-from models.simple_unet import UnetModel
-from metrics.new_1d_ssim import SSIMLoss
+from metrics.new_1d_ssim import SSIMLoss, LogSSIMLoss
 
 
 def train_img_to_img(args):
@@ -57,7 +57,6 @@ def train_img_to_img(args):
 
     save_dict_as_json(vars(args), log_dir=log_path, save_name=run_name)
 
-    # Input transforms. These are on a per-slice basis.
     # UNET architecture requires that all inputs be dividable by some power of 2.
     divisor = 2 ** args.num_pool_layers
 
@@ -79,7 +78,8 @@ def train_img_to_img(args):
 
     losses = dict(
         # img_loss=SSIMLoss(filter_size=7).to(device=device)
-        img_loss=nn.L1Loss()
+        img_loss=LogSSIMLoss(filter_size=7).to(device=device)
+        # img_loss=nn.L1Loss()
     )
 
     model = UNet(
@@ -151,16 +151,16 @@ if __name__ == '__main__':
         use_slice_metrics=True,
         num_epochs=30,
 
-        sample_rate_train=0.4,
-        start_slice_train=10,
-        sample_rate_val=1,
-        start_slice_val=0,
-
         gpu=1,  # Set to None for CPU mode.
         num_workers=4,
         init_lr=1E-4,
         max_to_keep=1,
         # prev_model_ckpt='',
+
+        sample_rate_train=0.4,
+        start_slice_train=10,
+        sample_rate_val=1,
+        start_slice_val=0,
     )
     arguments = create_arg_parser(**settings).parse_args()
     train_img_to_img(arguments)

@@ -77,6 +77,7 @@ def train_cmg_and_img(args):
     losses = dict(
         cmg_loss=nn.MSELoss(),
         img_loss=SSIMLoss(filter_size=7).to(device=device)
+        # img_loss=LogSSIMLoss(filter_size=7).to(device=device)
         # img_loss=nn.L1Loss()
     )
 
