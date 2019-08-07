@@ -83,7 +83,7 @@ class ModelEvaluator:
         self._save_reconstructions(reconstructions)
 
 
-def main(model, args):
+def main(args):
     # Selecting device
     if (args.gpu is not None) and torch.cuda.is_available():
         device = torch.device(f'cuda:{args.gpu}')
@@ -91,6 +91,10 @@ def main(model, args):
         device = torch.device('cpu')
 
     print(f'Device {device} has been selected.')
+
+    model = UNet(
+
+    ).to(device)
 
     pre_processing = PreProcessIMG()
     post_processing = OutputReconstructionTransform()
@@ -114,8 +118,4 @@ if __name__ == '__main__':
     )
 
     parser = create_arg_parser(**defaults).parse_args()
-
-    # Change this part when a different model is being used.
-    unet = UnetModel(in_chans=1, out_chans=1, chans=32, num_pool_layers=4, drop_prob=0)
-
-    main(unet, parser)
+    main(parser)

@@ -67,9 +67,9 @@ def train_cmg_to_img(args):
         mask_func = UniformMaskFunc(args.center_fractions, args.accelerations)
 
     input_train_transform = PreProcessCMG(mask_func, args.challenge, device, augment_data=args.augment_data,
-                                          use_seed=False, center_crop=args.center_crop, divisor=divisor)
+                                          use_seed=False, crop_center=args.crop_center, divisor=divisor)
     input_val_transform = PreProcessCMG(mask_func, args.challenge, device, augment_data=False, use_seed=True,
-                                        center_crop=args.center_crop, divisor=divisor)
+                                        crop_center=args.crop_center, divisor=divisor)
 
     output_train_transform = PostProcessCMG()
     output_val_transform = PostProcessCMG()
@@ -122,7 +122,7 @@ if __name__ == '__main__':
         verbose=False,
         use_gt=True,
         augment_data=True,
-        center_crop=True,
+        crop_center=True,
 
         # Model specific parameters.
         train_method='C2I',  # Weighted semi-k-space to complex-valued image.
@@ -150,8 +150,12 @@ if __name__ == '__main__':
         # Variables that change frequently.
         use_slice_metrics=True,
         num_epochs=30,
-        sample_rate=0.5,  # Ratio of the dataset to sample and use.
-        start_slice=10,
+
+        sample_rate_train=0.4,
+        start_slice_train=10,
+        sample_rate_val=1,
+        start_slice_val=0,
+
         gpu=1,  # Set to None for CPU mode.
         num_workers=4,
         init_lr=2E-4,

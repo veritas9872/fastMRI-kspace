@@ -14,10 +14,10 @@ def create_prefetch_datasets(args):
     transform = Prefetch2Device(device=args.device)
 
     arguments = vars(args)  # Placed here for backward compatibility and convenience.
-    args.sample_rate_train = arguments.get('sample_rate_train', args.sample_rate)
-    args.sample_rate_val = arguments.get('sample_rate_val', args.sample_rate)
-    args.start_slice_train = arguments.get('start_slice_train', args.start_slice)
-    args.start_slice_val = arguments.get('start_slice_val', args.start_slice)
+    args.sample_rate_train = arguments.get('sample_rate_train', arguments.get('sample_rate'))
+    args.sample_rate_val = arguments.get('sample_rate_val', arguments.get('sample_rate'))
+    args.start_slice_train = arguments.get('start_slice_train', arguments.get('start_slice'))
+    args.start_slice_val = arguments.get('start_slice_val', arguments.get('start_slice'))
 
     # Generating Datasets.
     train_dataset = CustomSliceData(
