@@ -29,8 +29,7 @@ def gaussian_filter(input: torch.Tensor, kernel: torch.Tensor) -> torch.Tensor:
         torch.Tensor: blurred tensors
     """
 
-    ch = input.size(1)
-    kernel = kernel.expand(ch, 1, 1, -1)  # Dynamic window expansion. expand() does not copy memory.
+    ch = input.size(1)  # The kernel is expected to have been expanded by the number of channels already.
     out = F.conv2d(input, kernel, stride=1, padding=0, groups=ch)
     out = F.conv2d(out, kernel.transpose(-2, -1), stride=1, padding=0, groups=ch)
     return out
@@ -112,6 +111,9 @@ def ssim(input, target, max_val=None, filter_size=11, sigma=1.5, kernel=None, re
     if kernel is None:
         kernel = _fspecial_gauss_1d(filter_size, sigma).to(device=input.device)
 
+    ch = input.size(1)
+    kernel = kernel.expand(ch, 1, 1, -1)  # Dynamic window expansion. expand() does not copy memory.
+
     # Not exposing k1, k2, etc. SSIM should have unbiased covariance but this isn't ready yet.
     ssim_val, _ = _ssim(input, target, kernel=kernel, max_val=max_val, biased_cov=True)
 
@@ -162,11 +164,14 @@ def ms_ssim(input, target, filter_size=11, sigma=1.5, kernel=None, max_val=None,
     if max_val is None:
         max_val = target.max() - target.min()  # May cause problems if value is 0.
 
+    if weights is None:
+        weights = torch.tensor([0.0448, 0.2856, 0.3001, 0.2363, 0.1333], dtype=input.dtype, device=input.device)
+
     if kernel is None:
         kernel = _fspecial_gauss_1d(filter_size, sigma).to(device=input.device)
 
-    if weights is None:
-        weights = torch.tensor([0.0448, 0.2856, 0.3001, 0.2363, 0.1333], dtype=input.dtype, device=input.device)
+    ch = input.size(1)
+    kernel = kernel.expand(ch, 1, 1, -1)  # Dynamic window expansion. expand() does not copy memory.
 
     levels = len(weights)
     mcs = list()

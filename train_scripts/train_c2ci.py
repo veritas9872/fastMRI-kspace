@@ -12,7 +12,7 @@ from data.output_transforms import PostProcessCMG
 
 from train.new_model_trainers.cmg_and_img import ModelTrainerCI
 from models.deep_unet import UNet
-from metrics.new_1d_ssim import SSIMLoss
+from metrics.new_1d_ssim import SSIMLoss, LogSSIMLoss
 
 
 def train_cmg_and_img(args):
