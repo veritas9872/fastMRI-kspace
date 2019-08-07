@@ -804,9 +804,8 @@ class PreProcessIMG:
             extra_params.update(info)
             extra_params.update(attrs)
 
-            # Recall that the Fourier transform is a linear transform.
-            kspace_target /= img_scale
             img_target = complex_abs(ifft2(kspace_target))
+            img_target /= img_scale
 
             if self.center_crop:
                 img_target = center_crop(img_target, shape=(self.resolution, self.resolution))

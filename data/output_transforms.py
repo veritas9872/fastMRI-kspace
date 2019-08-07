@@ -1,5 +1,7 @@
 import torch
 from torch import nn
+import torch.nn.functional as F
+
 import numpy as np
 
 from data.data_transforms import nchw_to_kspace, ifft2, fft2, complex_abs, ifft1, fft1, root_sum_of_squares, center_crop
@@ -360,18 +362,15 @@ class PostProcessIMG(nn.Module):
         right = left + img_target.size(-1)
 
         # Cropping width dimension by pad.
-        img_recon = img_output[..., left:right]
+        img_recon = F.relu(img_output[..., left:right])  # Removing values below 0, which are impossible anyway.
 
         assert img_recon.shape == img_target.shape, 'Reconstruction and target sizes are different.'
-        assert (img_recon.size(-2) % 2 == 0) and (img_recon.size(-1) % 2 == 0), \
-            'Not impossible but not expected to have sides with odd lengths.'
 
         recons = {'img_recons': img_recon}
 
         if img_target.size(1) == 15:
-            rss_recon = center_crop(img_recon, (self.resolution, self.resolution))
+            rss_recon = center_crop(img_recon, (self.resolution, self.resolution)) * extra_params['img_scales']
             rss_recon = root_sum_of_squares(rss_recon, dim=1).squeeze()
-            rss_recon *= extra_params['img_scales']
             recons['rss_recons'] = rss_recon
 
         return recons  # recons are not rescaled except rss_recons.

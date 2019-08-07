@@ -141,7 +141,7 @@ if __name__ == '__main__':
         use_ca=True,
         reduction=8,
         use_gap=True,
-        use_gmp=False,
+        use_gmp=True,
 
         # Learning rate scheduling.
         lr_red_epochs=[20, 25],
@@ -150,11 +150,11 @@ if __name__ == '__main__':
         # Variables that change frequently.
         use_slice_metrics=True,
         num_epochs=30,
-        sample_rate=0.5,  # Ratio of the dataset to sample and use.
-        start_slice=10,
+        sample_rate=1,  # Ratio of the dataset to sample and use.
+        start_slice=0,
         gpu=1,  # Set to None for CPU mode.
         num_workers=4,
-        init_lr=2E-4,
+        init_lr=1E-4,
         max_to_keep=1,
         # prev_model_ckpt='',
     )

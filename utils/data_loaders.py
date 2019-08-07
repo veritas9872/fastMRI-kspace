@@ -13,13 +13,19 @@ def temp_collate_fn(batch):
 def create_prefetch_datasets(args):
     transform = Prefetch2Device(device=args.device)
 
+    arguments = vars(args)  # Placed here for backward compatibility and convenience.
+    args.sample_rate_train = arguments.get('sample_rate_train', args.sample_rate)
+    args.sample_rate_val = arguments.get('sample_rate_val', args.sample_rate)
+    args.start_slice_train = arguments.get('start_slice_train', args.start_slice)
+    args.start_slice_val = arguments.get('start_slice_val', args.start_slice)
+
     # Generating Datasets.
     train_dataset = CustomSliceData(
         root=Path(args.data_root) / f'{args.challenge}_train',
         transform=transform,
         challenge=args.challenge,
-        sample_rate=args.sample_rate,
-        start_slice=args.start_slice,
+        sample_rate=args.sample_rate_train,
+        start_slice=args.start_slice_train,
         use_gt=args.use_gt
     )
 
@@ -27,8 +33,8 @@ def create_prefetch_datasets(args):
         root=Path(args.data_root) / f'{args.challenge}_val',
         transform=transform,
         challenge=args.challenge,
-        sample_rate=args.sample_rate,
-        start_slice=args.start_slice,
+        sample_rate=args.sample_rate_val,
+        start_slice=args.start_slice_val,
         use_gt=args.use_gt
     )
     return train_dataset, val_dataset

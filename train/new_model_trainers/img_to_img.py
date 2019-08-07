@@ -247,6 +247,8 @@ class ModelTrainerI2I:
         # Please check cases when there is no remainder.
         if self.display_interval and (step % self.display_interval == 0):
             img_recon_grid = make_img_grid(recons['img_recons'], self.shrink_scale)
+            # Added delta image in the image domain. This is different from delta images in the complex domain.
+            # However, it is the only available delta image in I2I training.
             img_delta_grid = make_img_grid(targets['img_targets'] - recons['img_recons'], self.shrink_scale)
             self.writer.add_image(f'{mode} Image Recons/{step}', img_recon_grid, epoch, dataformats='HW')
             self.writer.add_image(f'{mode} Delta Image/{step}', img_delta_grid, epoch, dataformats='HW')

@@ -37,9 +37,8 @@ def train_cmg_and_img(args):
     log_path = log_path / run_name
     log_path.mkdir(exist_ok=True)
 
-    logger = get_logger(name=__name__, save_file=log_path / run_name)
+    logger = get_logger(name=__name__)
 
-    # Assignment inside running code appears to work.
     if (args.gpu is not None) and torch.cuda.is_available():
         device = torch.device(f'cuda:{args.gpu}')
         logger.info(f'Using GPU {args.gpu} for {run_name}')
@@ -56,19 +55,18 @@ def train_cmg_and_img(args):
 
     save_dict_as_json(vars(args), log_dir=log_path, save_name=run_name)
 
-    # Input transforms. These are on a per-slice basis.
     # UNET architecture requires that all inputs be dividable by some power of 2.
     divisor = 2 ** args.num_pool_layers
 
-    if args.random_sampling:
+    if args.random_sampling:  # Same as in the challenge
         mask_func = RandomMaskFunc(args.center_fractions, args.accelerations)
     else:
         mask_func = UniformMaskFunc(args.center_fractions, args.accelerations)
 
     input_train_transform = PreProcessCMG(mask_func, args.challenge, device, augment_data=args.augment_data,
                                           use_seed=False, center_crop=args.center_crop, divisor=divisor)
-    input_val_transform = PreProcessCMG(mask_func, args.challenge, device, augment_data=False, use_seed=True,
-                                        center_crop=args.center_crop, divisor=divisor)
+    input_val_transform = PreProcessCMG(mask_func, args.challenge, device, augment_data=False,
+                                        use_seed=True, center_crop=args.center_crop, divisor=divisor)
 
     output_train_transform = PostProcessCMG()
     output_val_transform = PostProcessCMG()
@@ -100,7 +98,7 @@ def train_cmg_and_img(args):
         trainer.train_model()
     except KeyboardInterrupt:
         trainer.writer.close()
-        # logger.warning(f'Closing TensorBoard writer and flushing remaining outputs due to KeyboardInterrupt.')
+        logger.warning(f'Closing TensorBoard writer and flushing remaining outputs due to KeyboardInterrupt.')
 
 
 if __name__ == '__main__':
@@ -131,7 +129,7 @@ if __name__ == '__main__':
         train_method='C2CI',  # Weighted semi-k-space to complex-valued image.
         num_groups=16,  # Maybe try 16 now since chans is 64.
         chans=64,
-        num_depth_blocks=1,
+        num_depth_blocks=3,
         negative_slope=0.1,
         interp_mode='nearest',
         use_residual=True,
@@ -148,19 +146,22 @@ if __name__ == '__main__':
         use_gmp=False,
 
         # Learning rate scheduling.
-        lr_red_epochs=[20, 30, 35],
+        lr_red_epochs=[15, 20],
         lr_red_rate=0.1,
 
         # Variables that change frequently.
         use_slice_metrics=True,
-        num_epochs=100,
-        sample_rate=1,  # Ratio of the dataset to sample and use.
-        start_slice=10,
+        num_epochs=25,
+
         gpu=1,  # Set to None for CPU mode.
-        num_workers=3,
-        init_lr=2E-2,
+        num_workers=4,
+        init_lr=1E-4,
         max_to_keep=1,
-        # prev_model_ckpt='',
+
+        sample_rate_train=0.4,
+        sample_rate_val=1,
+        start_slice_train=10,
+        start_slice_val=0,
     )
     arguments = create_arg_parser(**settings).parse_args()
     train_cmg_and_img(arguments)
