@@ -11,9 +11,9 @@ from data.input_transforms import PreProcessCMG
 from data.output_transforms import PostProcessCMG
 
 from train.new_model_trainers.img_only import ModelTrainerIMG
-from models.att_unet import UNet
-from models.simple_unet import UnetModel
-from metrics.new_1d_ssim import SSIMLoss
+# from models.att_unet import UNet
+from models.unet_no_norm import UNet
+from metrics.new_1d_ssim import SSIMLoss, LogSSIMLoss
 
 
 def train_cmg_to_img(args):
@@ -57,35 +57,36 @@ def train_cmg_to_img(args):
 
     save_dict_as_json(vars(args), log_dir=log_path, save_name=run_name)
 
-    # Input transforms. These are on a per-slice basis.
-    # UNET architecture requires that all inputs be dividable by some power of 2.
-    divisor = 2 ** args.num_pool_layers
-
     if args.random_sampling:
         mask_func = RandomMaskFunc(args.center_fractions, args.accelerations)
     else:
         mask_func = UniformMaskFunc(args.center_fractions, args.accelerations)
 
     input_train_transform = PreProcessCMG(mask_func, args.challenge, device, augment_data=args.augment_data,
-                                          use_seed=False, crop_center=args.crop_center, divisor=divisor)
-    input_val_transform = PreProcessCMG(mask_func, args.challenge, device, augment_data=False, use_seed=True,
-                                        crop_center=args.crop_center, divisor=divisor)
+                                          use_seed=False, crop_center=args.crop_center)
+    input_val_transform = PreProcessCMG(mask_func, args.challenge, device, augment_data=False,
+                                        use_seed=True, crop_center=args.crop_center)
 
-    output_train_transform = PostProcessCMG()
-    output_val_transform = PostProcessCMG()
+    output_train_transform = PostProcessCMG(challenge=args.challenge, residual_acs=args.residual_acs)
+    output_val_transform = PostProcessCMG(challenge=args.challenge, residual_acs=args.residual_acs)
 
     # DataLoaders
     train_loader, val_loader = create_prefetch_data_loaders(args)
 
     losses = dict(
+        img_loss=LogSSIMLoss(filter_size=7).to(device)
         # img_loss=SSIMLoss(filter_size=7).to(device=device)
-        img_loss=nn.L1Loss()
+        # img_loss=nn.L1Loss()
     )
 
-    model = UNet(
-        in_chans=30, out_chans=30, chans=args.chans, num_pool_layers=args.num_pool_layers, num_groups=args.num_groups,
-        negative_slope=args.negative_slope, use_residual=args.use_residual, interp_mode=args.interp_mode,
-        use_ca=args.use_ca, reduction=args.reduction, use_gap=args.use_gap, use_gmp=args.use_gmp).to(device)
+    # model = UNet(
+    #     in_chans=30, out_chans=30, chans=args.chans, num_pool_layers=args.num_pool_layers, num_groups=args.num_groups,
+    #     negative_slope=args.negative_slope, use_residual=args.use_residual, interp_mode=args.interp_mode,
+    #     use_ca=args.use_ca, reduction=args.reduction, use_gap=args.use_gap, use_gmp=args.use_gmp).to(device)
+
+    model = UNet(in_chans=30, out_chans=30, chans=args.chans, num_pool_layers=args.num_pool_layers,
+                 num_depth_blocks=args.num_depth_blocks, use_residual=args.use_residual, use_ca=args.use_ca,
+                 reduction=args.reduction, use_gap=args.use_gap, use_gmp=args.use_gmp).to(device)
 
     optimizer = optim.Adam(model.parameters(), lr=args.init_lr)
     scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.lr_red_epochs, gamma=args.lr_red_rate)
@@ -118,7 +119,7 @@ if __name__ == '__main__':
         center_fractions=[0.08, 0.04],
         accelerations=[4, 8],
         random_sampling=True,
-        num_pool_layers=4,
+        num_pool_layers=5,
         verbose=False,
         use_gt=True,
         augment_data=True,
@@ -126,21 +127,22 @@ if __name__ == '__main__':
 
         # Model specific parameters.
         train_method='C2I',  # Weighted semi-k-space to complex-valued image.
-        num_groups=16,  # Maybe try 16 now since chans is 64.
+        # num_groups=16,  # Maybe try 16 now since chans is 64.
         chans=64,
-        # num_depth_blocks=3,
-        negative_slope=0.1,
-        interp_mode='nearest',
+        num_depth_blocks=1,
+        # negative_slope=0.1,
+        # interp_mode='nearest',
         use_residual=True,
+        residual_acs=False,
 
         # TensorBoard related parameters.
         max_images=8,  # Maximum number of images to save.
         shrink_scale=1,  # Scale to shrink output image size.
 
         # Channel Attention.
-        use_ca=True,
+        use_ca=False,
         reduction=8,
-        use_gap=True,
+        use_gap=False,
         use_gmp=False,
 
         # Learning rate scheduling.
@@ -151,16 +153,16 @@ if __name__ == '__main__':
         use_slice_metrics=True,
         num_epochs=30,
 
-        sample_rate_train=0.4,
-        start_slice_train=10,
-        sample_rate_val=1,
-        start_slice_val=0,
-
-        gpu=1,  # Set to None for CPU mode.
+        gpu=0,  # Set to None for CPU mode.
         num_workers=4,
         init_lr=2E-4,
         max_to_keep=1,
-        # prev_model_ckpt='',
+        prev_model_ckpt='',
+
+        sample_rate_train=1,
+        start_slice_train=0,
+        sample_rate_val=1,
+        start_slice_val=0,
     )
     arguments = create_arg_parser(**settings).parse_args()
     train_cmg_to_img(arguments)

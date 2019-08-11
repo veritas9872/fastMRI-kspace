@@ -173,16 +173,18 @@ class ModelTrainerI2I:
         step_loss = self.losses['img_loss'](recons['img_recons'], targets['img_targets'])
 
         # If img_loss is a tuple, it is expected to contain all its component losses as a dict in its second element.
+        img_metrics = dict()
         step_metrics = dict()
         if isinstance(step_loss, tuple):
-            step_loss, step_metrics = step_loss
+            step_loss, img_metrics = step_loss
 
         if 'acceleration' in extra_params:  # Different metrics for different accelerations.
             acc = extra_params["acceleration"]
-            if step_metrics:  # This has to be checked before anything is added to step_metrics.
-                for key, value in step_metrics.items():
+            if img_metrics:  # This has to be checked before anything is added to step_metrics.
+                for key, value in img_metrics.items():
                     step_metrics[f'acc_{acc}_{key}'] = value
             step_metrics[f'acc_{acc}_loss'] = step_loss
+            step_metrics.update(img_metrics)
 
         step_loss.backward()
         self.optimizer.step()
@@ -227,16 +229,18 @@ class ModelTrainerI2I:
         step_loss = self.losses['img_loss'](recons['img_recons'], targets['img_targets'])
 
         # If img_loss is a tuple, it is expected to contain all its component losses as a dict in its second element.
+        img_metrics = dict()
         step_metrics = dict()
         if isinstance(step_loss, tuple):
-            step_loss, step_metrics = step_loss
+            step_loss, img_metrics = step_loss
 
         if 'acceleration' in extra_params:  # Different metrics for different accelerations.
             acc = extra_params["acceleration"]
-            if step_metrics:  # Order of checking is important since step_metrics must still be empty.
-                for key, value in step_metrics.items():
+            if img_metrics:  # This has to be checked before anything is added to step_metrics.
+                for key, value in img_metrics.items():
                     step_metrics[f'acc_{acc}_{key}'] = value
             step_metrics[f'acc_{acc}_loss'] = step_loss
+            step_metrics.update(img_metrics)
 
         return recons, step_loss, step_metrics
 

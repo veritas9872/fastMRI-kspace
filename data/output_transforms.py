@@ -235,21 +235,15 @@ class PostProcessWK(nn.Module):
 
 
 class PostProcessWSemiK(nn.Module):
-    def __init__(self, weighted=True, replace=True, residual_acs=False, direction='height', resolution=320):
+    def __init__(self, challenge, weighted=True, replace=True, residual_acs=False, resolution=320):
         super().__init__()
+        if challenge not in ('singlecoil', 'multicoil'):
+            raise ValueError(f'Challenge should either be "singlecoil" or "multicoil"')
+        self.challenge = challenge
         self.weighted = weighted
         self.replace = replace
         self.resolution = resolution
         self.residual_acs = residual_acs
-
-        if direction == 'height':
-            self.recon_direction = 'width'
-        elif direction == 'width':
-            self.recon_direction = 'height'
-        else:
-            raise ValueError('`direction` should either be `height` or `width')
-
-        self.direction = direction
 
     def forward(self, semi_kspace_outputs, targets, extra_params):
         if semi_kspace_outputs.size(0) > 1:
@@ -281,17 +275,15 @@ class PostProcessWSemiK(nn.Module):
             mask = extra_params['masks']
             semi_kspace_recons = semi_kspace_recons * (1 - mask) + semi_kspace_targets * mask
 
-        kspace_recons = fft1(semi_kspace_recons, direction=self.direction)
-        cmg_recons = ifft1(semi_kspace_recons, direction=self.recon_direction)
+        kspace_recons = fft1(semi_kspace_recons, direction='height')
+        cmg_recons = ifft1(semi_kspace_recons, direction='width')
         img_recons = complex_abs(cmg_recons)
 
         recons = {'semi_kspace_recons': semi_kspace_recons, 'kspace_recons': kspace_recons,
                   'cmg_recons': cmg_recons, 'img_recons': img_recons}
 
-        if semi_kspace_targets.size(1) == 15:
-            top = (img_recons.size(-2) - self.resolution) // 2
-            left = (img_recons.size(-1) - self.resolution) // 2
-            rss_recons = img_recons[:, :, top:top+self.resolution, left:left+self.resolution]
+        if self.challenge == 'multicoil':
+            rss_recons = center_crop(img_recons, (self.resolution, self.resolution))
             rss_recons = root_sum_of_squares(rss_recons, dim=1).squeeze()
             rss_recons *= extra_params['sk_scales']  # This value was divided in the inputs. It is thus multiplied here.
             recons['rss_recons'] = rss_recons
@@ -311,8 +303,12 @@ def find_acs_mask(kspace_recons: torch.Tensor, num_low_freqs: int):
 
 class PostProcessCMG(nn.Module):
 
-    def __init__(self, resolution=320):
+    def __init__(self, challenge, residual_acs=False, resolution=320):
         super().__init__()
+        if challenge not in ('singlecoil', 'multicoil'):
+            raise ValueError(f'Challenge should either be "singlecoil" or "multicoil"')
+        self.challenge = challenge
+        self.residual_acs = residual_acs
         self.resolution = resolution
 
     def forward(self, cmg_output, targets, extra_params):
@@ -320,28 +316,24 @@ class PostProcessCMG(nn.Module):
             raise NotImplementedError('Only one at a time for now.')
 
         cmg_target = targets['cmg_targets']
-        # For removing width dimension padding. Recall that complex number form has 2 as last dim size.
-        left = (cmg_output.size(-1) - cmg_target.size(-2)) // 2
-        right = left + cmg_target.size(-2)
-
-        # Cropping width dimension by pad.
-        cmg_recon = nchw_to_kspace(cmg_output[..., left:right])
-
+        cmg_recon = nchw_to_kspace(cmg_output)
         assert cmg_recon.shape == cmg_target.shape, 'Reconstruction and target sizes are different.'
         assert (cmg_recon.size(-3) % 2 == 0) and (cmg_recon.size(-2) % 2 == 0), \
             'Not impossible but not expected to have sides with odd lengths.'
+
+        if self.residual_acs:  # Adding the semi-k-space of the ACS as a residual. Necessary due to complex cropping.
+            raise NotImplementedError('Not ready yet.')
+            # cmg_acs = targets['cmg_acss']
+            # cmg_recon = cmg_recon + cmg_acs
 
         kspace_recon = fft2(cmg_recon)
         img_recon = complex_abs(cmg_recon)
 
         recons = {'kspace_recons': kspace_recon, 'cmg_recons': cmg_recon, 'img_recons': img_recon}
 
-        if cmg_target.size(1) == 15:
-            top = (img_recon.size(-2) - self.resolution) // 2
-            left = (img_recon.size(-1) - self.resolution) // 2
-            rss_recon = img_recon[:, :, top:top+self.resolution, left:left+self.resolution]
+        if self.challenge == 'multicoil':
+            rss_recon = center_crop(img_recon, (self.resolution, self.resolution)) * extra_params['cmg_scales']
             rss_recon = root_sum_of_squares(rss_recon, dim=1).squeeze()
-            rss_recon *= extra_params['cmg_scales']
             recons['rss_recons'] = rss_recon
 
         return recons  # recons are not rescaled except rss_recons.
@@ -374,3 +366,47 @@ class PostProcessIMG(nn.Module):
             recons['rss_recons'] = rss_recon
 
         return recons  # recons are not rescaled except rss_recons.
+
+
+class PostProcessWSemiKCC(nn.Module):  # Images are expected to be cropped already.
+    def __init__(self, challenge, weighted=True, residual_acs=True):
+        super().__init__()
+        if challenge not in ('singlecoil', 'multicoil'):
+            raise ValueError(f'Challenge should either be "singlecoil" or "multicoil"')
+
+        self.challenge = challenge
+        self.weighted = weighted
+        self.residual_acs = residual_acs
+
+    def forward(self, semi_kspace_outputs, targets, extra_params):
+        if semi_kspace_outputs.size(0) > 1:
+            raise NotImplementedError('Only one at a time for now.')
+
+        semi_kspace_recons = nchw_to_kspace(semi_kspace_outputs)
+        semi_kspace_targets = targets['semi_kspace_targets']
+        assert semi_kspace_recons.shape == semi_kspace_targets.shape, 'Reconstruction and target sizes are different.'
+        assert (semi_kspace_recons.size(-3) % 2 == 0) and (semi_kspace_recons.size(-2) % 2 == 0), \
+            'Not impossible but not expected to have sides with odd lengths.'
+
+        # Removing weighting.
+        if self.weighted:
+            weighting = extra_params['weightings']
+            semi_kspace_recons = semi_kspace_recons / weighting
+
+        if self.residual_acs:  # Adding the semi-k-space of the ACS as a residual. Necessary due to complex cropping.
+            semi_kspace_acs = targets['semi_kspace_acss']
+            semi_kspace_recons = semi_kspace_recons + semi_kspace_acs
+
+        kspace_recons = fft1(semi_kspace_recons, direction='height')
+        cmg_recons = ifft1(semi_kspace_recons, direction='width')
+        img_recons = complex_abs(cmg_recons)
+
+        recons = {'semi_kspace_recons': semi_kspace_recons, 'kspace_recons': kspace_recons,
+                  'cmg_recons': cmg_recons, 'img_recons': img_recons}
+
+        if self.challenge == 'multicoil':
+            rss_recons = root_sum_of_squares(img_recons, dim=1).squeeze()
+            rss_recons *= extra_params['sk_scales']
+            recons['rss_recons'] = rss_recons
+
+        return recons  # Returning scaled reconstructions. Not rescaled. RSS images are rescaled.

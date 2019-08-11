@@ -7,11 +7,11 @@ from utils.run_utils import initialize, save_dict_as_json, get_logger, create_ar
 from utils.data_loaders import create_prefetch_data_loaders
 
 from train.subsample import RandomMaskFunc, UniformMaskFunc
-from data.input_transforms import PreProcessWK, PreProcessWSK
-from data.output_transforms import PostProcessWK, PostProcessWSemiK
+from data.input_transforms import PreProcessWSK
+from data.output_transforms import PostProcessWSemiK
 
 from train.new_model_trainers.cmg_and_img import ModelTrainerCI
-from data.weighting import TiltedDistanceWeight, SemiDistanceWeight
+from data.weighting import SemiDistanceWeight
 from models.att_unet import UNet
 
 

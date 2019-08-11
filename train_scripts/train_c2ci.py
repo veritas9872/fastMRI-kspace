@@ -11,7 +11,8 @@ from data.input_transforms import PreProcessCMG
 from data.output_transforms import PostProcessCMG
 
 from train.new_model_trainers.cmg_and_img import ModelTrainerCI
-from models.deep_unet import UNet
+# from models.deep_unet import UNet
+from models.unet_no_norm import UNet
 from metrics.new_1d_ssim import SSIMLoss, LogSSIMLoss
 
 
@@ -55,8 +56,8 @@ def train_cmg_and_img(args):
 
     save_dict_as_json(vars(args), log_dir=log_path, save_name=run_name)
 
-    # UNET architecture requires that all inputs be dividable by some power of 2.
-    divisor = 2 ** args.num_pool_layers
+    # # UNET architecture requires that all inputs be dividable by some power of 2.
+    # divisor = 2 ** args.num_pool_layers
 
     if args.random_sampling:  # Same as in the challenge
         mask_func = RandomMaskFunc(args.center_fractions, args.accelerations)
@@ -64,30 +65,34 @@ def train_cmg_and_img(args):
         mask_func = UniformMaskFunc(args.center_fractions, args.accelerations)
 
     input_train_transform = PreProcessCMG(mask_func, args.challenge, device, augment_data=args.augment_data,
-                                          use_seed=False, crop_center=args.crop_center, divisor=divisor)
+                                          use_seed=False, crop_center=args.crop_center)
     input_val_transform = PreProcessCMG(mask_func, args.challenge, device, augment_data=False,
-                                        use_seed=True, crop_center=args.crop_center, divisor=divisor)
+                                        use_seed=True, crop_center=args.crop_center)
 
-    output_train_transform = PostProcessCMG()
-    output_val_transform = PostProcessCMG()
+    output_train_transform = PostProcessCMG(challenge=args.challenge, residual_acs=args.residual_acs)
+    output_val_transform = PostProcessCMG(challenge=args.challenge, residual_acs=args.residual_acs)
 
     # DataLoaders
     train_loader, val_loader = create_prefetch_data_loaders(args)
 
     losses = dict(
         cmg_loss=nn.MSELoss(),
-        img_loss=SSIMLoss(filter_size=7).to(device=device)
-        # img_loss=LogSSIMLoss(filter_size=7).to(device=device)
+        # img_loss=SSIMLoss(filter_size=7).to(device=device)
+        img_loss=LogSSIMLoss(filter_size=7).to(device=device)
         # img_loss=nn.L1Loss()
     )
 
     data_chans = 2 if args.challenge == 'singlecoil' else 30  # Multicoil has 15 coils with 2 for real/imag
 
-    model = UNet(
-        in_chans=data_chans, out_chans=data_chans, chans=args.chans, num_pool_layers=args.num_pool_layers,
-        num_depth_blocks=args.num_depth_blocks, num_groups=args.num_groups, negative_slope=args.negative_slope,
-        use_residual=args.use_residual, interp_mode=args.interp_mode, use_ca=args.use_ca, reduction=args.reduction,
-        use_gap=args.use_gap, use_gmp=args.use_gmp).to(device)
+    # model = UNet(
+    #     in_chans=data_chans, out_chans=data_chans, chans=args.chans, num_pool_layers=args.num_pool_layers,
+    #     num_depth_blocks=args.num_depth_blocks, num_groups=args.num_groups, negative_slope=args.negative_slope,
+    #     use_residual=args.use_residual, interp_mode=args.interp_mode, use_ca=args.use_ca, reduction=args.reduction,
+    #     use_gap=args.use_gap, use_gmp=args.use_gmp).to(device)
+
+    model = UNet(in_chans=data_chans, out_chans=data_chans, chans=args.chans, num_pool_layers=args.num_pool_layers,
+                 num_depth_blocks=args.num_depth_blocks, use_residual=args.use_residual, use_ca=args.use_ca,
+                 reduction=args.reduction, use_gap=args.use_gap, use_gmp=args.use_gmp).to(device)
 
     optimizer = optim.Adam(model.parameters(), lr=args.init_lr)
     scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.lr_red_epochs, gamma=args.lr_red_rate)
@@ -123,28 +128,29 @@ if __name__ == '__main__':
         num_pool_layers=4,
         verbose=False,
         use_gt=True,
-        augment_data=True,
+        augment_data=False,
         crop_center=True,
 
         # Model specific parameters.
         train_method='C2CI',  # Weighted semi-k-space to complex-valued image.
-        num_groups=16,  # Maybe try 16 now since chans is 64.
+        # num_groups=16,  # Maybe try 16 now since chans is 64.
         chans=64,
-        num_depth_blocks=3,
-        negative_slope=0.1,
-        interp_mode='nearest',
+        num_depth_blocks=1,
+        # negative_slope=0.1,
+        # interp_mode='nearest',
         use_residual=True,
-        img_lambda=1,
+        img_lambda=4,
+        residual_acs=False,
 
         # TensorBoard related parameters.
         max_images=8,  # Maximum number of images to save.
         shrink_scale=1,  # Scale to shrink output image size.
 
         # Channel Attention.
-        use_ca=True,
+        use_ca=False,
         reduction=8,
-        use_gap=True,
-        use_gmp=True,
+        use_gap=False,
+        use_gmp=False,
 
         # Learning rate scheduling.
         lr_red_epochs=[15, 20],
@@ -152,15 +158,17 @@ if __name__ == '__main__':
 
         # Variables that change frequently.
         use_slice_metrics=True,
-        num_epochs=25,
+        num_epochs=5,
 
         gpu=0,  # Set to None for CPU mode.
-        num_workers=4,
+        num_workers=3,
         init_lr=1E-4,
         max_to_keep=1,
+        prev_model_ckpt=
+        '/home/veritas/PycharmProjects/fastMRI-kspace/checkpoints/C2CI/Trial 05  2019-08-09 15-26-26/ckpt_022.tar',
 
-        sample_rate_train=0.4,
-        start_slice_train=10,
+        sample_rate_train=1,
+        start_slice_train=0,
         sample_rate_val=1,
         start_slice_val=0,
     )

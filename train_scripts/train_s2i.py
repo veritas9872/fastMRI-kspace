@@ -7,18 +7,19 @@ from utils.run_utils import initialize, save_dict_as_json, get_logger, create_ar
 from utils.data_loaders import create_prefetch_data_loaders
 
 from train.subsample import RandomMaskFunc, UniformMaskFunc
-from data.input_transforms import PreProcessIMG
-from data.output_transforms import PostProcessIMG
+from data.input_transforms import PreProcessWSK
+from data.output_transforms import PostProcessWSemiK
 
-from train.new_model_trainers.img_to_img import ModelTrainerI2I
-# from models.deep_unet import UNet
-# from models.att_unet import UNet
+from train.new_model_trainers.img_only import ModelTrainerIMG
 from models.unet_no_norm import UNet
 from metrics.new_1d_ssim import SSIMLoss, LogSSIMLoss
-from metrics.combination_losses import L1SSIMLoss
 
 
-def train_img_to_img(args):
+def no_weight(inputs):
+    return 1
+
+
+def train_img_only(args):
     # Creating checkpoint and logging directories, as well as the run name.
     ckpt_path = Path(args.ckpt_root)
     ckpt_path.mkdir(exist_ok=True)
@@ -59,6 +60,7 @@ def train_img_to_img(args):
 
     save_dict_as_json(vars(args), log_dir=log_path, save_name=run_name)
 
+    # Input transforms. These are on a per-slice basis.
     # UNET architecture requires that all inputs be dividable by some power of 2.
     divisor = 2 ** args.num_pool_layers
 
@@ -67,37 +69,32 @@ def train_img_to_img(args):
     else:
         mask_func = UniformMaskFunc(args.center_fractions, args.accelerations)
 
-    input_train_transform = PreProcessIMG(mask_func, args.challenge, device, augment_data=args.augment_data,
-                                          use_seed=False, crop_center=args.crop_center, divisor=divisor)
-    input_val_transform = PreProcessIMG(mask_func, args.challenge, device, augment_data=False, use_seed=True,
-                                        crop_center=args.crop_center, divisor=divisor)
+    input_train_transform = PreProcessWSK(mask_func=mask_func, weight_func=no_weight, challenge=args.challenge,
+                                          device=device, use_seed=False, divisor=divisor)
+    input_val_transform = PreProcessWSK(mask_func=mask_func, weight_func=no_weight, challenge=args.challenge,
+                                        device=device, use_seed=True, divisor=divisor)
 
-    output_train_transform = PostProcessIMG()
-    output_val_transform = PostProcessIMG()
+    output_train_transform = PostProcessWSemiK(weighted=False, replace=args.replace, residual_acs=args.residual_acs)
+    output_val_transform = PostProcessWSemiK(weighted=False, replace=args.replace, residual_acs=args.residual_acs)
 
     # DataLoaders
     train_loader, val_loader = create_prefetch_data_loaders(args)
 
     losses = dict(
+        # img_loss=LogSSIMLoss(filter_size=7).to(device)
         # img_loss=SSIMLoss(filter_size=7).to(device=device)
-        # img_loss=LogSSIMLoss(filter_size=7).to(device=device)
         img_loss=nn.L1Loss()
-        # img_loss=L1SSIMLoss(filter_size=7, l1_ratio=args.l1_ratio).to(device=device)
     )
 
-    # model = UNet(
-    #     in_chans=15, out_chans=15, chans=args.chans, num_pool_layers=args.num_pool_layers, num_groups=args.num_groups,
-    #     negative_slope=args.negative_slope, use_residual=args.use_residual, interp_mode=args.interp_mode,
-    #     use_ca=args.use_ca, reduction=args.reduction, use_gap=args.use_gap, use_gmp=args.use_gmp).to(device)
-
-    model = UNet(in_chans=15, out_chans=15, chans=args.chans, num_pool_layers=args.num_pool_layers,
-                 num_depth_blocks=args.num_depth_blocks, use_residual=args.use_residual,
-                 use_ca=args.use_ca, reduction=args.reduction, use_gap=args.use_gap, use_gmp=args.use_gmp).to(device)
+    model = UNet(
+        in_chans=30, out_chans=30, chans=args.chans, num_pool_layers=args.num_pool_layers,
+        num_depth_blocks=args.num_depth_blocks, interp_mode=args.interp_mode, use_residual=args.use_residual,
+        use_ca=args.use_ca, reduction=args.reduction, use_gap=args.use_gap, use_gmp=args.use_gmp).to(device)
 
     optimizer = optim.Adam(model.parameters(), lr=args.init_lr)
     scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.lr_red_epochs, gamma=args.lr_red_rate)
 
-    trainer = ModelTrainerI2I(args, model, optimizer, train_loader, val_loader, input_train_transform,
+    trainer = ModelTrainerIMG(args, model, optimizer, train_loader, val_loader, input_train_transform,
                               input_val_transform, output_train_transform, output_val_transform, losses, scheduler)
 
     try:
@@ -125,21 +122,20 @@ if __name__ == '__main__':
         center_fractions=[0.08, 0.04],
         accelerations=[4, 8],
         random_sampling=True,
-        num_pool_layers=4,
+        num_pool_layers=5,
         verbose=False,
         use_gt=True,
 
         # Model specific parameters.
-        train_method='I2I',  # Weighted semi-k-space to complex-valued image.
+        train_method='S2I',  # Semi-k-space to complex-valued image.
         # num_groups=16,  # Maybe try 16 now since chans is 64.
         chans=64,
         # negative_slope=0.1,
-        # interp_mode='nearest',
-        use_residual=True,
-        # l1_ratio=0.5,
+        interp_mode='nearest',
+        replace=False,
+        use_residual=False,
+        residual_acs=True,
         num_depth_blocks=1,
-        augment_data=False,
-        crop_center=True,
 
         # TensorBoard related parameters.
         max_images=8,  # Maximum number of images to save.
@@ -161,7 +157,7 @@ if __name__ == '__main__':
 
         gpu=1,  # Set to None for CPU mode.
         num_workers=4,
-        init_lr=2E-4,
+        init_lr=2E-2,
         max_to_keep=1,
         # prev_model_ckpt='',
 
@@ -171,4 +167,4 @@ if __name__ == '__main__':
         start_slice_val=0,
     )
     arguments = create_arg_parser(**settings).parse_args()
-    train_img_to_img(arguments)
+    train_img_only(arguments)

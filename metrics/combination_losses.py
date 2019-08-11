@@ -1,7 +1,9 @@
 import torch
 from torch import nn
+import torch.nn.functional as F
 
 from metrics.custom_losses import CSSIM
+from metrics.new_1d_ssim import _fspecial_gauss_1d, ssim
 
 
 class L1CSSIM7(nn.Module):
@@ -22,3 +24,25 @@ class L1CSSIM7(nn.Module):
         cssim = self.cssim(tensor, target)
         img_loss = l1_loss * self.alpha + cssim * (1 - self.alpha)
         return img_loss, {'l1_loss': l1_loss, 'cssim': cssim}
+
+
+class L1SSIMLoss(nn.Module):
+    def __init__(self, filter_size=11, sigma=1.5, max_val=None, l1_ratio=0.5, reduction='mean'):
+        r""" class for ssim
+        Args:
+            filter_size: (int, optional): the size of gauss kernel
+            sigma: (float, optional): sigma of normal distribution
+            max_val (float or int, optional): value range of input images. (usually 1.0 or 255)
+        """
+
+        super().__init__()
+        self.register_buffer('kernel', _fspecial_gauss_1d(filter_size, sigma))
+        self.register_buffer('one', torch.tensor(1., dtype=torch.float32))
+        self.register_buffer('l1_ratio', torch.tensor(l1_ratio, dtype=torch.float32))
+        self.max_val = max_val
+        self.reduction = reduction
+
+    def forward(self, input: torch.Tensor, target: torch.Tensor) -> (torch.Tensor, dict):
+        ssim_loss = self.one - ssim(input, target, max_val=self.max_val, kernel=self.kernel, reduction=self.reduction)
+        l1_loss = F.l1_loss(input, target, reduction=self.reduction)
+        return l1_loss * self.l1_ratio + (1 - self.l1_ratio) * ssim_loss, {'l1_loss': l1_loss, 'ssim_loss': ssim_loss}
