@@ -4,7 +4,8 @@ import torch.nn.functional as F
 
 import numpy as np
 
-from data.data_transforms import nchw_to_kspace, ifft2, fft2, complex_abs, ifft1, fft1, root_sum_of_squares, center_crop
+from data.data_transforms import nchw_to_kspace, ifft2, fft2, complex_abs, ifft1, fft1, \
+    root_sum_of_squares, center_crop, complex_center_crop
 
 
 # class OutputReplaceTransformK(nn.Module):
@@ -339,9 +340,67 @@ class PostProcessCMG(nn.Module):
         return recons  # recons are not rescaled except rss_recons.
 
 
-class PostProcessIMG(nn.Module):
-    def __init__(self, resolution=320):
+class PostProcessCMGIMG(nn.Module):
+    """
+    Outputs are expected to be the real and imaginary parts of a complex image.
+    An alternative would be to directly output the absolute image.
+    Residual inputs of the necessary parts are always used. There is no option to change this.
+    """
+    def __init__(self, challenge, output_mode='cmg', resolution=320):
         super().__init__()
+        if challenge not in ('singlecoil', 'multicoil'):
+            raise ValueError(f'Challenge should either be "singlecoil" or "multicoil"')
+        self.challenge = challenge
+        self.output_mode = output_mode
+        self.resolution = resolution
+
+    def forward(self, output, targets, extra_params):
+        if output.size(0) > 1:
+            raise NotImplementedError('Batch size is expected to be 1.')
+
+        if self.output_mode == 'cmg':
+            recons = self._cmg_output(output, targets, extra_params)
+        elif self.output_mode == 'img':
+            recons = self._img_output(output, targets, extra_params)
+        else:
+            raise NotImplementedError('Invalid output mode.')
+
+        if self.challenge == 'multicoil':
+            rss_recon = center_crop(recons['img_recons'], shape=(self.resolution, self.resolution))
+            rss_recon *= extra_params['cmg_scales']
+            rss_recon = root_sum_of_squares(rss_recon, dim=1).squeeze()
+            recons['rss_recons'] = rss_recon
+
+        return recons
+
+    @staticmethod
+    def _cmg_output(cmg_output, targets, extra_params):
+        cmg_target = targets['cmg_targets']
+        cmg_recon = nchw_to_kspace(cmg_output)  # Assumes data was cropped already.
+        assert cmg_recon.shape == cmg_target.shape, 'Reconstruction and target sizes are different.'
+        assert (cmg_recon.size(-3) % 2 == 0) and (cmg_recon.size(-2) % 2 == 0), \
+            'Not impossible but not expected to have sides with odd lengths.'
+        cmg_recon = cmg_recon + targets['cmg_inputs']  # Residual of complex input.
+        kspace_recon = fft2(cmg_recon)
+        img_recon = complex_abs(cmg_recon)
+        recons = {'kspace_recons': kspace_recon, 'cmg_recons': cmg_recon, 'img_recons': img_recon}
+        return recons
+
+    @staticmethod
+    def _img_output(img_output, targets, extra_params):
+        img_target = targets['img_targets']
+        img_recon = F.relu(img_output + targets['img_inputs'])  # Residual of image input. Also removes negative values.
+        assert img_recon.shape == img_target.shape, 'Reconstruction and target sizes are different.'
+        recons = {'img_recons': img_recon}
+        return recons
+
+
+class PostProcessIMG(nn.Module):
+    def __init__(self, challenge, resolution=320):
+        super().__init__()
+        if challenge not in ('singlecoil', 'multicoil'):
+            raise ValueError(f'Challenge should either be "singlecoil" or "multicoil"')
+        self.challenge = challenge
         self.resolution = resolution
 
     def forward(self, img_output, targets, extra_params):
@@ -360,7 +419,7 @@ class PostProcessIMG(nn.Module):
 
         recons = {'img_recons': img_recon}
 
-        if img_target.size(1) == 15:
+        if self.challenge == 'multicoil':
             rss_recon = center_crop(img_recon, (self.resolution, self.resolution)) * extra_params['img_scales']
             rss_recon = root_sum_of_squares(rss_recon, dim=1).squeeze()
             recons['rss_recons'] = rss_recon

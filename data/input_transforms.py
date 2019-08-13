@@ -186,7 +186,7 @@ class Prefetch2Device:
         if k_slice.ndim == 2:  # For singlecoil. Makes data processing later on much easier.
             k_slice = np.expand_dims(k_slice, axis=0)
         elif k_slice.ndim != 3:  # Prevents possible errors.
-            raise TypeError('Invalid slice type')
+            raise TypeError('Invalid slice dimensions.')
 
         # I hope that async copy works for passing between processes but I am not sure.
         kspace_target = to_tensor(k_slice).to(device=self.device, non_blocking=True)
@@ -539,9 +539,6 @@ class PreProcessWSK:
 #         return weighting_matrix
 
 class PreProcessCMG:
-    """
-    Please note that center cropping does not crop k-space targets. This is a known bug.
-    """
     def __init__(self, mask_func, challenge, device, augment_data=False,
                  use_seed=True, crop_center=True, resolution=320):
         assert callable(mask_func), '`mask_func` must be a callable function.'
@@ -597,12 +594,6 @@ class PreProcessCMG:
             if self.augment_data:
                 flip_lr = torch.rand(()) < 0.5
                 flip_ud = torch.rand(()) < 0.5
-                rot_90 = torch.rand(()) < 0.5
-
-                if rot_90:
-                    complex_image = torch.rot90(complex_image, dims=(-3, -2))
-                    cmg_target = torch.rot90(cmg_target, dims=(-3, -2))
-                    target = torch.rot90(target, dims=(-2, -1))
 
                 if flip_lr and flip_ud:
                     # Last dim is real/complex dimension for complex image and target.
@@ -641,11 +632,8 @@ class PreProcessCMG:
 
 
 class PreProcessCMGIMG:
-    """
-    Please note that center cropping does not crop k-space targets. This is a known bug.
-    """
     def __init__(self, mask_func, challenge, device, augment_data=False,
-                 use_seed=True, center_crop=True, resolution=320, divisor=1):
+                 use_seed=True, crop_center=True, resolution=320):
         assert callable(mask_func), '`mask_func` must be a callable function.'
         if challenge not in ('singlecoil', 'multicoil'):
             raise ValueError(f'Challenge should either be "singlecoil" or "multicoil"')
@@ -655,9 +643,8 @@ class PreProcessCMGIMG:
         self.device = device
         self.augment_data = augment_data
         self.use_seed = use_seed
-        self.center_crop = center_crop
+        self.crop_center = crop_center
         self.resolution = resolution  # Only has effect when center_crop is True.
-        self.divisor = divisor
 
     def __call__(self, kspace_target, target, attrs, file_name, slice_num):
         assert isinstance(kspace_target, torch.Tensor), 'k-space target was expected to be a Pytorch Tensor.'
@@ -679,7 +666,7 @@ class PreProcessCMGIMG:
             # Complex image made from down-sampled k-space.
             complex_image = ifft2(masked_kspace)
 
-            if self.center_crop:
+            if self.crop_center:
                 complex_image = complex_center_crop(complex_image, shape=(self.resolution, self.resolution))
 
             cmg_scale = torch.std(complex_image)
@@ -693,11 +680,11 @@ class PreProcessCMGIMG:
             kspace_target /= cmg_scale
             cmg_target = ifft2(kspace_target)
 
-            if self.center_crop:
+            if self.crop_center:
                 cmg_target = complex_center_crop(cmg_target, shape=(self.resolution, self.resolution))
 
             # Data augmentation by flipping images up-down and left-right.
-            if self.augment_data:
+            if self.augment_data:  # No rotation implemented.
                 flip_lr = torch.rand(()) < 0.5
                 flip_ud = torch.rand(()) < 0.5
 
@@ -727,7 +714,7 @@ class PreProcessCMGIMG:
 
             # Use plurals as keys to reduce confusion.
             targets = {'kspace_targets': kspace_target, 'cmg_targets': cmg_target,
-                       'img_targets': img_target, 'img_inputs': img_inputs}
+                       'img_targets': img_target, 'cmg_inputs': complex_image, 'img_inputs': img_inputs}
 
             if self.challenge == 'multicoil':
                 targets['rss_targets'] = target
@@ -738,15 +725,6 @@ class PreProcessCMGIMG:
             # Converting to NCHW format for CNN.
             inputs = kspace_to_nchw(concat_image)
 
-            margin = inputs.size(-1) % self.divisor
-            if margin > 0:
-                pad = [(self.divisor - margin) // 2, (1 + self.divisor - margin) // 2]
-            else:  # This is a fix to prevent padding by half the divisor when margin=0.
-                pad = [0, 0]
-
-            # This pads at the last dimension of a tensor with 0.
-            inputs = F.pad(inputs, pad=pad, value=0)
-
         return inputs, targets, extra_params
 
 
@@ -755,7 +733,7 @@ class PreProcessIMG:
     Pre-processing for image-to-image learning.
     """
     def __init__(self, mask_func, challenge, device, augment_data=False,
-                 use_seed=True, crop_center=True, resolution=320, divisor=1):
+                 use_seed=True, crop_center=True, resolution=320):
         assert callable(mask_func), '`mask_func` must be a callable function.'
         if challenge not in ('singlecoil', 'multicoil'):
             raise ValueError(f'Challenge should either be "singlecoil" or "multicoil"')
@@ -767,7 +745,6 @@ class PreProcessIMG:
         self.use_seed = use_seed
         self.crop_center = crop_center
         self.resolution = resolution  # Only has effect when center_crop is True.
-        self.divisor = divisor
 
     def __call__(self, kspace_target, target, attrs, file_name, slice_num):
         assert isinstance(kspace_target, torch.Tensor), 'k-space target was expected to be a Pytorch Tensor.'
@@ -787,10 +764,8 @@ class PreProcessIMG:
             masked_kspace, mask, info = apply_info_mask(kspace_target, self.mask_func, seed)
 
             image = complex_abs(ifft2(masked_kspace))
-
             if self.crop_center:
                 image = center_crop(image, shape=(self.resolution, self.resolution))
-
             img_scale = torch.std(image)
             image /= img_scale
 
@@ -799,21 +774,14 @@ class PreProcessIMG:
             extra_params.update(attrs)
 
             img_target = complex_abs(ifft2(kspace_target))
-            img_target /= img_scale
-
             if self.crop_center:
                 img_target = center_crop(img_target, shape=(self.resolution, self.resolution))
+            img_target /= img_scale
 
             # Data augmentation by flipping images up-down and left-right.
             if self.augment_data:
                 flip_lr = torch.rand(()) < 0.5
                 flip_ud = torch.rand(()) < 0.5
-                rot_90 = torch.rand(()) < 0.5
-
-                if rot_90:
-                    image = torch.rot90(image, dims=(-2, -1))
-                    img_target = torch.rot90(dims=(-2, -1))
-                    target = torch.rot90(target, dims=(-2, -1))
 
                 if flip_lr and flip_ud:
                     image = torch.flip(image, dims=(-2, -1))
@@ -836,16 +804,7 @@ class PreProcessIMG:
             if self.challenge == 'multicoil':
                 targets['rss_targets'] = target
 
-            margin = image.size(-1) % self.divisor
-            if margin > 0:
-                pad = [(self.divisor - margin) // 2, (1 + self.divisor - margin) // 2]
-            else:  # This is a fix to prevent padding by half the divisor when margin=0.
-                pad = [0, 0]
-
-            # This pads at the last dimension of a tensor with 0.
-            inputs = F.pad(image, pad=pad, value=0)
-
-        return inputs, targets, extra_params
+        return image, targets, extra_params
 
 
 class PreProcessWSemiKCC:

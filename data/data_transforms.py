@@ -381,7 +381,7 @@ def kspace_to_nchw(tensor):
     assert tensor.dim() == 5
     s = tensor.shape
     assert (s[-1] == 2) or (s[-1] == 3)
-    tensor = tensor.permute(dims=(0, 1, 4, 2, 3)).reshape(shape=(s[0], s[-1] * s[1], s[2], s[3]))
+    tensor = tensor.permute(dims=(0, 1, 4, 2, 3)).reshape(shape=(s[0], s[1] * s[4], s[2], s[3]))
     return tensor
 
 

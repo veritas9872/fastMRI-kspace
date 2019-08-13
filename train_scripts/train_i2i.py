@@ -11,11 +11,9 @@ from data.input_transforms import PreProcessIMG
 from data.output_transforms import PostProcessIMG
 
 from train.new_model_trainers.img_to_img import ModelTrainerI2I
-# from models.deep_unet import UNet
-# from models.att_unet import UNet
-from models.unet_no_norm import UNet
 from metrics.new_1d_ssim import SSIMLoss, LogSSIMLoss
 from metrics.combination_losses import L1SSIMLoss
+from models.edsr_unet import UNet
 
 
 def train_img_to_img(args):
@@ -59,39 +57,40 @@ def train_img_to_img(args):
 
     save_dict_as_json(vars(args), log_dir=log_path, save_name=run_name)
 
-    # UNET architecture requires that all inputs be dividable by some power of 2.
-    divisor = 2 ** args.num_pool_layers
+    arguments = vars(args)  # Placed here for backward compatibility and convenience.
+    args.center_fractions_train = arguments.get('center_fractions_train', arguments.get('center_fractions'))
+    args.center_fractions_val = arguments.get('center_fractions_val', arguments.get('center_fractions'))
+    args.accelerations_train = arguments.get('accelerations_train', arguments.get('accelerations'))
+    args.accelerations_val = arguments.get('accelerations_val', arguments.get('accelerations'))
 
     if args.random_sampling:
-        mask_func = RandomMaskFunc(args.center_fractions, args.accelerations)
+        train_mask_func = RandomMaskFunc(args.center_fractions_train, args.accelerations_train)
+        val_mask_func = RandomMaskFunc(args.center_fractions_val, args.accelerations_val)
     else:
-        mask_func = UniformMaskFunc(args.center_fractions, args.accelerations)
+        train_mask_func = UniformMaskFunc(args.center_fractions_train, args.accelerations_train)
+        val_mask_func = UniformMaskFunc(args.center_fractions_val, args.accelerations_val)
 
-    input_train_transform = PreProcessIMG(mask_func, args.challenge, device, augment_data=args.augment_data,
-                                          use_seed=False, crop_center=args.crop_center, divisor=divisor)
-    input_val_transform = PreProcessIMG(mask_func, args.challenge, device, augment_data=False, use_seed=True,
-                                        crop_center=args.crop_center, divisor=divisor)
+    input_train_transform = PreProcessIMG(mask_func=train_mask_func, challenge=args.challenge, device=device,
+                                          augment_data=args.augment_data, use_seed=False, crop_center=args.crop_center)
+    input_val_transform = PreProcessIMG(mask_func=val_mask_func, challenge=args.challenge, device=device,
+                                        augment_data=False, use_seed=True, crop_center=args.crop_center)
 
-    output_train_transform = PostProcessIMG()
-    output_val_transform = PostProcessIMG()
+    output_train_transform = PostProcessIMG(challenge=args.challenge)
+    output_val_transform = PostProcessIMG(challenge=args.challenge)
 
     # DataLoaders
     train_loader, val_loader = create_prefetch_data_loaders(args)
 
     losses = dict(
         # img_loss=SSIMLoss(filter_size=7).to(device=device)
-        # img_loss=LogSSIMLoss(filter_size=7).to(device=device)
-        img_loss=nn.L1Loss()
+        img_loss=LogSSIMLoss(filter_size=5).to(device=device)
+        # img_loss=nn.L1Loss()
         # img_loss=L1SSIMLoss(filter_size=7, l1_ratio=args.l1_ratio).to(device=device)
     )
 
-    # model = UNet(
-    #     in_chans=15, out_chans=15, chans=args.chans, num_pool_layers=args.num_pool_layers, num_groups=args.num_groups,
-    #     negative_slope=args.negative_slope, use_residual=args.use_residual, interp_mode=args.interp_mode,
-    #     use_ca=args.use_ca, reduction=args.reduction, use_gap=args.use_gap, use_gmp=args.use_gmp).to(device)
-
-    model = UNet(in_chans=15, out_chans=15, chans=args.chans, num_pool_layers=args.num_pool_layers,
-                 num_depth_blocks=args.num_depth_blocks, use_residual=args.use_residual,
+    data_chans = 1 if args.challenge == 'singlecoil' else 15
+    model = UNet(in_chans=data_chans, out_chans=data_chans, chans=args.chans, num_pool_layers=args.num_pool_layers,
+                 num_depth_blocks=args.num_depth_blocks, res_scale=args.res_scale, use_residual=args.use_residual,
                  use_ca=args.use_ca, reduction=args.reduction, use_gap=args.use_gap, use_gmp=args.use_gmp).to(device)
 
     optimizer = optim.Adam(model.parameters(), lr=args.init_lr)
@@ -137,8 +136,9 @@ if __name__ == '__main__':
         # interp_mode='nearest',
         use_residual=True,
         # l1_ratio=0.5,
-        num_depth_blocks=1,
-        augment_data=False,
+        num_depth_blocks=2,
+        res_scale=0.1,
+        augment_data=True,
         crop_center=True,
 
         # TensorBoard related parameters.
@@ -147,21 +147,21 @@ if __name__ == '__main__':
 
         # Channel Attention.
         use_ca=False,
-        reduction=8,
+        reduction=16,
         use_gap=False,
         use_gmp=False,
 
         # Learning rate scheduling.
         lr_red_epochs=[20, 25],
-        lr_red_rate=0.1,
+        lr_red_rate=0.25,
 
         # Variables that change frequently.
         use_slice_metrics=True,
         num_epochs=30,
 
         gpu=1,  # Set to None for CPU mode.
-        num_workers=4,
-        init_lr=2E-4,
+        num_workers=3,
+        init_lr=1E-4,
         max_to_keep=1,
         # prev_model_ckpt='',
 
@@ -170,5 +170,5 @@ if __name__ == '__main__':
         sample_rate_val=1,
         start_slice_val=0,
     )
-    arguments = create_arg_parser(**settings).parse_args()
-    train_img_to_img(arguments)
+    options = create_arg_parser(**settings).parse_args()
+    train_img_to_img(options)

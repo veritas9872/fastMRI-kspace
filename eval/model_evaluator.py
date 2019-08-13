@@ -81,7 +81,7 @@ class ModelEvaluator:
 
 
 def main(args):
-    from models.att_unet import UNet  # Moving import line here to reduce confusion.
+    from models.edsr_unet import UNet  # Moving import line here to reduce confusion.
     from data.input_transforms import PreProcessIMG, Prefetch2Device
     from eval.output_test_transforms import PostProcessTestIMG
     from train.subsample import RandomMaskFunc
@@ -94,10 +94,14 @@ def main(args):
 
     print(f'Device {device} has been selected.')
 
-    model = UNet(
-        in_chans=15, out_chans=15, chans=args.chans, num_pool_layers=args.num_pool_layers, num_groups=args.num_groups,
-        negative_slope=args.negative_slope, use_residual=args.use_residual, interp_mode=args.interp_mode,
-        use_ca=args.use_ca, reduction=args.reduction, use_gap=args.use_gap, use_gmp=args.use_gmp).to(device)
+    # model = UNet(
+    #     in_chans=15, out_chans=15, chans=args.chans, num_pool_layers=args.num_pool_layers, num_groups=args.num_groups,
+    #     negative_slope=args.negative_slope, use_residual=args.use_residual, interp_mode=args.interp_mode,
+    #     use_ca=args.use_ca, reduction=args.reduction, use_gap=args.use_gap, use_gmp=args.use_gmp).to(device)
+    data_chans = 1 if args.challenge == 'singlecoil' else 15
+    model = UNet(in_chans=data_chans, out_chans=data_chans, chans=args.chans, num_pool_layers=args.num_pool_layers,
+                 num_depth_blocks=args.num_depth_blocks, res_scale=args.res_scale, use_residual=args.use_residual,
+                 use_ca=args.use_ca, reduction=args.reduction, use_gap=args.use_gap, use_gmp=args.use_gmp).to(device)
 
     dataset = CustomSliceData(root=args.data_root, transform=Prefetch2Device(device), challenge=args.challenge,
                               sample_rate=1, start_slice=0, use_gt=False)
@@ -106,12 +110,12 @@ def main(args):
                              collate_fn=temp_collate_fn, pin_memory=False)
 
     mask_func = RandomMaskFunc(args.center_fractions, args.accelerations)
-    divisor = 2 ** args.num_pool_layers  # For UNet size fitting.
+    # divisor = 2 ** args.num_pool_layers  # For UNet size fitting.
 
     # This is for the validation set, not the test set. The test set requires a different pre-processing function.
     if Path(args.data_root).name.endswith('val'):
-        pre_processing = PreProcessIMG(mask_func, challenge=args.challenge, device=device, augment_data=False,
-                                       use_seed=True, crop_center=True, divisor=divisor)
+        pre_processing = PreProcessIMG(mask_func=mask_func, challenge=args.challenge, device=device,
+                                       augment_data=False, use_seed=True, crop_center=True)
     else:
         raise NotImplementedError()
 
@@ -140,21 +144,25 @@ if __name__ == '__main__':
         # Model specific parameters.
         chans=64,
         num_pool_layers=4,
-        num_groups=16,
-        negative_slope=0.1,
+        # num_groups=16,
+        # negative_slope=0.1,
+
+        num_depth_blocks=2,
+        res_scale=0.1,
+
         use_residual=True,
-        interp_mode='nearest',
-        use_ca=True,
-        reduction=8,
-        use_gap=True,
-        use_gmp=True,
+        # interp_mode='nearest',
+        use_ca=False,
+        reduction=16,
+        use_gap=False,
+        use_gmp=False,
 
         # Parameters for reconstruction.
         data_root='/media/veritas/D/FastMRI/multicoil_val',
-        checkpoint_path='/home/veritas/PycharmProjects/fastMRI-kspace/checkpoints/'
-                        'I2I/Trial 05  2019-08-06 21-29-00/ckpt_019.tar',
+        checkpoint_path='/home/veritas/PycharmProjects/fastMRI-kspace/checkpoints/I2I/'
+                        'Trial 20  2019-08-12 22-36-40/ckpt_011.tar',
 
-        out_dir='./i2i_5'  # Change this every time! Attempted overrides will throw errors by design.
+        out_dir='./i2i_20'  # Change this every time! Attempted overrides will throw errors by design.
     )
 
     parser = create_arg_parser(**defaults).parse_args()
