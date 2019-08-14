@@ -226,6 +226,7 @@ class XNetModelTrainer:
         phase_targets = targets['phase_targets']
 
         x_loss = self.losses['x_loss'](img_recons, img_targets, phase_recons, phase_targets)
+
         img_loss = self.losses['img_loss'](img_recons, img_targets)
         phase_loss = self.losses['phase_loss'](phase_recons, phase_targets)
 
@@ -237,7 +238,7 @@ class XNetModelTrainer:
         step_metrics = {'x_loss': x_loss, 'img_loss': img_loss, 'phase_loss': phase_loss}
         step_metrics.update(img_metrics)
 
-        acc = extra_params["acceleration"]
+        acc = extra_params['acceleration']
         step_metrics[f'acc_{acc}_phase_loss'] = phase_loss
         step_metrics[f'acc_{acc}_img_loss'] = img_loss
         if img_metrics:

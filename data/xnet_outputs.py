@@ -22,6 +22,7 @@ class PostProcessXNet(nn.Module):
             raise NotImplementedError('Only one at a time for now.')
 
         img_target = targets['img_targets']
+        img_recon = F.relu(img_recon)  # img_recons must be positive numbers.
         assert img_recon.shape == img_target.shape, 'Reconstruction and target sizes are different.'
 
         # Input transform had addition of pi as pre-processing.
@@ -33,7 +34,7 @@ class PostProcessXNet(nn.Module):
                   'cmg_recons': cmg_recon, 'kspace_recons': kspace_recon}
 
         if self.challenge == 'multicoil':
-            rss_recon = center_crop(img_recon, (self.resolution, self.resolution)) * extra_params['img_scales']
+            rss_recon = center_crop(img_recon, shape=(self.resolution, self.resolution)) * extra_params['img_scales']
             rss_recon = root_sum_of_squares(rss_recon, dim=1).squeeze()
             recons['rss_recons'] = rss_recon
 

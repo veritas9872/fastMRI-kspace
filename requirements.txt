@@ -7,5 +7,6 @@ pytest
 scikit-image
 runstats
 pillow
+tensorboard
+protobuf
 future
-tb-nightly

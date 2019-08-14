@@ -37,16 +37,11 @@ class PreProcessXNet:
             seed = None if not self.use_seed else tuple(map(ord, file_name))
             masked_kspace, mask, info = apply_info_mask(kspace_target, self.mask_func, seed)
 
-            # Complex image made from down-sampled k-space.
             complex_image = ifft2(masked_kspace)
-
-            if self.crop_center:
-                complex_image = complex_center_crop(complex_image, shape=(self.resolution, self.resolution))
-
-            # Recall that the Fourier transform is a linear transform.
             cmg_target = ifft2(kspace_target)
 
             if self.crop_center:
+                complex_image = complex_center_crop(complex_image, shape=(self.resolution, self.resolution))
                 cmg_target = complex_center_crop(cmg_target, shape=(self.resolution, self.resolution))
 
             # Data augmentation by flipping images up-down and left-right.
@@ -70,13 +65,13 @@ class PreProcessXNet:
                     cmg_target = torch.flip(cmg_target, dims=(-2,))
                     target = torch.flip(target, dims=(-1,))
 
-            img_input = complex_abs(complex_image)
-            img_scale = torch.std(img_input)
-            img_input /= img_scale
-
             # Adding pi to angles so that the phase is in the [0, 2pi] range for better learning.
             phase_input = torch.atan2(complex_image[..., 1], complex_image[..., 0])
             phase_input += math.pi  # Don't forget to remove the pi in the output transform!
+
+            img_input = complex_abs(complex_image)
+            img_scale = torch.std(img_input)
+            img_input /= img_scale
 
             cmg_target /= img_scale
             img_target = complex_abs(cmg_target)
