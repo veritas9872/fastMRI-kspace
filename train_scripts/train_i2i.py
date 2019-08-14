@@ -121,8 +121,11 @@ if __name__ == '__main__':
         smoothing_factor=8,
 
         # Variables that occasionally change.
-        center_fractions=[0.08, 0.04],
-        accelerations=[4, 8],
+        center_fractions_train=[0.08, 0.04],
+        accelerations_train=[4, 8],
+        center_fractions_val=[0.08, 0.04],
+        accelerations_val=[4, 8],
+
         random_sampling=True,
         num_pool_layers=4,
         verbose=False,
@@ -161,9 +164,10 @@ if __name__ == '__main__':
 
         gpu=1,  # Set to None for CPU mode.
         num_workers=3,
-        init_lr=1E-4,
+        init_lr=5E-5,
         max_to_keep=1,
-        # prev_model_ckpt='',
+        prev_model_ckpt=
+        '/home/veritas/PycharmProjects/fastMRI-kspace/checkpoints/I2I/Trial 22  2019-08-13 23-02-41/ckpt_009.tar',
 
         sample_rate_train=1,
         start_slice_train=0,

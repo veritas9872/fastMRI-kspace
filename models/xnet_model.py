@@ -2,8 +2,6 @@ import torch
 from torch import nn, Tensor
 import torch.nn.functional as F
 
-import math
-
 
 class BasicLayer(nn.Module):
     def __init__(self, in_chans: int, out_chans: int, kernel_size: int, stride: int, negative_slope: float):
@@ -34,6 +32,21 @@ class BasicBlock(nn.Module):
         return self.layer(tensor)
 
 
+class ResBlock(nn.Module):
+    def __init__(self, num_chans: int, dilation=1):
+        super().__init__()
+        self.layer = nn.Sequential(
+            nn.Conv2d(in_channels=num_chans, out_channels=num_chans,
+                      kernel_size=3, stride=1, padding=dilation, dilation=dilation),
+            nn.ReLU(),
+            nn.Conv2d(in_channels=num_chans, out_channels=num_chans,
+                      kernel_size=3, stride=1, padding=dilation, dilation=dilation)
+        )
+
+    def forward(self, tensor):
+        return tensor + self.layer(tensor)
+
+
 class Interpolate(nn.Module):
     def __init__(self, scale_factor=2, mode='nearest'):
         super().__init__()
@@ -56,7 +69,6 @@ class XNet(nn.Module):
         super().__init__()
         self.residual_magnitude = residual_magnitude
         self.residual_phase = residual_phase
-        # self.pi = torch.tensor(math.pi, dtype=torch.float32)  # Maybe use later.
 
         kwargs = dict(num_groups=num_groups, negative_slope=negative_slope)
         self.magnitude_head = nn.Sequential(

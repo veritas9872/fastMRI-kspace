@@ -84,6 +84,7 @@ class XNetModelTrainer:
         self.writer = SummaryWriter(str(args.log_path))
 
         self.img_lambda = torch.tensor(args.img_lambda, dtype=torch.float32, device=args.device)
+        self.phase_lambda = torch.tensor(args.phase_lambda, dtype=torch.float32, device=args.device)
         self.verbose = args.verbose
         self.num_epochs = args.num_epochs
         self.smoothing_factor = args.smoothing_factor
@@ -101,8 +102,9 @@ class XNetModelTrainer:
         Optimizer: {get_class_name(optimizer)}.
         Input Transforms: {get_class_name(input_val_transform)}.
         Output Transform: {get_class_name(output_val_transform)}.
-        Angle (phase) Loss: {get_class_name(losses["angle_loss"])}.
+        Phase (Angle) Loss: {get_class_name(losses["phase_loss"])}.
         Image Domain Loss: {get_class_name(losses['img_loss'])}.
+        X (Phase and Magnitude) Loss: {get_class_name(losses['x_loss'])}. 
         Learning-Rate Scheduler: {get_class_name(scheduler)}.
         ''')
 
@@ -169,30 +171,10 @@ class XNetModelTrainer:
     def _train_step(self, inputs, targets, extra_params):
         self.optimizer.zero_grad()
         outputs = self.model(*inputs)  # Multiple inputs. (2 expected.)
-
         recons = self.output_train_transform(outputs, targets, extra_params)
 
-        # TODO: Change stuff from here.
-        cmg_loss = self.losses['cmg_loss'](recons['cmg_recons'], targets['cmg_targets'])
-        img_loss = self.losses['img_loss'](recons['img_recons'], targets['img_targets'])
+        step_loss, step_metrics = self._step(recons, targets, extra_params)
 
-        # If img_loss is a tuple, it is expected to contain all its component losses as a dict in its second element.
-        img_metrics = dict()
-        if isinstance(img_loss, tuple):
-            img_loss, img_metrics = img_loss
-
-        step_metrics = {'img_loss': img_loss, 'cmg_loss': cmg_loss}
-        step_metrics.update(img_metrics)
-
-        if 'acceleration' in extra_params:  # Different metrics for different accelerations.
-            acc = extra_params["acceleration"]
-            step_metrics[f'acc_{acc}_cmg_loss'] = cmg_loss
-            step_metrics[f'acc_{acc}_img_loss'] = img_loss
-            if img_metrics:
-                for key, value in img_metrics.items():
-                    step_metrics[f'acc_{acc}_{key}'] = value
-
-        step_loss = cmg_loss + self.img_lambda * img_loss
         step_loss.backward()
         self.optimizer.step()
         return recons, step_loss, step_metrics
@@ -224,7 +206,7 @@ class XNetModelTrainer:
                 self._log_step_outputs(epoch, step, step_loss, step_metrics, training=False)
 
             # Visualize images on TensorBoard.
-            self._visualize_images(recons, targets, epoch, step, training=False)
+            self._visualize_images(recons, targets, extra_params, epoch, step, training=False)
 
         # Converted to scalar and dict with scalar values respectively.
         return self._get_epoch_outputs(epoch, epoch_loss, epoch_metrics, training=False)
@@ -233,85 +215,84 @@ class XNetModelTrainer:
         outputs = self.model(*inputs)  # Multiple inputs. (2 expected.)
         recons = self.output_val_transform(outputs, targets, extra_params)
 
-        # TODO: Change stuff from here.
-        cmg_loss = self.losses['cmg_loss'](recons['cmg_recons'], targets['cmg_targets'])
-        img_loss = self.losses['img_loss'](recons['img_recons'], targets['img_targets'])
+        step_loss, step_metrics = self._step(recons, targets, extra_params)
+
+        return recons, step_loss, step_metrics
+
+    def _step(self, recons, targets, extra_params):  # Gets step loss and metrics from recons and targets.
+        img_recons = recons['img_recons']
+        img_targets = targets['img_targets']
+        phase_recons = recons['phase_recons']
+        phase_targets = targets['phase_targets']
+
+        x_loss = self.losses['x_loss'](img_recons, img_targets, phase_recons, phase_targets)
+        img_loss = self.losses['img_loss'](img_recons, img_targets)
+        phase_loss = self.losses['phase_loss'](phase_recons, phase_targets)
 
         # If img_loss is a tuple, it is expected to contain all its component losses as a dict in its second element.
         img_metrics = dict()
         if isinstance(img_loss, tuple):
             img_loss, img_metrics = img_loss
 
-        step_metrics = {'img_loss': img_loss, 'cmg_loss': cmg_loss}
+        step_metrics = {'x_loss': x_loss, 'img_loss': img_loss, 'phase_loss': phase_loss}
         step_metrics.update(img_metrics)
 
-        if 'acceleration' in extra_params:  # Different metrics for different accelerations.
-            acc = extra_params["acceleration"]
-            step_metrics[f'acc_{acc}_cmg_loss'] = cmg_loss
-            step_metrics[f'acc_{acc}_img_loss'] = img_loss
-            if img_metrics:
-                for key, value in img_metrics.items():
-                    step_metrics[f'acc_{acc}_{key}'] = value
+        acc = extra_params["acceleration"]
+        step_metrics[f'acc_{acc}_phase_loss'] = phase_loss
+        step_metrics[f'acc_{acc}_img_loss'] = img_loss
+        if img_metrics:
+            for key, value in img_metrics.items():
+                step_metrics[f'acc_{acc}_{key}'] = value
 
-        step_loss = cmg_loss + self.img_lambda * img_loss
+        step_loss = x_loss + self.phase_lambda * phase_loss + self.img_lambda * img_loss
+        return step_loss, step_metrics
 
-        return recons, step_loss, step_metrics
-
-    def _visualize_images(self, recons, targets, epoch, step, training=False):
+    def _visualize_images(self, recons, targets, extra_params, epoch, step, training=False):
         mode = 'Training' if training else 'Validation'
 
         # This numbering scheme seems to have issues for certain numbers.
         # Please check cases when there is no remainder.
         if self.display_interval and (step % self.display_interval == 0):
-            img_recon_grid = make_img_grid(recons['img_recons'], self.shrink_scale)
 
-            # TODO: Change stuff from here.
+            img_recon_grid = make_img_grid(recons['img_recons'], self.shrink_scale)
 
             # The delta image is obtained by subtracting at the complex image, not the real valued image.
             delta_image = complex_abs(targets['cmg_targets'] - recons['cmg_recons'])
             delta_img_grid = make_img_grid(delta_image, self.shrink_scale)
 
             kspace_recon_grid = make_k_grid(recons['kspace_recons'], self.smoothing_factor, self.shrink_scale)
+            phase_recon_grid = make_img_grid(recons['phase_recons'], self.shrink_scale)
 
-            self.writer.add_image(f'{mode} k-space Recons/{step}', kspace_recon_grid, epoch, dataformats='HW')
-            self.writer.add_image(f'{mode} Image Recons/{step}', img_recon_grid, epoch, dataformats='HW')
-            self.writer.add_image(f'{mode} Delta Image/{step}', delta_img_grid, epoch, dataformats='HW')
+            acc = extra_params["acceleration"]
+            kwargs = dict(global_step=epoch, dataformats='HW')
+            self.writer.add_image(f'{mode} k-space Recons/{acc}/{step}', kspace_recon_grid, **kwargs)
+            self.writer.add_image(f'{mode} Image Recons/{acc}/{step}', img_recon_grid, **kwargs)
+            self.writer.add_image(f'{mode} Delta Image/{acc}/{step}', delta_img_grid, **kwargs)
+            self.writer.add_image(f'{mode} Phase Recons/{acc}/{step}', phase_recon_grid, **kwargs)
 
             # Adding RSS images of reconstructions and targets.
             if 'rss_recons' in recons:
                 recon_rss = standardize_image(recons['rss_recons'])
                 delta_rss = standardize_image(make_rss_slice(delta_image))
-                self.writer.add_image(f'{mode} RSS Recons/{step}', recon_rss, epoch, dataformats='HW')
-                self.writer.add_image(f'{mode} RSS Delta/{step}', delta_rss, epoch, dataformats='HW')
+                self.writer.add_image(f'{mode} RSS Recons/{acc}/{step}', recon_rss, **kwargs)
+                self.writer.add_image(f'{mode} RSS Delta/{acc}/{step}', delta_rss, **kwargs)
 
-            if 'semi_kspace_recons' in recons:
-                semi_kspace_recon_grid = make_k_grid(
-                    recons['semi_kspace_recons'], self.smoothing_factor, self.shrink_scale)
-
-                self.writer.add_image(
-                    f'{mode} semi-k-space Recons/{step}', semi_kspace_recon_grid, epoch, dataformats='HW')
-
-            if epoch == 1:  # Maybe add input images too later on.
+            if epoch == 1:
                 img_target_grid = make_img_grid(targets['img_targets'], self.shrink_scale)
                 kspace_target_grid = make_k_grid(targets['kspace_targets'], self.smoothing_factor, self.shrink_scale)
 
                 # Not actually the input but what the input looks like as an image.
                 img_grid = make_img_grid(targets['img_inputs'], self.shrink_scale)
+                phase_target_grid = make_img_grid(targets['phase_targets'], self.shrink_scale)
 
-                self.writer.add_image(f'{mode} k-space Targets/{step}', kspace_target_grid, epoch, dataformats='HW')
-                self.writer.add_image(f'{mode} Image Targets/{step}', img_target_grid, epoch, dataformats='HW')
-                self.writer.add_image(f'{mode} Inputs as Images/{step}', img_grid, epoch, dataformats='HW')
+                self.writer.add_image(f'{mode} k-space Targets/{acc}/{step}', kspace_target_grid, **kwargs)
+                self.writer.add_image(f'{mode} Image Targets/{acc}/{step}', img_target_grid, **kwargs)
+                self.writer.add_image(f'{mode} Inputs as Images/{acc}/{step}', img_grid, **kwargs)
+                self.writer.add_image(f'{mode} Phase Targets/{acc}/{step}', phase_target_grid, **kwargs)
 
                 if 'rss_targets' in targets:
                     target_rss = standardize_image(targets['rss_targets'])
-                    self.writer.add_image(f'{mode} RSS Targets/{step}', target_rss, epoch, dataformats='HW')
-
-                if 'semi_kspace_targets' in targets:
-                    semi_kspace_target_grid = make_k_grid(targets['semi_kspace_targets'],
-                                                          self.smoothing_factor, self.shrink_scale)
-
-                    self.writer.add_image(f'{mode} semi-k-space Targets/{step}',
-                                          semi_kspace_target_grid, epoch, dataformats='HW')
+                    self.writer.add_image(f'{mode} RSS Targets/{acc}/{step}', target_rss, **kwargs)
 
     def _get_slice_metrics(self, recons, targets, extra_params):
         img_recons = recons['img_recons'].detach()  # Just in case.

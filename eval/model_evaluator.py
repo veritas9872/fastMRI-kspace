@@ -133,7 +133,7 @@ if __name__ == '__main__':
         multiprocessing.set_start_method(method='spawn')
 
     defaults = dict(
-        gpu=0,  # Set to None for CPU mode.
+        gpu=1,  # Set to None for CPU mode.
         challenge='multicoil',
         num_workers=4,
 
@@ -160,9 +160,9 @@ if __name__ == '__main__':
         # Parameters for reconstruction.
         data_root='/media/veritas/D/FastMRI/multicoil_val',
         checkpoint_path='/home/veritas/PycharmProjects/fastMRI-kspace/checkpoints/I2I/'
-                        'Trial 20  2019-08-12 22-36-40/ckpt_011.tar',
+                        'Trial 20  2019-08-12 22-36-40/ckpt_019.tar',
 
-        out_dir='./i2i_20'  # Change this every time! Attempted overrides will throw errors by design.
+        out_dir='./i2i_20_l'  # Change this every time! Attempted overrides will throw errors by design.
     )
 
     parser = create_arg_parser(**defaults).parse_args()
