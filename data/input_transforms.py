@@ -151,6 +151,7 @@ class TrainPreProcessCC:
 
         return inputs, targets, extra_params
 
+
 class TrainPreProcessCCInfo:
     def __init__(self, mask_func, challenge, device, use_seed=True, divisor=1, use_gt=True):
         if challenge not in ('singlecoil', 'multicoil'):
@@ -926,6 +927,61 @@ class TrainPreProcessPCK:
 
             # This pads at the last dimension of a tensor with 0.
             inputs = F.pad(masked_kspace, pad=pad, value=0)
+
+        return inputs, targets, extra_params
+
+
+class TrainPreProcessIMG:
+    def __init__(self, mask_func, challenge, device, use_seed=True, divisor=1):
+        if challenge not in ('singlecoil', 'multicoil'):
+            raise ValueError(f'Challenge should either be "singlecoil" or "multicoil"')
+        self.mask_func = mask_func
+        self.challenge = challenge
+        self.device = device
+        self.use_seed = use_seed
+        self.divisor = divisor
+
+    def __call__(self, kspace_target, target, attrs, file_name, slice_num):
+        assert isinstance(kspace_target, torch.Tensor)
+        if kspace_target.dim() == 4:  # If the collate function does not expand dimensions.
+            kspace_target = kspace_target.unsqueeze(dim=0)
+        elif kspace_target.dim() != 5:  # Expanded k-space should have 5 dimensions.
+            raise RuntimeError('k-space target has invalid shape!')
+
+        if kspace_target.size(0) != 1:
+            raise NotImplementedError('Batch size should be 1 for now.')
+
+        with torch.no_grad():
+            # Apply mask
+            seed = None if not self.use_seed else tuple(map(ord, file_name))
+            masked_kspace, mask = apply_mask(kspace_target, self.mask_func, seed)
+
+            k_scale = torch.std(masked_kspace)
+            k_scaling = torch.tensor(1) / k_scale
+
+            masked_kspace *= k_scaling  # Multiplication is faster than division.
+
+            cmg_target = ifft2(kspace_target) * k_scaling
+            cmg_target = kspace_to_nchw(cmg_target)
+            img_target = complex_abs(cmg_target)
+
+            cmg_input = ifft2(masked_kspace)
+            cmg_input = kspace_to_nchw(cmg_input)
+            img_input = complex_abs(cmg_input)
+
+            extra_params = {'img_inputs': img_input, 'k_scales': k_scale, 'masks': mask}
+
+            # Use plurals as keys to reduce confusion.
+            targets = {'kspace_targets': kspace_target, 'cmg_targets': cmg_target, 'img_targets': img_target}
+
+            margin = masked_kspace.size(-1) % self.divisor
+            if margin > 0:
+                pad = [(self.divisor - margin) // 2, (1 + self.divisor - margin) // 2]
+            else:  # This is a temporary fix to prevent padding by half the divisor when margin=0.
+                pad = [0, 0]
+
+            # This pads at the last dimension of a tensor with 0.
+            inputs = F.pad(cmg_input, pad=pad, value=0)
 
         return inputs, targets, extra_params
 

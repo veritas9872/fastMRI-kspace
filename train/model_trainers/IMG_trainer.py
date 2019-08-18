@@ -83,6 +83,7 @@ class ModelTrainerIMG:
         self.smoothing_factor = args.smoothing_factor
         self.use_slice_metrics = args.use_slice_metrics
         self.img_lambda = torch.tensor(args.img_lambda, dtype=torch.float32, device=args.device)
+        self.ssim_lambda = torch.tensor(args.ssim_lambda, dtype=torch.float32, device=args.device)
         self.writer = SummaryWriter(str(args.log_path))
 
     def train_model(self):
@@ -160,10 +161,11 @@ class ModelTrainerIMG:
         # Expects a single loss. No loss decomposition within domain implemented yet.
         cmg_loss = self.losses['cmg_loss'](recons['cmg_recons'], targets['cmg_targets'])
         img_loss = self.losses['img_loss'](recons['img_recons'], targets['img_targets'])
-        step_loss = cmg_loss + self.img_lambda * img_loss
+        SSIM_loss = self.losses['ssim_loss'](recons['img_recons'], targets['img_targets'])
+        step_loss = cmg_loss + self.img_lambda * img_loss + self.ssim_lambda * SSIM_loss
         step_loss.backward()
         self.optimizer.step()
-        step_metrics = {'cmg_loss': cmg_loss, 'img_loss': img_loss}
+        step_metrics = {'cmg_loss': cmg_loss, 'img_loss': img_loss, 'SSIM_loss': SSIM_loss}
         return recons, step_loss, step_metrics
 
     def _val_epoch(self, epoch):
@@ -225,9 +227,10 @@ class ModelTrainerIMG:
         # Expects a single loss. No loss decomposition within domain implemented yet.
         cmg_loss = self.losses['cmg_loss'](recons['cmg_recons'], targets['cmg_targets'])
         img_loss = self.losses['img_loss'](recons['img_recons'], targets['img_targets'])
-        step_loss = cmg_loss + self.img_lambda * img_loss
+        SSIM_loss = self.losses['ssim_loss'](recons['img_recons'], targets['img_targets'])
+        step_loss = cmg_loss + self.img_lambda * img_loss + self.ssim_lambda * SSIM_loss
 
-        step_metrics = {'cmg_loss': cmg_loss, 'img_loss': img_loss}
+        step_metrics = {'cmg_loss': cmg_loss, 'img_loss': img_loss, 'SSIM_loss': SSIM_loss}
         return recons, step_loss, step_metrics
 
     @staticmethod

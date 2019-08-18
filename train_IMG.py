@@ -8,12 +8,14 @@ from utils.run_utils import initialize, save_dict_as_json, get_logger, create_ar
 from utils.train_utils import create_custom_data_loaders, load_model_from_checkpoint
 
 from train.subsample import MaskFunc, UniformMaskFunc, RandomMaskFunc
-from data.input_transforms import Prefetch2Device, TrainPreProcessCC
+from data.input_transforms import Prefetch2Device, TrainPreProcessIMG
 from data.output_transforms import OutputTransformCC
 
 from models.fc_unet import FCUnet, Unet
 from models.networks_unet import UnetBlock1
 from train.model_trainers.IMG_trainer import ModelTrainerIMG
+
+from metrics.custom_losses import logSSIMLoss, CSSIM
 
 
 def train_img(args):
@@ -69,28 +71,25 @@ def train_img(args):
 
     data_prefetch = Prefetch2Device(device)
 
-    input_train_transform = TrainPreProcessCC(mask_func, args.challenge, args.device,
-                                              use_seed=False, divisor=divisor)
-    input_val_transform = TrainPreProcessCC(mask_func, args.challenge, args.device,
-                                            use_seed=True, divisor=divisor)
+    input_train_transform = TrainPreProcessIMG(mask_func, args.challenge, args.device,
+                                               use_seed=False, divisor=divisor)
+    input_val_transform = TrainPreProcessIMG(mask_func, args.challenge, args.device,
+                                             use_seed=True, divisor=divisor)
 
     # DataLoaders
     train_loader, val_loader = create_custom_data_loaders(args, transform=data_prefetch)
 
     losses = dict(
         cmg_loss=nn.MSELoss(reduction='mean'),
-        img_loss=nn.L1Loss(reduction='mean'),
-        k_loss=nn.MSELoss(reduction='mean')
+        img_loss=nn.MSELoss(reduction='mean'),
+        ssim_loss=logSSIMLoss(reduction='mean')
     )
-
     output_transform = OutputTransformCC()
 
     data_chans = 2 if args.challenge == 'singlecoil' else 30  # Multicoil has 15 coils with 2 for real/imag
 
     model = Unet(in_chans=data_chans, out_chans=data_chans, chans=args.chans,
                  num_pool_layers=args.num_pool_layers).to(device)
-
-    # model = UnetBlock1(input_nc=data_chans, output_nc=data_chans, ngf=args.chans).to(device)
 
     # If you have to load, uncomment
     # load_dir = './checkpoints/IMG/FC_2_4/ckpt_012.tar'
@@ -119,8 +118,8 @@ if __name__ == '__main__':
         chans=64,
         num_pool_layers=5,
         save_best_only=True,
-        center_fractions=[0.16, 0.08],
-        accelerations=[2, 4],
+        center_fractions=[0.08, 0.04],
+        accelerations=[4, 8],
         smoothing_factor=8,
 
         # Variables that occasionally change.
@@ -130,8 +129,10 @@ if __name__ == '__main__':
         gpu=0,  # Set to None for CPU mode.
         max_to_keep=1,
         img_lambda=10,
+        ssim_lambda=3,
 
         start_slice=10,
+        start_val_slice=0,
 
         # Variables that change frequently.
         sample_rate=1,
@@ -139,7 +140,7 @@ if __name__ == '__main__':
         verbose=False,
         use_slice_metrics=True,  # Using slice metrics causes a 30% increase in training time.
         lr_red_epoch=50,
-        lr_red_rate=0.1,
+        lr_red_rate=0.5,
     )
     options = create_arg_parser(**settings).parse_args()
     train_img(options)
