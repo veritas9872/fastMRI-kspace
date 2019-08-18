@@ -59,8 +59,8 @@ def ssim_loss(input, target, max_val, filter_size=11, k1=0.01, k2=0.03,
     dim = input.dim()
 
     if dim == 2:  # Expa
-        input = input.expand(1, 1, input.dim(-2), input.dim(-1))
-        target = target.expand(1, 1, target.dim(-2), target.dim(-1))
+        input = input.expand(1, 1, input.shape[-2], input.shape[-1])
+        target = target.expand(1, 1, target.shape[-2], target.shape[-1])
     elif dim == 3:
         input = input.unsqueeze(dim=0)
         target = target.unsqueeze(dim=0)

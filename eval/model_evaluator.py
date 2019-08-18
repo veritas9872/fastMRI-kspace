@@ -39,13 +39,12 @@ class ModelEvaluator:
         for ds_slices, attrs, file_names, s_idxs in tqdm(data_loader):
             inputs, extra_params = self.pre_processing(ds_slices.to(device=self.device), file_names, s_idxs)
             recons = self.model(inputs)
-            recons = self.post_processing(recons, extra_params)['cmg_recons'].cpu().numpy()
+            recons = self.post_processing(recons, extra_params)['img_recons'].cpu().numpy()
 
             for idx in range(recons.shape[0]):
                 file_name = Path(file_names[idx]).name
                 reconstructions[file_name].append((int(s_idxs[idx]), recons[idx, ...].squeeze()))
 
-        import ipdb; ipdb.set_trace()
         reconstructions = {
             file_name: np.stack([recon for _, recon in sorted(recons_list)])
             for file_name, recons_list in reconstructions.items()
@@ -55,7 +54,7 @@ class ModelEvaluator:
 
     def _create_data_loader(self):
         dataset = CustomSliceTestData(root=self.data_dir, transform=None, challenge='multicoil')
-        data_loader = DataLoader(dataset, batch_size=1, num_workers=1, pin_memory=True)
+        data_loader = DataLoader(dataset, batch_size=1, num_workers=4, pin_memory=True)
         return data_loader
 
     def _save_reconstructions(self, reconstructions):
@@ -102,11 +101,11 @@ if __name__ == '__main__':
     print(f'Current Working Directory: {Path.cwd()}')
     defaults = dict(
         gpu=0,  # Set to None for CPU mode.
-        data_dir='/media/harry/fastmri/fastMRI_data/multicoil_test_test',
+        data_dir='/media/harry/fastmri/fastMRI_data/multicoil_test_v2',
         checkpoint_path='/home/harry/PycharmProjects/fastMRI-kspace/checkpoints/'
-                        'IMG/[IMG]ResUnet/ckpt_052.tar',
+                        'IMG/[IMG]GRU_P2/ckpt_G027.tar',
 
-        out_dir='./ResUnet'  # Change this every time! Attempted overrides will throw errors by design.
+        out_dir='./GRU_P2_test'  # Change this every time! Attempted overrides will throw errors by design.
     )
 
     # Model settings
@@ -120,6 +119,6 @@ if __name__ == '__main__':
 
     # Change this part when a different model is being used.
     model = Unet(in_chans=settings['data_chans'], out_chans=settings['data_chans'], chans=settings['chans'],
-                 num_pool_layers=settings['num_pool_layers'])
+                 num_pool_layers=settings['num_pool_layers']).to(device='cuda:0')
 
     main(model, parser)

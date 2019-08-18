@@ -133,6 +133,7 @@ class UniformMaskFunc:
 
 class RandomMaskFunc:
     """
+    RandomMaskFunc is the same as MaskFunc, but with more outputs.
     MaskFunc creates a sub-sampling mask of a given shape.
     The mask selects a subset of columns from the input k-space data. If the k-space data has N
     columns, the mask picks out:
@@ -189,77 +190,17 @@ class RandomMaskFunc:
 
         # Create the mask
         num_low_freqs = int(round(num_cols * center_fraction))
-
-        if acceleration == 2:
-            type_choice = random.choice(['Uniform', 'Uniform_random'])
-
-            if type_choice == 'Uniform':
-                mask = np.ones(num_cols, dtype=np.bool)
-                choice = ['odd', 'even']
-                select = random.choice(choice)
-                if select == 'odd':
-                    mask[::2] = False
-                elif select == 'even':
-                    mask[1::2] = False
-                pad = (num_cols - num_low_freqs + 1) // 2
-                mask[pad:pad + num_low_freqs] = True
-
-            elif type_choice == 'Uniform_random':
-                prob = (num_cols / acceleration - num_low_freqs) / (num_cols - num_low_freqs)
-                mask = self.rng.uniform(size=num_cols) < prob
-                pad = (num_cols - num_low_freqs + 1) // 2
-                mask[pad:pad + num_low_freqs] = True
-        else:
-            type_choice = 'Uniform_random'
-
-            prob = (num_cols / acceleration - num_low_freqs) / (num_cols - num_low_freqs)
-            mask = self.rng.uniform(size=num_cols) < prob
-            pad = (num_cols - num_low_freqs + 1) // 2
-            mask[pad:pad + num_low_freqs] = True
-
-        # Reshape the mask
-        mask_shape = [1 for _ in shape]
-        mask_shape[ds_axis] = num_cols
-        mask = torch.from_numpy(mask.reshape(*mask_shape).astype(np.float32))
-
-        return mask, type_choice
-
-
-class PMaskFunc:
-    def __init__(self, center_fractions, accelerations):
-        if len(center_fractions) != len(accelerations):
-            raise ValueError('Number of center fractions should match number of accelerations')
-
-        self.center_fractions = center_fractions
-        self.accelerations = accelerations
-        self.rng = np.random.RandomState()
-
-    def __call__(self, shape, seed=None, ds_axis=-2):
-        if len(shape) < 3:
-            raise ValueError('Shape should have 3 or more dimensions')
-
-        self.rng.seed(seed)
-        num_cols = shape[ds_axis]
-
-        choice = self.rng.randint(0, len(self.accelerations))
-        center_fraction = self.center_fractions[choice]
-        acceleration = self.accelerations[choice]
-
-        # Create the mask
-        num_low_freqs = int(round(num_cols * center_fraction))
         prob = (num_cols / acceleration - num_low_freqs) / (num_cols - num_low_freqs)
         mask = self.rng.uniform(size=num_cols) < prob
         pad = (num_cols - num_low_freqs + 1) // 2
-        mask[pad:pad + num_low_freqs] = 1.0
-
-        # Reshape mask
-        h = shape[-3]
-        mask_holder = np.tile(mask, (h, 1)).astype(np.float32)
-        mask_holder = np.tile(mask_holder, (15, 1, 1))
+        mask[pad:pad + num_low_freqs] = True
 
         # Reshape the mask
         mask_shape = [1 for _ in shape]
         mask_shape[ds_axis] = num_cols
         mask = torch.from_numpy(mask.reshape(*mask_shape).astype(np.float32))
 
-        return mask, acceleration, mask_holder
+        info = {'acceleration': acceleration, 'center_fraction': center_fraction,
+                'num_low_frequency': num_low_freqs, 'prob': prob, }
+
+        return mask, info

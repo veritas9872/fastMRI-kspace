@@ -250,7 +250,7 @@ def create_custom_datasets(args, transform=None):
         challenge=args.challenge,
         sample_rate=args.sample_rate,
         start_slice=args.start_slice,
-        use_gt=False,
+        use_gt=True,
     )
 
     val_dataset = CustomSliceData(
@@ -258,8 +258,8 @@ def create_custom_datasets(args, transform=None):
         transform=transform,
         challenge=args.challenge,
         sample_rate=args.sample_rate,
-        start_slice=args.start_slice,
-        use_gt=False,
+        start_slice=args.start_val_slice,
+        use_gt=True,
     )
     return train_dataset, val_dataset
 
@@ -359,6 +359,19 @@ def make_RSS(image_recons, image_targets):
 
     image_recons = image_recons.squeeze().cpu()
     image_targets = image_targets.squeeze().cpu()
+
+    deltas = image_targets - image_recons
+
+    return image_recons, image_targets, deltas
+
+
+def make_normalize(image_recons, image_targets):
+    large = torch.max(image_targets)
+    small = torch.min(image_targets)
+    diff = large - small
+
+    image_recons = (image_recons.clamp(min=small, max=large) - small) * (torch.tensor(1) / diff)
+    image_targets = (image_targets - small) * (torch.tensor(1) / diff)
 
     deltas = image_targets - image_recons
 

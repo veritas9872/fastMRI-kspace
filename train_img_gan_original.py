@@ -8,13 +8,13 @@ from utils.run_utils import initialize, save_dict_as_json, get_logger, create_ar
 from utils.train_utils import create_custom_data_loaders, load_model_from_checkpoint
 
 from train.subsample import MaskFunc, UniformMaskFunc, RandomMaskFunc
-from data.input_transforms import Prefetch2Device, TrainPreProcessCCInfo, TrainPreProcessCCInfoScale
-from data.output_transforms import OutputTransformCC, OutputTransformCCRSS
+from data.input_transforms import Prefetch2Device, TrainPreProcessCC
+from data.output_transforms import OutputTransformCC
 
 from models.fc_unet import FCUnet, Unet
 from models.networks_unet import UnetBlock1
 from models.Discriminator import GANLoss, NLayerDiscriminator
-from train.model_trainers.IMG_gan_trainer import ModelTrainerIMGgan
+from train.model_trainers.IMG_gan_trainer_orig import ModelTrainerIMGgan
 
 from metrics.custom_losses import logSSIMLoss, CSSIM
 
@@ -68,23 +68,23 @@ def train_img(args):
     # UNET architecture requires that all inputs be dividable by some power of 2.
     divisor = 2 ** args.num_pool_layers
 
-    mask_func = RandomMaskFunc(args.center_fractions, args.accelerations)
+    mask_func = MaskFunc(args.center_fractions, args.accelerations)
 
     data_prefetch = Prefetch2Device(device)
 
-    input_train_transform = TrainPreProcessCCInfoScale(mask_func, args.challenge, args.device,
-                                                       use_seed=False, divisor=divisor, use_gt=True)
-    input_val_transform = TrainPreProcessCCInfoScale(mask_func, args.challenge, args.device,
-                                                     use_seed=True, divisor=divisor, use_gt=True)
+    input_train_transform = TrainPreProcessCC(mask_func, args.challenge, args.device,
+                                              use_seed=False, divisor=divisor)
+    input_val_transform = TrainPreProcessCC(mask_func, args.challenge, args.device,
+                                            use_seed=True, divisor=divisor)
 
     # DataLoaders
     train_loader, val_loader = create_custom_data_loaders(args, transform=data_prefetch)
 
     losses = dict(
         cmg_loss=nn.MSELoss(reduction='mean'),
-        img_loss=nn.L1Loss(reduction='mean'),
-        SSIM_loss=logSSIMLoss(reduction='mean'),
-        GAN_loss=GANLoss(args.gan_mode).to(device)  # Change this part
+        img_loss=nn.MSELoss(reduction='mean'),
+        ssim_loss=logSSIMLoss(reduction='mean'),
+        GAN_loss=GANLoss(args.gan_mode).to(device) # Change this part
     )
 
     output_transform = OutputTransformCC()
@@ -96,10 +96,8 @@ def train_img(args):
     modelD = NLayerDiscriminator(input_nc=1).to(device)
 
     # If you have to load, uncomment
-    # G_load_dir = './checkpoints/IMG/[IMG]GRU_P2/ckpt_G027.tar'
-    # D_load_dir = './checkpoints/IMG/[IMG]GRU_P2/ckpt_D027.tar'
-    # load_model_from_checkpoint(modelG, G_load_dir, strict=True)
-    # load_model_from_checkpoint(modelD, D_load_dir, strict=True)
+    # load_dir = './checkpoints/IMG/FC_2_4/ckpt_012.tar'
+    # load_model_from_checkpoint(model, load_dir, strict=False)
 
     optimizerG = optim.Adam(modelG.parameters(), lr=args.init_lr)
     optimizerD = optim.Adam(modelD.parameters(), lr=args.init_lr)
@@ -110,13 +108,15 @@ def train_img(args):
     trainer = ModelTrainerIMGgan(args, modelG, modelD, optimizerG, optimizerD, train_loader, val_loader,
                                  input_train_transform, input_val_transform, output_transform, losses,
                                  schedulerG, schedulerD)
+
+    # TODO: Implement logging of model, losses, transforms, etc.
     trainer.train_model()
 
 
 if __name__ == '__main__':
     settings = dict(
         # Variables that almost never change.
-        name='gan_ssim_image',  # Please do change this every time Harry
+        name='ganSSIM_image_4',  # Please do change this every time Harry
         challenge='multicoil',
         data_root='/media/harry/fastmri/fastMRI_data',
         log_root='./logs',
@@ -125,8 +125,8 @@ if __name__ == '__main__':
         chans=64,
         num_pool_layers=5,
         save_best_only=True,
-        center_fractions=[0.16, 0.08],
-        accelerations=[2, 4],
+        center_fractions=[0.08],
+        accelerations=[4],
         smoothing_factor=8,
 
         # Variables that occasionally change.
@@ -137,14 +137,14 @@ if __name__ == '__main__':
         max_to_keep=1,
         img_lambda=10,
         ssim_lambda=1,
-        GAN_lambda=3e-1,
+        GAN_lambda=2e-1,
         gan_mode='lsgan',
 
         start_slice=10,
 
         # Variables that change frequently.
-        sample_rate=0.05,
-        num_epochs=100,
+        sample_rate=1,
+        num_epochs=200,
         verbose=False,
         use_slice_metrics=True,  # Using slice metrics causes a 30% increase in training time.
         lr_red_epoch=50,

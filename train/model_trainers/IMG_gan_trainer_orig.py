@@ -10,12 +10,11 @@ from collections import defaultdict
 
 from utils.run_utils import get_logger
 from utils.train_utils import CheckpointManager, make_grid_triplet, make_k_grid, make_input_triplet, \
-                            make_input_RSS, make_RSS, make_normalize
+                            make_input_RSS, make_RSS
 from utils.train_utils_gan import GANCheckpointManager, load_gan_model_from_checkpoint
 
 from metrics.my_ssim import ssim_loss
-from metrics.new_1d_ssim import SSIM
-from metrics.custom_losses import psnr_loss, nmse_loss, psnr, nmse
+from metrics.custom_losses import psnr_loss, nmse_loss
 
 from data.data_transforms import root_sum_of_squares, pre_RSS
 
@@ -101,7 +100,6 @@ class ModelTrainerIMGgan:
         self.ssim_lambda = torch.tensor(args.ssim_lambda, dtype=torch.float32, device=args.device)
         self.GAN_lambda = torch.tensor(args.GAN_lambda, dtype=torch.float32, device=args.device)
         self.writer = SummaryWriter(str(args.log_path))
-        self.ssim = SSIM(filter_size=7).to(device=args.device)  # Needed to cache the kernel.
 
     def train_model(self):
         tic_tic = time()
@@ -120,7 +118,7 @@ class ModelTrainerIMGgan:
             val_epoch_loss, val_epoch_metrics = self._val_epoch(epoch=epoch)
             toc = int(time() - tic)
             self._log_epoch_outputs_val(epoch, val_epoch_loss, val_epoch_metrics,
-                                        elapsed_secs=toc, training=False, verbose=True)
+                                    elapsed_secs=toc, training=False, verbose=True)
 
             self.checkpointer.save(metric=val_epoch_loss, verbose=True)
 
@@ -159,14 +157,16 @@ class ModelTrainerIMGgan:
             # 'recons' is a dictionary containing k-space, complex image, and real image reconstructions.
             recons, step_G_loss, step_metrics = self._train_step_G(inputs, targets, extra_params)
             # Update discriminator 3 times
-            step_D_loss = self._train_step_D(targets['img_targets'], recons['img_recons'])
+            step_D_loss = self._train_step_D(targets['cmg_targets'], recons['cmg_recons'])
             epoch_G_loss.append(step_G_loss.detach())  # Perhaps not elegant, but underflow makes this necessary.
             epoch_D_loss.append(step_D_loss.detach())
 
             # Gradients are not calculated so as to boost speed and remove weird errors.
             with torch.no_grad():  # Update epoch loss and metrics
                 if self.use_slice_metrics:
-                    slice_metrics = self._get_slice_metrics(recons['img_recons'], targets, extra_params)
+                    rss_img_recons = (recons['img_recons'] ** 2).sum(dim=1).sqrt().squeeze()
+                    rss_img_targets = (targets['img_targets'] ** 2).sum(dim=1).sqrt().squeeze()
+                    slice_metrics = self._get_slice_metrics(rss_img_recons, rss_img_targets)
                     step_metrics.update(slice_metrics)
                 [epoch_metrics[key].append(value.detach()) for key, value in step_metrics.items()]
 
@@ -184,32 +184,13 @@ class ModelTrainerIMGgan:
         # Expects a single loss. No loss decomposition within domain implemented yet.
         cmg_loss = self.losses['cmg_loss'](recons['cmg_recons'], targets['cmg_targets'])
         img_loss = self.losses['img_loss'](recons['img_recons'], targets['img_targets'])
-        SSIM_loss = self.losses['SSIM_loss'](recons['img_recons'], targets['img_targets'])
-        GAN_input = (recons['img_recons'] ** 2).sum(dim=1).sqrt().unsqueeze(dim=0)
+        SSIM_loss = self.losses['ssim_loss'](recons['img_recons'], targets['img_targets'])
+        GAN_input = (recons['cmg_recons'] ** 2).sum(dim=1).sqrt().unsqueeze(dim=0)
         GAN_loss = self.losses['GAN_loss'](self.modelD(GAN_input), True)
-
-        img_metrics = dict()
-        if isinstance(img_loss, tuple):
-            img_loss, img_metrics = img_loss
-
-        step_metrics = {'cmg_loss': cmg_loss, 'img_loss': img_loss, 'SSIM_loss': SSIM_loss, 'GAN_loss': GAN_loss}
-        step_metrics.update(step_metrics)
-
-        if 'acceleration' in extra_params:
-            acc = extra_params['acceleration']
-            step_metrics[f'acc_{acc}_cmg_loss'] = cmg_loss
-            step_metrics[f'acc_{acc}_img_loss'] = img_loss
-            step_metrics[f'acc_{acc}_ssim_loss'] = SSIM_loss
-            step_metrics[f'acc_{acc}_GAN_loss'] = GAN_loss
-            if img_metrics:
-                for key, value in img_metrics.items():
-                    step_metrics[f'acc_{acc}_{key}'] = value
-
-        step_loss = cmg_loss + self.img_lambda * img_loss - self.ssim_lambda * SSIM_loss \
-                    + self.GAN_lambda * GAN_loss
+        step_loss = cmg_loss * 0 + self.img_lambda * img_loss - self.ssim_lambda * SSIM_loss + self.GAN_lambda * GAN_loss
         step_loss.backward()
         self.optimizerG.step()
-
+        step_metrics = {'cmg_loss': cmg_loss, 'img_loss': img_loss, 'SSIM_loss': SSIM_loss, 'GAN_loss': GAN_loss}
         return recons, step_loss, step_metrics
 
     def _train_step_D(self, real, fake):
@@ -248,7 +229,10 @@ class ModelTrainerIMGgan:
             epoch_loss.append(step_loss.detach())
 
             if self.use_slice_metrics:
-                slice_metrics = self._get_slice_metrics(recons['img_recons'], targets, extra_params)
+                # RSS
+                rss_img_recons = (recons['img_recons'] ** 2).sum(dim=1).sqrt().squeeze()
+                rss_img_targets = (targets['img_targets'] ** 2).sum(dim=1).sqrt().squeeze()
+                slice_metrics = self._get_slice_metrics(rss_img_recons, rss_img_targets)
                 step_metrics.update(slice_metrics)
 
             [epoch_metrics[key].append(value.detach()) for key, value in step_metrics.items()]
@@ -285,92 +269,52 @@ class ModelTrainerIMGgan:
         # Expects a single loss. No loss decomposition within domain implemented yet.
         cmg_loss = self.losses['cmg_loss'](recons['cmg_recons'], targets['cmg_targets'])
         img_loss = self.losses['img_loss'](recons['img_recons'], targets['img_targets'])
-        SSIM_loss = self.losses['SSIM_loss'](recons['img_recons'], targets['img_targets'])
-
-        img_metrics = dict()
-        if isinstance(img_loss, tuple):
-            img_loss, img_metrics = img_loss
+        SSIM_loss = self.losses['ssim_loss'](recons['img_recons'], targets['img_targets'])
+        step_loss = cmg_loss * 0 + self.img_lambda * img_loss - self.ssim_lambda * SSIM_loss
 
         step_metrics = {'cmg_loss': cmg_loss, 'img_loss': img_loss, 'SSIM_loss': SSIM_loss}
-        step_metrics.update(img_metrics)
-
-        if 'acceleration' in extra_params:  # Different metrics for different accelerations.
-            acc = extra_params["acceleration"]
-            step_metrics[f'acc_{acc}_cmg_loss'] = cmg_loss
-            step_metrics[f'acc_{acc}_img_loss'] = img_loss
-            step_metrics[f'acc_{acc}_ssim_loss'] = SSIM_loss
-            if img_metrics:
-                for key, value in img_metrics.items():
-                    step_metrics[f'acc_{acc}_{key}'] = value
-
-        step_loss = cmg_loss + self.img_lambda * img_loss - self.ssim_lambda * SSIM_loss
-
         return recons, step_loss, step_metrics
 
-    def _get_slice_metrics(self, recons, targets, extra_params):
-        img_recons = (recons ** 2).sum(dim=1).sqrt().squeeze()
+    @staticmethod
+    def _get_slice_metrics(img_recons, img_targets):
         img_recons = img_recons.detach()  # Just in case.
-        img_targets = targets['real_targets'].detach()
+        img_targets = img_targets.detach()
 
         max_range = img_targets.max() - img_targets.min()
+        slice_ssim = ssim_loss(img_recons, img_targets, max_val=max_range)
+        slice_psnr = psnr_loss(img_recons, img_targets, data_range=max_range)
+        slice_nmse = nmse_loss(img_recons, img_targets)
 
-        slice_ssim = self.ssim(img_recons, img_targets)
-        slice_psnr = psnr(img_recons, img_targets, data_range=max_range)
-        slice_nmse = nmse(img_recons, img_targets)
+        return {'slice_ssim': slice_ssim, 'slice_nmse': slice_nmse, 'slice_psnr': slice_psnr}
 
-        slice_metrics = {
-            'slice/ssim': slice_ssim,
-            'slice/nmse': slice_nmse,
-            'slice/psnr': slice_psnr
-        }
+    @staticmethod
+    def _get_accel_slice_metrics(img_recons, img_targets, acceleration):
 
-        # Additional metrics for separating between acceleration factors.
-        if 'acceleration' in extra_params:
-            acc = extra_params["acceleration"]
-            slice_metrics[f'slice_acc_{acc}/ssim'] = slice_ssim
-            slice_metrics[f'slice_acc_{acc}/psnr'] = slice_psnr
-            slice_metrics[f'slice_acc_{acc}/nmse'] = slice_nmse
-
-        return slice_metrics
-
-    def _get_slice_metrics_v2(self, recons, targets, extra_params):
-        img_recons = (recons ** 2).sum(dim=1).sqrt().squeeze()
         img_recons = img_recons.detach()  # Just in case.
-        img_targets = targets['img_targets']
-        img_targets = (img_targets ** 2).sum(dim=1).sqrt().squeeze()
-        real_img_targets = targets['real_targets'].detach()
+        img_targets = img_targets.detach()
 
         max_range = img_targets.max() - img_targets.min()
-        real_max_range = real_img_targets.max() - real_img_targets.min()
+        slice_ssim = ssim_loss(img_recons, img_targets, max_val=max_range)
+        slice_psnr = psnr_loss(img_recons, img_targets, data_range=max_range)
+        slice_nmse = nmse_loss(img_recons, img_targets)
 
-        slice_ssim = self.ssim(img_recons, img_targets)
-        slice_psnr = psnr(img_recons, img_targets, data_range=max_range)
-        slice_nmse = nmse(img_recons, img_targets)
+        if acceleration == 2:
+            slice_ssim_2 = slice_ssim
+            slice_psnr_2 = slice_psnr
+            slice_nmse_2 = slice_nmse
+            out_dict = {'slice_ssim_2': slice_ssim_2, 'slice_nmse_2': slice_nmse_2, 'slice_psnr_2': slice_psnr_2}
+        elif acceleration == 4:
+            slice_ssim_4 = slice_ssim
+            slice_psnr_4 = slice_psnr
+            slice_nmse_4 = slice_nmse
+            out_dict = {'slice_ssim_4': slice_ssim_4, 'slice_nmse_4': slice_nmse_4, 'slice_psnr_4': slice_psnr_4}
+        elif acceleration == 8:
+            slice_ssim_8 = slice_ssim
+            slice_psnr_8 = slice_psnr
+            slice_nmse_8 = slice_nmse
+            out_dict = {'slice_ssim_8': slice_ssim_8, 'slice_nmse_8': slice_nmse_8, 'slice_psnr_8': slice_psnr_8}
 
-        real_slice_ssim = self.ssim(img_recons, real_img_targets)
-        real_slice_psnr = psnr(img_recons, real_img_targets, data_range=real_max_range)
-        real_slice_nmse = nmse(img_recons, real_img_targets)
-
-        slice_metrics = {
-            'slice/ssim': slice_ssim,
-            'slice/nmse': slice_nmse,
-            'slice/psnr': slice_psnr,
-            'real_slice/ssim': real_slice_ssim,
-            'real_slice/nmse': real_slice_nmse,
-            'real_slice/psnr': real_slice_psnr
-        }
-
-        # Additional metrics for separating between acceleration factors.
-        if 'acceleration' in extra_params:
-            acc = extra_params["acceleration"]
-            slice_metrics[f'slice_acc_{acc}/ssim'] = slice_ssim
-            slice_metrics[f'slice_acc_{acc}/psnr'] = slice_psnr
-            slice_metrics[f'slice_acc_{acc}/nmse'] = slice_nmse
-            slice_metrics[f'real_slice_acc_{acc}/ssim'] = real_slice_ssim
-            slice_metrics[f'real_slice_acc_{acc}/psnr'] = real_slice_psnr
-            slice_metrics[f'real_slice_acc_{acc}/nmse'] = real_slice_nmse
-
-        return slice_metrics
+        return out_dict
 
     def _get_epoch_outputs(self, epoch, epoch_G_loss, epoch_D_loss, epoch_metrics, training=True):
         mode = 'Training' if training else 'Validation'

@@ -157,4 +157,23 @@ def psnr_loss(img_comp, img_orig, data_range=None):
 def nmse_loss(img_comp, img_orig):
     return F.mse_loss(img_comp, img_orig, reduction='sum') / torch.sum(img_orig ** 2)
 
+def psnr(img_comp, img_orig, data_range):
+    assert img_comp.size() == img_orig.size()
+
+    # true_range = img_orig.max() - img_orig.min()
+    #
+    # if data_range is None:
+    #     data_range = true_range
+    #
+    # if true_range > data_range:
+    #     raise ValueError('True data range is greater than given value range.')
+
+    err = F.mse_loss(img_comp, img_orig, reduction='mean')
+
+    return 10 * torch.log10((data_range * data_range) / err)
+
+
+def nmse(img_comp, img_orig):
+    return F.mse_loss(img_comp, img_orig, reduction='sum') / torch.sum(img_orig ** 2)
+
 

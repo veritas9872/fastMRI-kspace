@@ -8,13 +8,11 @@ from utils.run_utils import initialize, save_dict_as_json, get_logger, create_ar
 from utils.train_utils import create_custom_data_loaders, load_model_from_checkpoint
 
 from train.subsample import MaskFunc, UniformMaskFunc, RandomMaskFunc
-from data.input_transforms import Prefetch2Device, TrainPreProcessCCInfo, TrainPreProcessCCInfoScale
-from data.output_transforms import OutputTransformCC, OutputTransformCCRSS
+from data.input_transforms import Prefetch2Device, TrainPreProcessCC
+from data.output_transforms import OutputTransformIK, MidTransformK
 
 from models.fc_unet import FCUnet, Unet
-from models.networks_unet import UnetBlock1
-from models.Discriminator import GANLoss, NLayerDiscriminator
-from train.model_trainers.IMG_gan_trainer import ModelTrainerIMGgan
+from train.model_trainers.IMG_IK_pretrained import ModelTrainerIMGIK
 
 from metrics.custom_losses import logSSIMLoss, CSSIM
 
@@ -66,84 +64,87 @@ def train_img(args):
 
     # Input transforms. These are on a per-slice basis.
     # UNET architecture requires that all inputs be dividable by some power of 2.
-    divisor = 2 ** args.num_pool_layers
+    divisor = 2 ** args.i_num_pool_layers
 
-    mask_func = RandomMaskFunc(args.center_fractions, args.accelerations)
+    mask_func = MaskFunc(args.center_fractions, args.accelerations)
 
     data_prefetch = Prefetch2Device(device)
 
-    input_train_transform = TrainPreProcessCCInfoScale(mask_func, args.challenge, args.device,
-                                                       use_seed=False, divisor=divisor, use_gt=True)
-    input_val_transform = TrainPreProcessCCInfoScale(mask_func, args.challenge, args.device,
-                                                     use_seed=True, divisor=divisor, use_gt=True)
+    input_train_transform = TrainPreProcessCC(mask_func, args.challenge, args.device,
+                                              use_seed=False, divisor=divisor)
+    input_val_transform = TrainPreProcessCC(mask_func, args.challenge, args.device,
+                                            use_seed=True, divisor=divisor)
 
     # DataLoaders
     train_loader, val_loader = create_custom_data_loaders(args, transform=data_prefetch)
 
     losses = dict(
         cmg_loss=nn.MSELoss(reduction='mean'),
-        img_loss=nn.L1Loss(reduction='mean'),
-        SSIM_loss=logSSIMLoss(reduction='mean'),
-        GAN_loss=GANLoss(args.gan_mode).to(device)  # Change this part
+        img_loss=nn.MSELoss(reduction='mean'),
+        ssim_loss=logSSIMLoss(reduction='mean')
     )
 
-    output_transform = OutputTransformCC()
+    mid_transform = MidTransformK()
+    output_transform = OutputTransformIK()
 
     data_chans = 2 if args.challenge == 'singlecoil' else 30  # Multicoil has 15 coils with 2 for real/imag
 
-    modelG = Unet(in_chans=data_chans, out_chans=data_chans, chans=args.chans,
-                  num_pool_layers=args.num_pool_layers).to(device)
-    modelD = NLayerDiscriminator(input_nc=1).to(device)
+    modelI = Unet(in_chans=data_chans, out_chans=data_chans, chans=args.i_chans,
+                  num_pool_layers=args.i_num_pool_layers).to(device)
+    modelK = Unet(in_chans=data_chans, out_chans=data_chans, chans=args.k_chans,
+                  num_pool_layers=args.k_num_pool_layers).to(device)
 
-    # If you have to load, uncomment
-    # G_load_dir = './checkpoints/IMG/[IMG]GRU_P2/ckpt_G027.tar'
-    # D_load_dir = './checkpoints/IMG/[IMG]GRU_P2/ckpt_D027.tar'
-    # load_model_from_checkpoint(modelG, G_load_dir, strict=True)
-    # load_model_from_checkpoint(modelD, D_load_dir, strict=True)
+    # Load pretrained model I parameters
+    I_load_dir = './checkpoints/IMG/[IMG]GRU_P2/ckpt_G027.tar'
+    load_model_from_checkpoint(modelI, I_load_dir, strict=True)
 
-    optimizerG = optim.Adam(modelG.parameters(), lr=args.init_lr)
-    optimizerD = optim.Adam(modelD.parameters(), lr=args.init_lr)
+    # K_load_dir = './checkpoints/IMG/Trial 10  2019-08-15 21-01-57/ckpt_K014.tar'
+    # load_model_from_checkpoint(modelK, K_load_dir, strict=True)
 
-    schedulerG = optim.lr_scheduler.StepLR(optimizerG, step_size=args.lr_red_epoch, gamma=args.lr_red_rate)
-    schedulerD = optim.lr_scheduler.StepLR(optimizerD, step_size=args.lr_red_epoch, gamma=args.lr_red_rate)
+    # optimizer = optim.Adam(list(modelI.parameters()) + list(modelK.parameters()), lr=args.init_lr)
+    optimizer = optim.Adam(modelK.parameters(), lr=args.init_lr)
 
-    trainer = ModelTrainerIMGgan(args, modelG, modelD, optimizerG, optimizerD, train_loader, val_loader,
-                                 input_train_transform, input_val_transform, output_transform, losses,
-                                 schedulerG, schedulerD)
+    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=args.lr_red_epoch, gamma=args.lr_red_rate)
+
+    trainer = ModelTrainerIMGIK(args, modelI, modelK, optimizer, train_loader, val_loader, input_train_transform,
+                                input_val_transform, mid_transform, output_transform, losses, scheduler)
+
+    # TODO: Implement logging of model, losses, transforms, etc.
     trainer.train_model()
 
 
 if __name__ == '__main__':
     settings = dict(
         # Variables that almost never change.
-        name='gan_ssim_image',  # Please do change this every time Harry
+        name='IK_ssim_holdI',  # Please do change this every time Harry
         challenge='multicoil',
         data_root='/media/harry/fastmri/fastMRI_data',
         log_root='./logs',
         ckpt_root='./checkpoints',
         batch_size=1,  # This MUST be 1 for now.
-        chans=64,
-        num_pool_layers=5,
-        save_best_only=True,
-        center_fractions=[0.16, 0.08],
-        accelerations=[2, 4],
+        i_chans=64,
+        k_chans=32,
+        i_num_pool_layers=5,
+        k_num_pool_layers=5,
+        save_best_only=False,
+        center_fractions=[0.08, 0.04],
+        accelerations=[4, 8],
         smoothing_factor=8,
 
         # Variables that occasionally change.
         display_images=10,  # Maximum number of images to save.
         num_workers=4,
-        init_lr=3e-4,
+        init_lr=1e-4,
         gpu=0,  # Set to None for CPU mode.
         max_to_keep=1,
         img_lambda=10,
-        ssim_lambda=1,
-        GAN_lambda=3e-1,
-        gan_mode='lsgan',
+        ssim_lambda=3,
 
         start_slice=10,
+        start_val_slice=0,
 
         # Variables that change frequently.
-        sample_rate=0.05,
+        sample_rate=1,
         num_epochs=100,
         verbose=False,
         use_slice_metrics=True,  # Using slice metrics causes a 30% increase in training time.
