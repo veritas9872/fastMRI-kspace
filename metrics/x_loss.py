@@ -23,7 +23,7 @@ class AlignmentLoss(nn.Module):
         self.reduction = reduction
 
     def forward(self, img_recon: Tensor, img_target: Tensor, phase_recon: Tensor, phase_target: Tensor) -> Tensor:
-        loss = img_recon * (img_recon - 2 * img_target * torch.cos(phase_recon - phase_target))
+        loss = img_target ** 2 + img_recon * (img_recon - 2 * img_target * torch.cos(phase_recon - phase_target))
         if self.reduction == 'mean':
             loss = loss.mean()
         elif self.reduction == 'sum':

@@ -128,7 +128,7 @@ if __name__ == '__main__':
         random_sampling=True,
         verbose=False,
         use_gt=True,
-        augment_data=False,
+        augment_data=True,
         crop_center=True,
 
         # Model specific parameters.
@@ -153,7 +153,7 @@ if __name__ == '__main__':
         # use_gmp=False,
 
         # Learning rate scheduling.
-        lr_red_epochs=[25, 40],
+        lr_red_epochs=[20, 40],
         lr_red_rate=0.25,
 
         # Variables that change frequently.
@@ -161,12 +161,12 @@ if __name__ == '__main__':
         num_epochs=50,
 
         gpu=0,  # Set to None for CPU mode.
-        num_workers=4,
+        num_workers=2,
         init_lr=1E-4,
         max_to_keep=1,
         # prev_model_ckpt='',
 
-        sample_rate_train=1,
+        sample_rate_train=0.1,
         start_slice_train=0,
         sample_rate_val=1,
         start_slice_val=0,

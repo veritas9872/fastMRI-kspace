@@ -169,22 +169,8 @@ class ModelTrainerIMG:
     def _train_step(self, inputs, targets, extra_params):
         self.optimizer.zero_grad()
         outputs = self.model(inputs)
-
         recons = self.output_train_transform(outputs, targets, extra_params)
-        step_loss = self.losses['img_loss'](recons['img_recons'], targets['img_targets'])
-
-        # If img_loss is a tuple, it is expected to contain all its component losses as a dict in its second element.
-        step_metrics = dict()
-        if isinstance(step_loss, tuple):
-            step_loss, step_metrics = step_loss
-
-        if 'acceleration' in extra_params:  # Different metrics for different accelerations.
-            acc = extra_params["acceleration"]
-            if step_metrics:  # This has to be checked before anything is added to step_metrics.
-                for key, value in step_metrics.items():
-                    step_metrics[f'acc_{acc}_{key}'] = value
-            step_metrics[f'acc_{acc}_loss'] = step_loss
-
+        step_loss, step_metrics = self._step(recons, targets, extra_params)
         step_loss.backward()
         self.optimizer.step()
         return recons, step_loss, step_metrics
@@ -216,15 +202,18 @@ class ModelTrainerIMG:
                 self._log_step_outputs(epoch, step, step_loss, step_metrics, training=False)
 
             # Visualize images on TensorBoard.
-            self._visualize_images(recons, targets, epoch, step, training=False)
+            self._visualize_images(recons, targets, extra_params, epoch, step, training=False)
 
         # Converted to scalar and dict with scalar values respectively.
         return self._get_epoch_outputs(epoch, epoch_loss, epoch_metrics, training=False)
 
     def _val_step(self, inputs, targets, extra_params):
         outputs = self.model(inputs)
-
         recons = self.output_val_transform(outputs, targets, extra_params)
+        step_loss, step_metrics = self._step(recons, targets, extra_params)
+        return recons, step_loss, step_metrics
+
+    def _step(self, recons, targets, extra_params):
         step_loss = self.losses['img_loss'](recons['img_recons'], targets['img_targets'])
 
         # If img_loss is a tuple, it is expected to contain all its component losses as a dict in its second element.
@@ -232,16 +221,14 @@ class ModelTrainerIMG:
         if isinstance(step_loss, tuple):
             step_loss, step_metrics = step_loss
 
-        if 'acceleration' in extra_params:  # Different metrics for different accelerations.
-            acc = extra_params["acceleration"]
-            if step_metrics:  # Order of checking is important since step_metrics must still be empty.
-                for key, value in step_metrics.items():
-                    step_metrics[f'acc_{acc}_{key}'] = value
-            step_metrics[f'acc_{acc}_loss'] = step_loss
+        acc = extra_params["acceleration"]
+        if step_metrics:  # This has to be checked before anything is added to step_metrics.
+            for key, value in step_metrics.items():
+                step_metrics[f'acc_{acc}_{key}'] = value
+        step_metrics[f'acc_{acc}_loss'] = step_loss
+        return step_loss, step_metrics
 
-        return recons, step_loss, step_metrics
-
-    def _visualize_images(self, recons, targets, epoch, step, training=False):
+    def _visualize_images(self, recons, targets, extra_params, epoch, step, training=False):
         mode = 'Training' if training else 'Validation'
 
         # This numbering scheme seems to have issues for certain numbers.
@@ -252,26 +239,26 @@ class ModelTrainerIMG:
             # The delta image is obtained by subtracting at the complex image, not the real valued image.
             delta_image = complex_abs(targets['cmg_targets'] - recons['cmg_recons'])
             delta_img_grid = make_img_grid(delta_image, self.shrink_scale)
-
             kspace_recon_grid = make_k_grid(recons['kspace_recons'], self.smoothing_factor, self.shrink_scale)
 
-            self.writer.add_image(f'{mode} k-space Recons/{step}', kspace_recon_grid, epoch, dataformats='HW')
-            self.writer.add_image(f'{mode} Image Recons/{step}', img_recon_grid, epoch, dataformats='HW')
-            self.writer.add_image(f'{mode} Delta Image/{step}', delta_img_grid, epoch, dataformats='HW')
+            acc = extra_params['acceleration']
+            kwargs = dict(global_step=epoch, dataformats='HW')
+            self.writer.add_image(f'{mode} k-space Recons/{acc}/{step}', kspace_recon_grid, **kwargs)
+            self.writer.add_image(f'{mode} Image Recons/{acc}/{step}', img_recon_grid, **kwargs)
+            self.writer.add_image(f'{mode} Delta Image/{acc}/{step}', delta_img_grid, **kwargs)
 
             # Adding RSS images of reconstructions and targets.
             if 'rss_recons' in recons:
                 recon_rss = standardize_image(recons['rss_recons'])
                 delta_rss = standardize_image(make_rss_slice(delta_image))
-                self.writer.add_image(f'{mode} RSS Recons/{step}', recon_rss, epoch, dataformats='HW')
-                self.writer.add_image(f'{mode} RSS Delta/{step}', delta_rss, epoch, dataformats='HW')
+                self.writer.add_image(f'{mode} RSS Recons/{acc}/{step}', recon_rss, **kwargs)
+                self.writer.add_image(f'{mode} RSS Delta/{acc}/{step}', delta_rss, **kwargs)
 
             if 'semi_kspace_recons' in recons:
                 semi_kspace_recon_grid = make_k_grid(
                     recons['semi_kspace_recons'], self.smoothing_factor, self.shrink_scale)
 
-                self.writer.add_image(
-                    f'{mode} semi-k-space Recons/{step}', semi_kspace_recon_grid, epoch, dataformats='HW')
+                self.writer.add_image(f'{mode} semi-k-space Recons/{acc}/{step}', semi_kspace_recon_grid, **kwargs)
 
             if epoch == 1:  # Maybe add input images too later on.
                 img_target_grid = make_img_grid(targets['img_targets'], self.shrink_scale)
@@ -280,20 +267,20 @@ class ModelTrainerIMG:
                 # Not actually the input but what the input looks like as an image.
                 img_grid = make_img_grid(targets['img_inputs'], self.shrink_scale)
 
-                self.writer.add_image(f'{mode} k-space Targets/{step}', kspace_target_grid, epoch, dataformats='HW')
-                self.writer.add_image(f'{mode} Image Targets/{step}', img_target_grid, epoch, dataformats='HW')
-                self.writer.add_image(f'{mode} Inputs as Images/{step}', img_grid, epoch, dataformats='HW')
+                self.writer.add_image(f'{mode} k-space Targets/{acc}/{step}', kspace_target_grid, **kwargs)
+                self.writer.add_image(f'{mode} Image Targets/{acc}/{step}', img_target_grid, **kwargs)
+                self.writer.add_image(f'{mode} Inputs as Images/{acc}/{step}', img_grid, **kwargs)
 
                 if 'rss_targets' in targets:
                     target_rss = standardize_image(targets['rss_targets'])
-                    self.writer.add_image(f'{mode} RSS Targets/{step}', target_rss, epoch, dataformats='HW')
+                    self.writer.add_image(f'{mode} RSS Targets/{acc}/{step}', target_rss, **kwargs)
 
                 if 'semi_kspace_targets' in targets:
-                    semi_kspace_target_grid = make_k_grid(targets['semi_kspace_targets'],
-                                                          self.smoothing_factor, self.shrink_scale)
+                    semi_kspace_target_grid = make_k_grid(
+                        targets['semi_kspace_targets'], self.smoothing_factor, self.shrink_scale)
 
-                    self.writer.add_image(f'{mode} semi-k-space Targets/{step}',
-                                          semi_kspace_target_grid, epoch, dataformats='HW')
+                    self.writer.add_image(f'{mode} semi-k-space Targets/{acc}/{step}',
+                                          semi_kspace_target_grid, **kwargs)
 
     def _get_slice_metrics(self, recons, targets, extra_params):
         img_recons = recons['img_recons'].detach()  # Just in case.

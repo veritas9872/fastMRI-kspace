@@ -112,12 +112,18 @@ class XNet(nn.Module):
             assert chans == ch, 'Incorrect channel calculations.'
 
         self.magnitude_tail = nn.Sequential(
-            ResBlock(num_chans=ch, dilation=1, res_scale=res_scale),
-            nn.Conv2d(in_channels=chans, out_channels=out_chans, kernel_size=1)
+            nn.Conv2d(in_channels=chans, out_channels=chans, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(in_channels=chans, out_channels=chans, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(in_channels=chans, out_channels=out_chans, kernel_size=1),
         )
 
         self.phase_tail = nn.Sequential(
-            ResBlock(num_chans=ch, dilation=1, res_scale=res_scale),
+            nn.Conv2d(in_channels=chans, out_channels=chans, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(in_channels=chans, out_channels=chans, kernel_size=3, padding=1),
+            nn.ReLU(),
             nn.Conv2d(in_channels=chans, out_channels=out_chans, kernel_size=1),
         )
         assert len(self.down_reshape_layers) == len(self.down_res_blocks) == num_pool_layers - 1

@@ -10,3 +10,4 @@ pillow
 tensorboard
 protobuf
 future
+absl-py

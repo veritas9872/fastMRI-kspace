@@ -147,7 +147,7 @@ if __name__ == '__main__':
         # num_groups=16,
         # negative_slope=0.1,
 
-        num_depth_blocks=2,
+        num_depth_blocks=4,
         res_scale=0.1,
 
         use_residual=True,
@@ -160,9 +160,9 @@ if __name__ == '__main__':
         # Parameters for reconstruction.
         data_root='/media/veritas/D/FastMRI/multicoil_val',
         checkpoint_path='/home/veritas/PycharmProjects/fastMRI-kspace/checkpoints/I2I/'
-                        'Trial 20  2019-08-12 22-36-40/ckpt_019.tar',
+                        'Trial 26  2019-08-16 18-14-01/ckpt_039.tar',
 
-        out_dir='./i2i_20_l'  # Change this every time! Attempted overrides will throw errors by design.
+        out_dir='./i2i_26'  # Change this every time! Attempted overrides will throw errors by design.
     )
 
     parser = create_arg_parser(**defaults).parse_args()

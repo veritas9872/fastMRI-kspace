@@ -7,16 +7,15 @@ from utils.run_utils import initialize, save_dict_as_json, get_logger, create_ar
 from utils.data_loaders import create_prefetch_data_loaders
 
 from train.subsample import RandomMaskFunc, UniformMaskFunc
-from data.input_transforms import PreProcessIMG
-from data.output_transforms import PostProcessIMG
+from data.complex_inputs import PreProcessComplex
+from data.complex_outputs import PostProcessComplex
 
-from train.new_model_trainers.img_to_img import ModelTrainerI2I
+from train.new_model_trainers.img_only import ModelTrainerIMG
+from models.complex.complex_edsr_unet import ComplexEDSRUNet
 from metrics.new_1d_ssim import SSIMLoss, LogSSIMLoss
-from metrics.combination_losses import L1SSIMLoss
-from models.edsr_unet import UNet
 
 
-def train_img_to_img(args):
+def train_complex_model(args):
     # Creating checkpoint and logging directories, as well as the run name.
     ckpt_path = Path(args.ckpt_root)
     ckpt_path.mkdir(exist_ok=True)
@@ -40,7 +39,6 @@ def train_img_to_img(args):
 
     logger = get_logger(name=__name__)
 
-    # Assignment inside running code appears to work.
     if (args.gpu is not None) and torch.cuda.is_available():
         device = torch.device(f'cuda:{args.gpu}')
         logger.info(f'Using GPU {args.gpu} for {run_name}')
@@ -70,40 +68,40 @@ def train_img_to_img(args):
         train_mask_func = UniformMaskFunc(args.center_fractions_train, args.accelerations_train)
         val_mask_func = UniformMaskFunc(args.center_fractions_val, args.accelerations_val)
 
-    input_train_transform = PreProcessIMG(mask_func=train_mask_func, challenge=args.challenge, device=device,
-                                          augment_data=args.augment_data, use_seed=False, crop_center=args.crop_center)
-    input_val_transform = PreProcessIMG(mask_func=val_mask_func, challenge=args.challenge, device=device,
-                                        augment_data=False, use_seed=True, crop_center=args.crop_center)
+    input_train_transform = PreProcessComplex(train_mask_func, args.challenge, device, augment_data=args.augment_data,
+                                              use_seed=False, crop_center=args.crop_center)
+    input_val_transform = PreProcessComplex(val_mask_func, args.challenge, device, augment_data=False,
+                                            use_seed=True, crop_center=args.crop_center)
 
-    output_train_transform = PostProcessIMG(challenge=args.challenge)
-    output_val_transform = PostProcessIMG(challenge=args.challenge)
+    output_train_transform = PostProcessComplex(challenge=args.challenge)
+    output_val_transform = PostProcessComplex(challenge=args.challenge)
 
     # DataLoaders
     train_loader, val_loader = create_prefetch_data_loaders(args)
 
     losses = dict(
         # img_loss=SSIMLoss(filter_size=7).to(device=device)
-        img_loss=LogSSIMLoss(filter_size=5).to(device=device)
+        img_loss=LogSSIMLoss(filter_size=5).to(device=device),
         # img_loss=nn.L1Loss()
-        # img_loss=L1SSIMLoss(filter_size=7, l1_ratio=args.l1_ratio).to(device=device)
     )
 
-    data_chans = 1 if args.challenge == 'singlecoil' else 15
-    model = UNet(in_chans=data_chans, out_chans=data_chans, chans=args.chans, num_pool_layers=args.num_pool_layers,
-                 num_depth_blocks=args.num_depth_blocks, res_scale=args.res_scale, use_residual=args.use_residual,
-                 use_ca=args.use_ca, reduction=args.reduction, use_gap=args.use_gap, use_gmp=args.use_gmp).to(device)
+    data_chans = 1 if args.challenge == 'singlecoil' else 15  # Multicoil has 15 coils with 2 for real/imag
+
+    model = ComplexEDSRUNet(in_chans=data_chans, out_chans=data_chans, chans=args.chans,
+                            num_pool_layers=args.num_pool_layers, num_depth_blocks=args.num_depth_blocks,
+                            negative_slope=args.negative_slope, res_scale=args.res_scale).to(device)
 
     optimizer = optim.Adam(model.parameters(), lr=args.init_lr)
     scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.lr_red_epochs, gamma=args.lr_red_rate)
 
-    trainer = ModelTrainerI2I(args, model, optimizer, train_loader, val_loader, input_train_transform,
+    trainer = ModelTrainerIMG(args, model, optimizer, train_loader, val_loader, input_train_transform,
                               input_val_transform, output_train_transform, output_val_transform, losses, scheduler)
 
     try:
         trainer.train_model()
     except KeyboardInterrupt:
         trainer.writer.close()
-        logger.warning('Closing summary writer due to KeyboardInterrupt.')
+        logger.warning(f'Closing TensorBoard writer and flushing remaining outputs due to KeyboardInterrupt.')
 
 
 if __name__ == '__main__':
@@ -121,48 +119,37 @@ if __name__ == '__main__':
         smoothing_factor=8,
 
         # Variables that occasionally change.
-        center_fractions_train=[0.08],
-        accelerations_train=[4],
+        center_fractions_train=[0.08, 0.04],
+        accelerations_train=[4, 8],
         center_fractions_val=[0.08, 0.04],
         accelerations_val=[4, 8],
-
         random_sampling=True,
-        num_pool_layers=4,
         verbose=False,
         use_gt=True,
-
-        # Model specific parameters.
-        train_method='I2I',  # Weighted semi-k-space to complex-valued image.
-        # num_groups=16,  # Maybe try 16 now since chans is 64.
-        chans=64,
-        # negative_slope=0.1,
-        # interp_mode='nearest',
-        use_residual=True,
-        # l1_ratio=0.5,
-        num_depth_blocks=4,
-        res_scale=0.1,
         augment_data=True,
         crop_center=True,
+
+        # Model specific parameters.
+        train_method='COMPLEX',
+        num_pool_layers=4,
+        num_depth_blocks=2,
+        res_scale=0.1,
+        negative_slope=0.1,
+        chans=32,  # This is half the true number of channels since real and imaginary parts are separate.
 
         # TensorBoard related parameters.
         max_images=8,  # Maximum number of images to save.
         shrink_scale=1,  # Scale to shrink output image size.
 
-        # Channel Attention.
-        use_ca=False,
-        reduction=16,
-        use_gap=False,
-        use_gmp=False,
-
         # Learning rate scheduling.
-        lr_red_epochs=[30, 40],
-        lr_red_rate=0.2,
+        lr_red_epochs=[35, 45],
+        lr_red_rate=0.25,
 
         # Variables that change frequently.
         use_slice_metrics=True,
         num_epochs=50,
 
-        gpu=1,  # Set to None for CPU mode.
+        gpu=0,  # Set to None for CPU mode.
         num_workers=4,
         init_lr=1E-4,
         max_to_keep=1,
@@ -174,4 +161,4 @@ if __name__ == '__main__':
         start_slice_val=0,
     )
     options = create_arg_parser(**settings).parse_args()
-    train_img_to_img(options)
+    train_complex_model(options)
