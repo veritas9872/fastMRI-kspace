@@ -85,9 +85,9 @@ def check_same(old_folder, new_folder):
 
 
 if __name__ == '__main__':
-    train_dir = '/media/veritas/E/fastMRI/multicoil_train'
-    val_dir = '/media/veritas/E/fastMRI/multicoil_val'
-    test_dir = '/media/veritas/E/fastMRI/multicoil_test'
+    # train_dir = '/media/veritas/E/fastMRI/multicoil_train'
+    # val_dir = '/media/veritas/E/fastMRI/multicoil_val'
+    test_dir = '/media/veritas/E/fastMRI/singlecoil_test_v2'
 
     data_root = '/media/veritas/D/FastMRI'  # Compressed Fast MRI Dataset
     data_path_ = Path(data_root)
@@ -103,8 +103,8 @@ if __name__ == '__main__':
     # kwargs = dict(compression='lzf', shuffle=True)
 
     # Use compression if storing on hard drive, not SSD.
-    make_compressed_dataset(train_dir, data_root, **kwargs)
-    make_compressed_dataset(val_dir, data_root, **kwargs)
+    # make_compressed_dataset(train_dir, data_root, **kwargs)
+    # make_compressed_dataset(val_dir, data_root, **kwargs)
     make_compressed_dataset(test_dir, data_root, **kwargs)
 
     # check_same(train_dir, data_path_ / 'new_singlecoil_train')

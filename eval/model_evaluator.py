@@ -24,6 +24,7 @@ class ModelEvaluator:
         assert callable(pre_processing), '`pre_processing` must be a callable function.'
         assert callable(post_processing), 'post_processing must be a callable function.'
         assert challenge in ('singlecoil', 'multicoil'), 'Invalid challenge.'
+        assert not Path(out_dir).exists(), 'Output directory already exists!'
 
         torch.autograd.set_grad_enabled(False)
         self.model = load_model_from_checkpoint(model, checkpoint_path).to(device)
@@ -83,6 +84,7 @@ class ModelEvaluator:
 def main(args):
     from models.edsr_unet import UNet  # Moving import line here to reduce confusion.
     from data.input_transforms import PreProcessIMG, Prefetch2Device
+    from eval.input_test_transform import PreProcessTestIMG, PreProcessValIMG
     from eval.output_test_transforms import PostProcessTestIMG
     from train.subsample import RandomMaskFunc
 
@@ -98,6 +100,7 @@ def main(args):
     #     in_chans=15, out_chans=15, chans=args.chans, num_pool_layers=args.num_pool_layers, num_groups=args.num_groups,
     #     negative_slope=args.negative_slope, use_residual=args.use_residual, interp_mode=args.interp_mode,
     #     use_ca=args.use_ca, reduction=args.reduction, use_gap=args.use_gap, use_gmp=args.use_gmp).to(device)
+
     data_chans = 1 if args.challenge == 'singlecoil' else 15
     model = UNet(in_chans=data_chans, out_chans=data_chans, chans=args.chans, num_pool_layers=args.num_pool_layers,
                  num_depth_blocks=args.num_depth_blocks, res_scale=args.res_scale, use_residual=args.use_residual,
@@ -110,16 +113,20 @@ def main(args):
                              collate_fn=temp_collate_fn, pin_memory=False)
 
     mask_func = RandomMaskFunc(args.center_fractions, args.accelerations)
-    # divisor = 2 ** args.num_pool_layers  # For UNet size fitting.
+    divisor = 2 ** args.num_pool_layers  # For UNet size fitting.
 
     # This is for the validation set, not the test set. The test set requires a different pre-processing function.
     if Path(args.data_root).name.endswith('val'):
-        pre_processing = PreProcessIMG(mask_func=mask_func, challenge=args.challenge, device=device,
-                                       augment_data=False, use_seed=True, crop_center=True)
+        pre_processing = PreProcessValIMG(mask_func=mask_func, challenge=args.challenge, device=device,
+                                          crop_center=False, divisor=divisor)
+        # pre_processing = PreProcessIMG(mask_func=mask_func, challenge=args.challenge, device=device,
+        #                                augment_data=False, use_seed=True, crop_center=True)
+    elif Path(args.data_root).name.endswith('test_v2'):
+        pre_processing = PreProcessTestIMG(challenge=args.challenge, device=device, crop_center=True)
     else:
-        raise NotImplementedError()
+        raise NotImplementedError('Invalid data root. If using the original test set, please change to test_v2.')
 
-    post_processing = PostProcessTestIMG()
+    post_processing = PostProcessTestIMG(challenge=args.challenge)
 
     evaluator = ModelEvaluator(model, args.checkpoint_path, args.challenge, data_loader,
                                pre_processing, post_processing, args.data_root, args.out_dir, device)
@@ -158,11 +165,11 @@ if __name__ == '__main__':
         use_gmp=False,
 
         # Parameters for reconstruction.
-        data_root='/media/veritas/D/FastMRI/multicoil_val',
+        data_root='/media/veritas/D/FastMRI/multicoil_test_v2',
         checkpoint_path='/home/veritas/PycharmProjects/fastMRI-kspace/checkpoints/I2I/'
                         'Trial 26  2019-08-16 18-14-01/ckpt_039.tar',
 
-        out_dir='./i2i_26'  # Change this every time! Attempted overrides will throw errors by design.
+        out_dir='./i2i_26_test'  # Change this every time! Attempted overrides will throw errors by design.
     )
 
     parser = create_arg_parser(**defaults).parse_args()

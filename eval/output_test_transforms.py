@@ -6,8 +6,11 @@ from data.data_transforms import center_crop, root_sum_of_squares
 
 
 class PostProcessTestIMG(nn.Module):
-    def __init__(self, resolution=320):
+    def __init__(self, challenge, resolution=320):
         super().__init__()
+        if challenge not in ('singlecoil', 'multicoil'):
+            raise ValueError(f'Challenge should either be "singlecoil" or "multicoil"')
+        self.challenge = challenge
         self.resolution = resolution
 
     def forward(self, img_output, extra_params):
@@ -18,9 +21,7 @@ class PostProcessTestIMG(nn.Module):
         img_recon = F.relu(center_crop(img_output, shape=(self.resolution, self.resolution)))
         img_recon *= extra_params['img_scales']
 
-        if img_recon.size(1) == 15:
+        if self.challenge == 'multicoil':
             img_recon = root_sum_of_squares(img_recon, dim=1)
 
-        img_recon = img_recon.squeeze()
-
-        return img_recon
+        return img_recon.squeeze()

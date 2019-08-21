@@ -9,8 +9,7 @@ from time import time
 from collections import defaultdict
 
 from utils.run_utils import get_logger
-from utils.train_utils import CheckpointManager, make_k_grid, make_img_grid, make_rss_slice, standardize_image
-from data.data_transforms import complex_abs
+from utils.train_utils import CheckpointManager, make_img_grid, standardize_image
 from metrics.new_1d_ssim import SSIM
 from metrics.custom_losses import psnr, nmse
 
@@ -217,7 +216,7 @@ class ModelTrainerI2I:
                 self._log_step_outputs(epoch, step, step_loss, step_metrics, training=False)
 
             # Visualize images on TensorBoard.
-            self._visualize_images(recons, targets, epoch, step, training=False)
+            self._visualize_images(recons, targets, extra_params, epoch, step, training=False)
 
         # Converted to scalar and dict with scalar values respectively.
         return self._get_epoch_outputs(epoch, epoch_loss, epoch_metrics, training=False)
@@ -244,7 +243,7 @@ class ModelTrainerI2I:
 
         return recons, step_loss, step_metrics
 
-    def _visualize_images(self, recons, targets, epoch, step, training=False):
+    def _visualize_images(self, recons, targets, extra_params, epoch, step, training=False):
         mode = 'Training' if training else 'Validation'
 
         # This numbering scheme seems to have issues for certain numbers.
@@ -254,13 +253,16 @@ class ModelTrainerI2I:
             # Added delta image in the image domain. This is different from delta images in the complex domain.
             # However, it is the only available delta image in I2I training.
             img_delta_grid = make_img_grid(targets['img_targets'] - recons['img_recons'], self.shrink_scale)
-            self.writer.add_image(f'{mode} Image Recons/{step}', img_recon_grid, epoch, dataformats='HW')
-            self.writer.add_image(f'{mode} Delta Image/{step}', img_delta_grid, epoch, dataformats='HW')
+
+            acc = extra_params['acceleration']
+            kwargs = dict(global_step=epoch, dataformats='HW')
+            self.writer.add_image(f'{mode} Image Recons/{acc}/{step}', img_recon_grid, **kwargs)
+            self.writer.add_image(f'{mode} Delta Image/{acc}/{step}', img_delta_grid, **kwargs)
 
             # Adding RSS images of reconstructions and targets.
             if 'rss_recons' in recons:
                 recon_rss = standardize_image(recons['rss_recons'])
-                self.writer.add_image(f'{mode} RSS Recons/{step}', recon_rss, epoch, dataformats='HW')
+                self.writer.add_image(f'{mode} RSS Recons/{acc}/{step}', recon_rss, **kwargs)
 
             if epoch == 1:  # Maybe add input images too later on.
                 img_target_grid = make_img_grid(targets['img_targets'], self.shrink_scale)
@@ -268,12 +270,12 @@ class ModelTrainerI2I:
                 # Not actually the input but what the input looks like as an image.
                 img_grid = make_img_grid(targets['img_inputs'], self.shrink_scale)
 
-                self.writer.add_image(f'{mode} Image Targets/{step}', img_target_grid, epoch, dataformats='HW')
-                self.writer.add_image(f'{mode} Input Images/{step}', img_grid, epoch, dataformats='HW')
+                self.writer.add_image(f'{mode} Image Targets/{acc}/{step}', img_target_grid, **kwargs)
+                self.writer.add_image(f'{mode} Input Images/{acc}/{step}', img_grid, **kwargs)
 
                 if 'rss_targets' in targets:
                     target_rss = standardize_image(targets['rss_targets'])
-                    self.writer.add_image(f'{mode} RSS Targets/{step}', target_rss, epoch, dataformats='HW')
+                    self.writer.add_image(f'{mode} RSS Targets/{acc}/{step}', target_rss, **kwargs)
 
     def _get_slice_metrics(self, recons, targets, extra_params):
         img_recons = recons['img_recons'].detach()  # Just in case.

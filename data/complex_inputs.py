@@ -1,10 +1,12 @@
 import torch
-from data.data_transforms import apply_info_mask, ifft2, complex_center_crop, fft2, center_crop, complex_abs
+import torch.nn.functional as F
+
+from data.data_transforms import apply_info_mask, ifft2, complex_center_crop, fft2, complex_abs
 
 
 class PreProcessComplex:
     def __init__(self, mask_func, challenge, device, augment_data=False,
-                 use_seed=True, crop_center=True, resolution=320):
+                 use_seed=True, crop_center=True, resolution=320, crop_ud=False, divisor=1):
         assert callable(mask_func), '`mask_func` must be a callable function.'
         if challenge not in ('singlecoil', 'multicoil'):
             raise ValueError(f'Challenge should either be "singlecoil" or "multicoil"')
@@ -16,6 +18,8 @@ class PreProcessComplex:
         self.use_seed = use_seed
         self.crop_center = crop_center
         self.resolution = resolution  # Only has effect when center_crop is True.
+        self.crop_ud = crop_ud
+        self.divisor = divisor
 
     def __call__(self, kspace_target, target, attrs, file_name, slice_num):
         assert isinstance(kspace_target, torch.Tensor), 'k-space target was expected to be a Pytorch Tensor.'
@@ -41,6 +45,11 @@ class PreProcessComplex:
             if self.crop_center:
                 complex_image = complex_center_crop(complex_image, shape=(self.resolution, self.resolution))
                 cmg_target = complex_center_crop(cmg_target, shape=(self.resolution, self.resolution))
+            elif self.crop_ud:  # left-right dimensions are left as-is.
+                complex_image = complex_center_crop(complex_image, shape=(self.resolution, complex_image.size(-2)))
+                cmg_target = complex_center_crop(cmg_target, shape=(self.resolution, cmg_target.size(-2)))
+            else:
+                raise NotImplementedError('Please crop center or up-down.')
 
             cmg_scale = torch.std(complex_image)
             complex_image /= cmg_scale
@@ -87,5 +96,13 @@ class PreProcessComplex:
 
             # Converting to N2CHW format for Complex CNN.
             inputs = complex_image.permute(dims=(0, 4, 1, 2, 3))
+            margin = inputs.size(-1) % self.divisor
+            if margin > 0:
+                pad = [(self.divisor - margin) // 2, (1 + self.divisor - margin) // 2]
+            else:  # This is a fix to prevent padding by half the divisor when margin=0.
+                pad = [0, 0]
+
+            # This pads at the last dimension of a tensor with 0.
+            inputs = F.pad(inputs, pad=pad, value=0)
 
         return inputs, targets, extra_params

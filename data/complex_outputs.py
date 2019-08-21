@@ -19,6 +19,11 @@ class PostProcessComplex(nn.Module):
 
         cmg_target = targets['cmg_targets']
         cmg_recon = cmg_output.permute(dims=(0, 2, 3, 4, 1))  # Convert back into NCHW2
+
+        if cmg_recon.shape != cmg_target.shape:  # Cropping recon left-right.
+            left = (cmg_recon.size(-2) - cmg_target.size(-2)) // 2
+            cmg_recon = cmg_recon[..., left:left+cmg_target.size(-2), :]
+
         assert cmg_recon.shape == cmg_target.shape, 'Reconstruction and target sizes are different.'
         assert (cmg_recon.size(-3) % 2 == 0) and (cmg_recon.size(-2) % 2 == 0), \
             'Not impossible but not expected to have sides with odd lengths.'

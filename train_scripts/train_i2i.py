@@ -127,7 +127,7 @@ if __name__ == '__main__':
         accelerations_val=[4, 8],
 
         random_sampling=True,
-        num_pool_layers=4,
+        num_pool_layers=3,
         verbose=False,
         use_gt=True,
 
@@ -139,7 +139,7 @@ if __name__ == '__main__':
         # interp_mode='nearest',
         use_residual=True,
         # l1_ratio=0.5,
-        num_depth_blocks=4,
+        num_depth_blocks=32,
         res_scale=0.1,
         augment_data=True,
         crop_center=True,
@@ -149,21 +149,21 @@ if __name__ == '__main__':
         shrink_scale=1,  # Scale to shrink output image size.
 
         # Channel Attention.
-        use_ca=False,
+        use_ca=True,
         reduction=16,
-        use_gap=False,
+        use_gap=True,
         use_gmp=False,
 
         # Learning rate scheduling.
-        lr_red_epochs=[30, 40],
+        lr_red_epochs=[25, 35],
         lr_red_rate=0.2,
 
         # Variables that change frequently.
         use_slice_metrics=True,
-        num_epochs=50,
+        num_epochs=40,
 
         gpu=1,  # Set to None for CPU mode.
-        num_workers=4,
+        num_workers=3,
         init_lr=1E-4,
         max_to_keep=1,
         # prev_model_ckpt='',

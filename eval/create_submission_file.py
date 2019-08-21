@@ -42,11 +42,12 @@ def create_submission_file(json_out_file, challenge, submission_url, model_name,
 
 
 if __name__ == '__main__':
-    json_out_file_ = 'multi.json'
-    submission_url_ = 'https://storage.googleapis.com/fastmri-challenge-submissions/multicoil_test_zero_submission.zip'
-    model_name_ = 'Other Nothing'
-    model_description_ = 'Zero filled solution of multi-coil data for single-coil labels.'
-    participants_ = ['veritas9872']
-    create_submission_file(json_out_file=json_out_file_, challenge='singlecoil', submission_url=submission_url_,
+    json_out_file_ = 'i2i.json'
+    challenge_ = 'multicoil'
+    submission_url_ = 'https://storage.googleapis.com/fastmri-challenge-submissions/i2i_26_test.zip'
+    model_name_ = 'I2I'
+    model_description_ = 'I2I26'
+    participants_ = ['veritas9872', 'TRpop', 'HJ-harry']
+    create_submission_file(json_out_file=json_out_file_, challenge=challenge_, submission_url=submission_url_,
                            model_name=model_name_, model_description=model_description_, nyu_data_only=True,
                            participants=participants_)

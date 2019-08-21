@@ -21,13 +21,16 @@ class BasicConvBlock(nn.Module):
 
 
 class ResBlock(nn.Module):
-    def __init__(self, num_chans, kernel_size=3, res_scale=1., use_ca=True, reduction=16, use_gap=True, use_gmp=True):
+    def __init__(self, num_chans, kernel_size=3, res_scale=1., drop_rate=0.,
+                 use_ca=True, reduction=16, use_gap=True, use_gmp=True):
         super().__init__()
         assert kernel_size % 2, 'Kernel size is expected to be an odd number.'
         self.layer = nn.Sequential(
             nn.Conv2d(in_channels=num_chans, out_channels=num_chans, kernel_size=kernel_size, padding=kernel_size // 2),
+            nn.Dropout2d(p=drop_rate),  # Spatial Dropout.
             nn.ReLU(),
             nn.Conv2d(in_channels=num_chans, out_channels=num_chans, kernel_size=kernel_size, padding=kernel_size // 2),
+            nn.Dropout2d(p=drop_rate),  # Spatial Dropout.
         )
         self.ca = ChannelAttention(num_chans=num_chans, reduction=reduction, use_gap=use_gap, use_gmp=use_gmp)
         self.res_scale = res_scale
@@ -55,7 +58,7 @@ class ResizeConv(nn.Module):
 
 
 class UNet(nn.Module):
-    def __init__(self, in_chans, out_chans, chans, num_pool_layers, num_depth_blocks, res_scale=0.1,
+    def __init__(self, in_chans, out_chans, chans, num_pool_layers, num_depth_blocks, res_scale=0.1, drop_rate=0.,
                  use_residual=True, use_ca=True, reduction=16, use_gap=True, use_gmp=True):
         super().__init__()
         self.in_chans = in_chans
@@ -68,14 +71,14 @@ class UNet(nn.Module):
 
         # First block should have no reduction in feature map size.
         conv = BasicConvBlock(in_chans=in_chans, out_chans=chans, stride=1, **kwargs)
-        res = ResBlock(num_chans=chans, kernel_size=3, res_scale=res_scale, **kwargs)
+        res = ResBlock(num_chans=chans, kernel_size=3, res_scale=res_scale, drop_rate=drop_rate, **kwargs)
         self.down_reshape_layers = nn.ModuleList([conv])
         self.down_res_blocks = nn.ModuleList([res])
 
         ch = chans
         for _ in range(num_pool_layers - 1):
             conv = BasicConvBlock(in_chans=ch, out_chans=ch * 2, stride=2, **kwargs)
-            res = ResBlock(num_chans=ch * 2, res_scale=res_scale, **kwargs)
+            res = ResBlock(num_chans=ch * 2, res_scale=res_scale, drop_rate=drop_rate, **kwargs)
             self.down_reshape_layers.append(conv)
             self.down_res_blocks.append(res)
             ch *= 2
@@ -84,7 +87,7 @@ class UNet(nn.Module):
         self.mid_conv = BasicConvBlock(in_chans=ch, out_chans=ch, stride=2, **kwargs)
         self.mid_res_blocks = nn.ModuleList()
         for _ in range(num_depth_blocks):
-            self.mid_res_blocks.append(ResBlock(num_chans=ch, res_scale=res_scale, **kwargs))
+            self.mid_res_blocks.append(ResBlock(num_chans=ch, res_scale=res_scale, drop_rate=drop_rate, **kwargs))
 
         self.upscale_layers = nn.ModuleList()
         self.up_reshape_layers = nn.ModuleList()
@@ -92,7 +95,7 @@ class UNet(nn.Module):
         for _ in range(num_pool_layers - 1):
             deconv = ResizeConv(in_chans=ch, out_chans=ch, scale_factor=2)
             conv = BasicConvBlock(in_chans=ch * 2, out_chans=ch // 2, stride=1, **kwargs)
-            res = ResBlock(num_chans=ch // 2, res_scale=res_scale, **kwargs)
+            res = ResBlock(num_chans=ch // 2, res_scale=res_scale, drop_rate=drop_rate, **kwargs)
             self.upscale_layers.append(deconv)
             self.up_reshape_layers.append(conv)
             self.up_res_blocks.append(res)
@@ -100,7 +103,7 @@ class UNet(nn.Module):
         else:  # Last block of up-sampling.
             deconv = ResizeConv(in_chans=ch, out_chans=ch,  scale_factor=2)
             conv = BasicConvBlock(in_chans=ch * 2, out_chans=ch, stride=1, **kwargs)
-            res = ResBlock(num_chans=ch, res_scale=res_scale, **kwargs)
+            res = ResBlock(num_chans=ch, res_scale=res_scale, drop_rate=drop_rate, **kwargs)
             self.upscale_layers.append(deconv)
             self.up_reshape_layers.append(conv)
             self.up_res_blocks.append(res)
