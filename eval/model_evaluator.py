@@ -1,45 +1,57 @@
 import torch
-from torch import nn
+from torch import nn, multiprocessing
 from torch.utils.data import DataLoader
 
 import numpy as np
 from tqdm import tqdm
 import h5py
-from utils.train_utils import load_model_from_checkpoint
-from utils.run_utils import create_arg_parser
 
 from pathlib import Path
 from collections import defaultdict
 
+from utils.train_utils import load_model_from_checkpoint
+from utils.data_loaders import temp_collate_fn
+from utils.run_utils import create_arg_parser
+from data.mri_data import CustomSliceData
+
 
 class ModelEvaluator:
-    def __init__(self, model, checkpoint_path, pre_processing, post_processing, data_dir, out_dir, device):
+    def __init__(self, model, checkpoint_path, challenge, data_loader,
+                 pre_processing, post_processing, data_root, out_dir, device):
 
-        assert isinstance(model, nn.Module)
+        assert isinstance(model, nn.Module), '`model` must be a Pytorch Module.'
+        assert isinstance(data_loader, DataLoader), '`data_loader` must be a Pytorch DataLoader.'
         assert callable(pre_processing), '`pre_processing` must be a callable function.'
         assert callable(post_processing), 'post_processing must be a callable function.'
+        assert challenge in ('singlecoil', 'multicoil'), 'Invalid challenge.'
+        assert not Path(out_dir).exists(), 'Output directory already exists!'
 
         torch.autograd.set_grad_enabled(False)
         self.model = load_model_from_checkpoint(model, checkpoint_path).to(device)
         print(f'Loaded model parameters from {checkpoint_path}')
         self.model.eval()
 
+        self.data_loader = data_loader
+        self.challenge = challenge
         self.pre_processing = pre_processing
         self.post_processing = post_processing
-        self.data_dir = data_dir
+        self.data_root = data_root
         self.out_dir = Path(out_dir)
         self.device = device
 
-    def _create_reconstructions(self, data_loader):
+    def _create_reconstructions(self):
         reconstructions = defaultdict(list)
 
-        for ds_slices, file_names, s_idxs, extra_params in tqdm(data_loader):
-            recons = self.model(ds_slices.to(self.device))
-            recons = self.post_processing(recons, extra_params).cpu().numpy()
+        for data in tqdm(self.data_loader, total=len(self.data_loader.dataset)):
+            kspace_target, target, attrs, file_name, slice_num = data
+            inputs, targets, extra_params = self.pre_processing(kspace_target, target, attrs, file_name, slice_num)
+            outputs = self.model(inputs)  # Use inputs.to(device) if necessary for different transforms.
+            recons = self.post_processing(outputs, extra_params)
+            assert recons.dim() == 2, 'Unexpected dimensions. Batch size is expected to be 1.'
 
-            for idx in range(recons.shape[0]):
-                file_name = Path(file_names[idx]).name
-                reconstructions[file_name].append((int(s_idxs[idx]), recons[idx, ...].squeeze()))
+            recons = recons.cpu().numpy()
+            file_name = Path(file_name).name
+            reconstructions[file_name].append((int(slice_num), recons))
 
         reconstructions = {
             file_name: np.stack([recon for _, recon in sorted(recons_list)])
@@ -47,11 +59,6 @@ class ModelEvaluator:
         }
 
         return reconstructions
-
-    def _create_data_loader(self):
-        # dataset = HDF5Dataset(root=self.data_dir, transform=self.pre_processing, training=False)
-        data_loader = DataLoader(dataset, batch_size=1, num_workers=1, pin_memory=True)
-        return data_loader
 
     def _save_reconstructions(self, reconstructions):
         """
@@ -68,14 +75,19 @@ class ModelEvaluator:
                 f.create_dataset('reconstruction', data=recons, **gzip)
 
     def create_and_save_reconstructions(self):
-        data_loader = self._create_data_loader()
         print('Beginning Reconstruction.')
-        reconstructions = self._create_reconstructions(data_loader)
+        reconstructions = self._create_reconstructions()
         print('Beginning Saving.')
         self._save_reconstructions(reconstructions)
 
 
-def main(model, args):
+def main(args):
+    from models.edsr_unet import UNet  # Moving import line here to reduce confusion.
+    from data.input_transforms import PreProcessIMG, Prefetch2Device
+    from eval.input_test_transform import PreProcessTestIMG, PreProcessValIMG
+    from eval.output_test_transforms import PostProcessTestIMG
+    from train.subsample import RandomMaskFunc
+
     # Selecting device
     if (args.gpu is not None) and torch.cuda.is_available():
         device = torch.device(f'cuda:{args.gpu}')
@@ -84,29 +96,81 @@ def main(model, args):
 
     print(f'Device {device} has been selected.')
 
-    pre_processing = InputTestTransform()
-    post_processing = OutputReconstructionTransform()
+    # model = UNet(
+    #     in_chans=15, out_chans=15, chans=args.chans, num_pool_layers=args.num_pool_layers, num_groups=args.num_groups,
+    #     negative_slope=args.negative_slope, use_residual=args.use_residual, interp_mode=args.interp_mode,
+    #     use_ca=args.use_ca, reduction=args.reduction, use_gap=args.use_gap, use_gmp=args.use_gmp).to(device)
 
-    evaluator = ModelEvaluator(
-        model, args.checkpoint_path, pre_processing, post_processing, args.data_dir, args.out_dir, device)
+    data_chans = 1 if args.challenge == 'singlecoil' else 15
+    model = UNet(in_chans=data_chans, out_chans=data_chans, chans=args.chans, num_pool_layers=args.num_pool_layers,
+                 num_depth_blocks=args.num_depth_blocks, res_scale=args.res_scale, use_residual=args.use_residual,
+                 use_ca=args.use_ca, reduction=args.reduction, use_gap=args.use_gap, use_gmp=args.use_gmp).to(device)
+
+    dataset = CustomSliceData(root=args.data_root, transform=Prefetch2Device(device), challenge=args.challenge,
+                              sample_rate=1, start_slice=0, use_gt=False)
+
+    data_loader = DataLoader(dataset, batch_size=1, shuffle=False, num_workers=args.num_workers,
+                             collate_fn=temp_collate_fn, pin_memory=False)
+
+    mask_func = RandomMaskFunc(args.center_fractions, args.accelerations)
+    divisor = 2 ** args.num_pool_layers  # For UNet size fitting.
+
+    # This is for the validation set, not the test set. The test set requires a different pre-processing function.
+    if Path(args.data_root).name.endswith('val'):
+        pre_processing = PreProcessValIMG(mask_func=mask_func, challenge=args.challenge, device=device,
+                                          crop_center=False, divisor=divisor)
+        # pre_processing = PreProcessIMG(mask_func=mask_func, challenge=args.challenge, device=device,
+        #                                augment_data=False, use_seed=True, crop_center=True)
+    elif Path(args.data_root).name.endswith('test_v2'):
+        pre_processing = PreProcessTestIMG(challenge=args.challenge, device=device, crop_center=True)
+    else:
+        raise NotImplementedError('Invalid data root. If using the original test set, please change to test_v2.')
+
+    post_processing = PostProcessTestIMG(challenge=args.challenge)
+
+    evaluator = ModelEvaluator(model, args.checkpoint_path, args.challenge, data_loader,
+                               pre_processing, post_processing, args.data_root, args.out_dir, device)
 
     evaluator.create_and_save_reconstructions()
 
 
 if __name__ == '__main__':
     print(f'Current Working Directory: {Path.cwd()}')
-    defaults = dict(
-        gpu=0,  # Set to None for CPU mode.
-        data_dir='/home/veritas/PycharmProjects/fastMRI-GAN/images/multicoil_test',
-        checkpoint_path='/home/veritas/PycharmProjects/fastMRI-GAN/checkpoints/'
-                        'WGANGP/Trial 07  2019-06-25 11-44-20/Generator/ckpt_001.tar',
+    if multiprocessing.get_start_method(allow_none=True) is None:
+        multiprocessing.set_start_method(method='spawn')
 
-        out_dir='./wgan_gp_test'  # Change this every time! Attempted overrides will throw errors by design.
+    defaults = dict(
+        gpu=1,  # Set to None for CPU mode.
+        challenge='multicoil',
+        num_workers=4,
+
+        # Parameters for validation set evaluation.
+        center_fractions=[0.08, 0.04],
+        accelerations=[4, 8],
+
+        # Model specific parameters.
+        chans=64,
+        num_pool_layers=4,
+        # num_groups=16,
+        # negative_slope=0.1,
+
+        num_depth_blocks=4,
+        res_scale=0.1,
+
+        use_residual=True,
+        # interp_mode='nearest',
+        use_ca=False,
+        reduction=16,
+        use_gap=False,
+        use_gmp=False,
+
+        # Parameters for reconstruction.
+        data_root='/media/veritas/D/FastMRI/multicoil_test_v2',
+        checkpoint_path='/home/veritas/PycharmProjects/fastMRI-kspace/checkpoints/I2I/'
+                        'Trial 26  2019-08-16 18-14-01/ckpt_039.tar',
+
+        out_dir='./i2i_26_test'  # Change this every time! Attempted overrides will throw errors by design.
     )
 
     parser = create_arg_parser(**defaults).parse_args()
-
-    # Change this part when a different model is being used.
-    unet = UnetModel(in_chans=1, out_chans=1, chans=32, num_pool_layers=4, drop_prob=0)
-
-    main(unet, parser)
+    main(parser)

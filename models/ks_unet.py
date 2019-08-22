@@ -29,28 +29,12 @@ import torch.nn.functional as F
 #         return outputs
 
 
-class ChannelAttention(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.gap = nn.AdaptiveAvgPool2d(1)
-        self.gmp = nn.AdaptiveMaxPool2d(1)
-        self.sigmoid = nn.Sigmoid()
-
-    def forward(self, tensor):
-        gap = self.gap(tensor)
-        gmp = self.gmp(tensor)
-
-        # Maybe batch-norm the two pooling types to make their scales more similar.
-        att = self.sigmoid(gap + gmp)
-        return tensor * att
-
-
 class AsymmetricSignalExtractor(nn.Module):
     def __init__(self, in_chans, out_chans, ext_chans, min_ext_size, max_ext_size, use_bias=True):
         super().__init__()
         assert isinstance(min_ext_size, int) and isinstance(max_ext_size, int), 'Extractor sizes must be integers.'
         assert 3 <= min_ext_size <= max_ext_size, 'Invalid extractor sizes.'
-        assert (min_ext_size // 2) and (max_ext_size // 2), 'Extractor sizes must be odd numbers.'
+        assert (min_ext_size % 2) and (max_ext_size % 2), 'Extractor sizes must be odd numbers.'
 
         # Added 1x1 convolution, not specified, so very bad for API. Add specification later.
         self.ext_layers = nn.ModuleList([nn.Conv2d(in_chans, ext_chans, kernel_size=1, bias=use_bias)])

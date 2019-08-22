@@ -11,7 +11,7 @@ from collections import defaultdict
 from utils.run_utils import get_logger
 from utils.train_utils import CheckpointManager, make_grid_triplet, make_k_grid
 from metrics.my_ssim import ssim_loss
-from metrics.custom_losses import psnr_loss, nmse_loss
+from metrics.custom_losses import psnr, nmse
 
 
 class ModelTrainerK2CI:
@@ -29,8 +29,9 @@ class ModelTrainerK2CI:
     def __init__(self, args, model, optimizer, train_loader, val_loader,
                  input_train_transform, input_val_transform, output_transform, losses, scheduler=None):
 
-        # Allow multiple processes to access tensors on GPU.
-        multiprocessing.set_start_method(method='spawn')
+        # Allow multiple processes to access tensors on GPU. Add checking for multiple continuous runs.
+        if multiprocessing.get_start_method(allow_none=True) is None:
+            multiprocessing.set_start_method(method='spawn')
 
         self.logger = get_logger(name=__name__, save_file=args.log_path / args.run_name)
 
@@ -243,8 +244,8 @@ class ModelTrainerK2CI:
 
         max_range = img_targets.max() - img_targets.min()
         slice_ssim = ssim_loss(img_recons, img_targets, max_val=max_range)
-        slice_psnr = psnr_loss(img_recons, img_targets, data_range=max_range)
-        slice_nmse = nmse_loss(img_recons, img_targets)
+        slice_psnr = psnr(img_recons, img_targets, data_range=max_range)
+        slice_nmse = nmse(img_recons, img_targets)
 
         return {'slice_ssim': slice_ssim, 'slice_nmse': slice_nmse, 'slice_psnr': slice_psnr}
 

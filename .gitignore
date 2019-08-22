@@ -109,9 +109,9 @@ venv.bak/
 *.hdf5
 *.tar
 *.gz
-*.log
 *.pt
 *.pth
 *.pickle
 *.pkl
 *.pckl
+*.json

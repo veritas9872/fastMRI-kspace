@@ -5,8 +5,18 @@ import time
 import json
 
 
+def clean_empty_dirs(ckpt_root, log_root):
+    ckpt_root = Path(ckpt_root)
+    log_root = Path(log_root)
+
+    assert ckpt_root.exists() and log_root.exists(), 'The given root directories do not exist.'
+
+    # TODO: Make a good implementation for all use cases later on.
+    #  Note that checkpoint text file will have checkpoint records even when no checkpoint files are saved.
+
+
 def initialize(ckpt_dir):
-    ckpt_path = Path(ckpt_dir)  # If a string is entered, convert to Path object.
+    ckpt_path = Path(ckpt_dir)  # If a string is given, convert to Path object.
     if not ckpt_path.exists():
         print('Making checkpoint directory: ', ckpt_path)
         try:
@@ -50,6 +60,7 @@ def get_logger(name, save_file=None):
 
     logger = logging.getLogger(name)
     logger.setLevel(logging.INFO)
+    logger.propagate = False
 
     # Remove previous handlers. Useful when logger is being redefined in the same run.
     for handler in logger.handlers:

@@ -10,15 +10,25 @@ from train.subsample import MaskFunc
 from data.input_transforms import Prefetch2Device, TrainPreProcessK
 from data.output_transforms import OutputReplaceTransformK
 
-from models.ks_unet import UnetKS
-from train.model_trainers.model_trainer_IMG import ModelTrainerIMG
-from metrics.custom_losses import CSSIM
+from train.model_trainers.new_model_trainer_K2K import ModelTrainerK2K
+from models.ase_skip_unet import UNetSkipKSSE
 
 
-def train_img(args):
+
+"""
+Memo: I have found that there is a great deal of variation in performance when training.
+Even under the same settings, the results can be extremely different when using small numbers of samples. 
+I believe that this is because of the large degree of variation in data quality in the dataset.
+Therefore, demonstrating that one method works better than another requires using a large portion of the dataset.
+However, this takes a lot of time...
+Using small datasets for multiple runs may also prove useful.
+"""
+
+
+def train_k2k(args):
 
     # Maybe move this to args later.
-    train_method = 'K2CI'
+    train_method = 'K2K'
 
     # Creating checkpoint and logging directories, as well as the run name.
     ckpt_path = Path(args.ckpt_root)
@@ -71,37 +81,37 @@ def train_img(args):
     input_train_transform = TrainPreProcessK(mask_func, args.challenge, args.device, use_seed=False, divisor=divisor)
     input_val_transform = TrainPreProcessK(mask_func, args.challenge, args.device, use_seed=True, divisor=divisor)
 
-    # train_transform = InputTransformK(mask_func, args.challenge, args.device, use_seed=False, divisor=divisor)
-    # val_transform = InputTransformK(mask_func, args.challenge, args.device, use_seed=True, divisor=divisor)
-
     # DataLoaders
     train_loader, val_loader = create_custom_data_loaders(args, transform=data_prefetch)
 
     losses = dict(
-        cmg_loss=nn.MSELoss(reduction='mean'),
-        img_loss=CSSIM(filter_size=7)
+        kspace_loss=nn.MSELoss(reduction='mean')
     )
 
     output_transform = OutputReplaceTransformK()
 
     data_chans = 2 if args.challenge == 'singlecoil' else 30  # Multicoil has 15 coils with 2 for real/imag
 
-    model = UnetKS(in_chans=data_chans, out_chans=data_chans, ext_chans=args.chans, chans=args.chans,
-                   num_pool_layers=args.num_pool_layers, min_ext_size=args.min_ext_size, max_ext_size=args.max_ext_size,
-                   use_ext_bias=args.use_ext_bias).to(device)
+    model = UNetSkipKSSE(
+        in_chans=data_chans, out_chans=data_chans, chans=args.chans, num_pool_layers=args.num_pool_layers,
+        ext_chans=args.ext_chans, min_ext_size=args.min_ext_size, max_ext_size=args.max_ext_size, use_ext_bias=True,
+        pool=args.pool, use_skip=args.use_skip, use_att=args.use_att, reduction=args.reduction,
+        use_gap=args.use_gap, use_gmp=args.use_gmp).to(device)
 
     optimizer = optim.Adam(model.parameters(), lr=args.init_lr)
 
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=args.lr_red_epoch, gamma=args.lr_red_rate)
 
-    trainer = ModelTrainerIMG(args, model, optimizer, train_loader, val_loader,
+    trainer = ModelTrainerK2K(args, model, optimizer, train_loader, val_loader,
                               input_train_transform, input_val_transform, output_transform, losses, scheduler)
 
-    # TODO: Implement logging of model, losses, transforms, etc.
     trainer.train_model()
 
 
 if __name__ == '__main__':
+    project_name = 'fastMRI-kspace'
+    assert Path.cwd().name == project_name, f'Current working directory set at {Path.cwd()}, not {project_name}!'
+
     settings = dict(
         # Variables that almost never change.
         challenge='multicoil',
@@ -109,7 +119,6 @@ if __name__ == '__main__':
         log_root='./logs',
         ckpt_root='./checkpoints',
         batch_size=1,  # This MUST be 1 for now.
-        chans=32,
         num_pool_layers=4,
         save_best_only=True,
         center_fractions=[0.08, 0.04],
@@ -117,26 +126,35 @@ if __name__ == '__main__':
         smoothing_factor=8,
 
         # Variables that occasionally change.
+        chans=32,
         max_images=8,  # Maximum number of images to save.
-        num_workers=1,
+        num_workers=2,
         init_lr=1E-4,
         gpu=0,  # Set to None for CPU mode.
         max_to_keep=1,
-        img_lambda=100,
-
         start_slice=10,
-        min_ext_size=3,  # 1x1 extractor is included by default.
-        max_ext_size=11,  # This trial is running with max 11 extractors!!!
+
+        # Model specific parameters.
+        min_ext_size=1,
+        max_ext_size=9,
+        ext_chans=32,
+        use_ext_bias=True,
+
+        pool='avg',
+        use_skip=True,
+        use_att=False,
+        reduction=16,
+        use_gap=True,
+        use_gmp=False,
 
         # Variables that change frequently.
-        sample_rate=0.02,
-        num_epochs=50,
+        sample_rate=0.1,
+        num_epochs=35,
         verbose=False,
-        use_slice_metrics=True,  # Using slice metrics causes a 30% increase in training time.
-        lr_red_epoch=40,
+        use_slice_metrics=True,  # This can significantly increase training time.
+        lr_red_epoch=15,
         lr_red_rate=0.1,
-        use_ext_bias=True
         # prev_model_ckpt='',
     )
     options = create_arg_parser(**settings).parse_args()
-    train_img(options)
+    train_k2k(options)

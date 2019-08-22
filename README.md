@@ -1,10 +1,10 @@
 # fastMRI-kspace
-Code for cracking the fastMRI challenge using k-space learning.
+###Code for cracking the fastMRI challenge using k-space learning.
 
 
 
-**Note**: This code is tested on Python 3.7 with Pytorch 1.1  
-
-This code may be compatible with Python 3.6. However, this has not been tested.
+**Note**: This code is tested on Python 3.6 and 3.7 with Pytorch 1.1 on Ubuntu 16.04 and 18.04 
   
-There is no Python 2.7 or 3.5 compatibility. Pytorch 0.x is also not supported.
+There is no Python 2.7 or 3.5 compatibility. 
+
+Pytorch 1.0 and below is also not supported.

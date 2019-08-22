@@ -33,8 +33,32 @@ def apply_mask(data, mask_func, seed=None):
     """
     shape = np.array(data.shape)
     shape[:-3] = 1
-    mask = mask_func(shape, seed).to(data.device)  # Changed this part here for Pre-loading on GPU.
-    return data * mask, mask
+    mask = mask_func(shape, seed)
+    return torch.where(mask == 0, torch.Tensor([0]), data), mask
+
+
+def apply_info_mask(data, mask_func, seed=None):
+    """
+    Subsample given k-space by multiplying with a mask.
+    Args:
+        data (torch.Tensor): The input k-space data. This should have at least 3 dimensions, where
+            dimensions -3 and -2 are the spatial dimensions, and the final dimension has size
+            2 (for complex values).
+        mask_func (callable): A function that takes a shape (tuple of ints) and a random
+            number seed and returns a mask and a dictionary containing information about the masking.
+        seed (int or 1-d array_like, optional): Seed for the random number generator.
+    Returns:
+        (tuple): tuple containing:
+            masked data (torch.Tensor): Sub-sampled k-space data
+            mask (torch.Tensor): The generated mask
+            info (dict): A dictionary containing information about the mask.
+    """
+    shape = np.array(data.shape)
+    shape[:-3] = 1
+    mask, info = mask_func(shape, seed)
+    mask = mask.to(data.device)
+    # Checked that this version also removes negative 0 values as well.
+    return torch.where(mask == 0, torch.tensor(0, dtype=data.dtype, device=data.device), data), mask, info
 
 
 def fft2(data):
@@ -68,6 +92,75 @@ def ifft2(data):
     data = ifftshift(data, dim=(-3, -2))
     data = torch.ifft(data, 2, normalized=True)
     data = fftshift(data, dim=(-3, -2))
+    return data
+
+
+def fft1(data, direction):
+    """
+    Apply centered, normalized 1 dimensional Fast Fourier Transform along the height axis.
+    Super-inefficient implementation where the Inverse Fourier Transform is applied to the last (width) axis again.
+    This is because there is no Pytorch native implementation for controlling FFT axes.
+    Also, this is (probably) faster than permuting the tensor repeatedly.
+
+    Args:
+        data (torch.Tensor): Complex valued input data containing at least 3 dimensions: dimensions
+            -3 & -2 are spatial dimensions and dimension -1 has size 2. All other dimensions are
+            assumed to be batch dimensions.
+        direction (str): Direction that the FFT is to be performed.
+            Not using `dim` or `axis` as keyword to reduce confusion.
+            Unfortunately, Pytorch has no complex number data type for fft, so axis dims are different.
+
+    Returns:
+        torch.Tensor: The FFT of the input.
+    """
+    assert data.size(-1) == 2
+    assert direction in ('height', 'width'), 'direction must be either height or width.'
+
+    # Push height dimension to last meaningful axis for FFT.
+    if direction == 'height':
+        data = data.transpose(dim0=-3, dim1=-2)
+
+    data = ifftshift(data, dim=-2)
+    data = torch.fft(data, signal_ndim=1, normalized=True)
+    data = fftshift(data, dim=-2)
+
+    # Restore height dimension to its original location.
+    if direction == 'height':
+        data = data.transpose(dim0=-3, dim1=-2)
+
+    return data
+
+
+def ifft1(data, direction):
+    """
+    Apply centered, normalized 1 dimensional Inverse Fast Fourier Transform along the height axis.
+    Super-inefficient implementation where the Fourier Transform is applied to the last (width) axis again.
+    This is because there is no Pytorch native implementation for controlling IFFT axes.
+    Also, this is (probably) faster than permuting the tensor repeatedly.
+
+    Args:
+        data (torch.Tensor): Complex valued input data containing at least 3 dimensions: dimensions
+            -3 & -2 are spatial dimensions and dimension -1 has size 2. All other dimensions are
+            assumed to be batch dimensions.
+        direction (str): Direction that the IFFT is to be performed.
+            Not using `dim` or `axis` as keyword to reduce confusion.
+            Unfortunately, Pytorch has no complex number data type for fft, so axis dims are different.
+    Returns:
+        torch.Tensor: The IFFT of the input.
+    """
+    assert data.size(-1) == 2
+    assert direction in ('height', 'width'), 'direction must be either height or width.'
+
+    if direction == 'height':  # Push height dimension to last meaningful axis for IFFT.
+        data = data.transpose(dim0=-3, dim1=-2)
+
+    data = ifftshift(data, dim=-2)
+    data = torch.ifft(data, signal_ndim=1, normalized=True)
+    data = fftshift(data, dim=-2)
+
+    if direction == 'height':  # Restore height dimension to its original location.
+        data = data.transpose(dim0=-3, dim1=-2)
+
     return data
 
 
@@ -287,8 +380,8 @@ def kspace_to_nchw(tensor):
     assert isinstance(tensor, torch.Tensor)
     assert tensor.dim() == 5
     s = tensor.shape
-    assert s[-1] == 2
-    tensor = tensor.permute(dims=(0, 1, 4, 2, 3)).reshape(shape=(s[0], 2 * s[1], s[2], s[3]))
+    assert (s[-1] == 2) or (s[-1] == 3)
+    tensor = tensor.permute(dims=(0, 1, 4, 2, 3)).reshape(shape=(s[0], s[1] * s[4], s[2], s[3]))
     return tensor
 
 

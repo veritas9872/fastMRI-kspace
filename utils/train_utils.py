@@ -6,7 +6,7 @@ import torch.nn.functional as F
 from pathlib import Path
 
 from data.mri_data import SliceData, CustomSliceData
-from data.data_transforms import complex_abs, ifft2
+from data.data_transforms import complex_abs, ifft2, root_sum_of_squares
 from data.input_transforms import Prefetch2Device
 
 
@@ -89,7 +89,7 @@ class CheckpointManager:
             raise TypeError('Mode must be either `min` or `max`')
 
         save_path = None
-        if is_best or not self.save_best_only:
+        if (is_best or not self.save_best_only) and (self.max_to_keep > 0):
             save_path = self._save(ckpt_name, **save_kwargs)
 
         if verbose:
@@ -139,37 +139,79 @@ def load_model_from_checkpoint(model, load_dir):
     return model  # Not actually necessary to return the model but doing so anyway.
 
 
-def create_datasets(args, train_transform, val_transform):
-    assert callable(train_transform) and callable(val_transform), 'Transforms should be callable functions.'
+# def create_datasets(args, train_transform, val_transform):
+#     assert callable(train_transform) and callable(val_transform), 'Transforms should be callable functions.'
+#
+#     # Generating Datasets.
+#     train_dataset = SliceData(
+#         root=Path(args.data_root) / f'{args.challenge}_train',
+#         transform=train_transform,
+#         challenge=args.challenge,
+#         sample_rate=args.sample_rate,
+#         use_gt=False
+#     )
+#
+#     val_dataset = SliceData(
+#         root=Path(args.data_root) / f'{args.challenge}_val',
+#         transform=val_transform,
+#         challenge=args.challenge,
+#         sample_rate=args.sample_rate,
+#         use_gt=False
+#     )
+#     return train_dataset, val_dataset
+#
+#
+# def single_collate_fn(batch):  # Returns `targets` as a 4D Tensor.
+#     """
+#     hack for single batch case.
+#     """
+#     return batch[0][0].unsqueeze(0), batch[0][1].unsqueeze(0), batch[0][2]
+#
+#
+# def single_triplet_collate_fn(batch):
+#     return batch[0][0], batch[0][1], batch[0][2]
 
-    # Generating Datasets.
-    train_dataset = SliceData(
-        root=Path(args.data_root) / f'{args.challenge}_train',
-        transform=train_transform,
-        challenge=args.challenge,
-        sample_rate=args.sample_rate,
-        use_gt=False
-    )
 
-    val_dataset = SliceData(
-        root=Path(args.data_root) / f'{args.challenge}_val',
-        transform=val_transform,
-        challenge=args.challenge,
-        sample_rate=args.sample_rate,
-        use_gt=False
-    )
-    return train_dataset, val_dataset
-
-
-def single_collate_fn(batch):  # Returns `targets` as a 4D Tensor.
-    """
-    hack for single batch case.
-    """
-    return batch[0][0].unsqueeze(0), batch[0][1].unsqueeze(0), batch[0][2]
-
-
-def single_triplet_collate_fn(batch):
-    return batch[0][0], batch[0][1], batch[0][2]
+# def create_data_loaders(args, train_transform, val_transform):
+#
+#     """
+#     A function for creating datasets where the data is sent to the desired device before being given to the model.
+#     This is done because data transfer is a serious bottleneck in k-space learning and is best done asynchronously.
+#     Also, the Fourier Transform is best done on the GPU instead of on CPU.
+#     Finally, Sending k-space data to device beforehand removes the need to also send generated label data to device.
+#     This reduces data transfer significantly.
+#     The only problem is that sending to GPU cannot be batched with this method.
+#     However, this seems to be a small price to pay.
+#     """
+#     assert callable(train_transform) and callable(val_transform), 'Transforms should be callable functions.'
+#
+#     train_dataset, val_dataset = create_datasets(args, train_transform, val_transform)
+#
+#     if args.batch_size == 1:
+#         collate_fn = single_collate_fn
+#     elif args.batch_size > 1:
+#         collate_fn = multi_collate_fn
+#     else:
+#         raise RuntimeError('Invalid batch size')
+#
+#     # Generating Data Loaders
+#     train_loader = DataLoader(
+#         dataset=train_dataset,
+#         batch_size=args.batch_size,
+#         shuffle=True,
+#         num_workers=args.num_workers,
+#         pin_memory=args.pin_memory,
+#         collate_fn=collate_fn
+#     )
+#
+#     val_loader = DataLoader(
+#         dataset=val_dataset,
+#         batch_size=args.batch_size,
+#         num_workers=args.num_workers,
+#         pin_memory=args.pin_memory,
+#         collate_fn=collate_fn
+#     )
+#     return train_loader, val_loader
 
 
 def single_batch_collate_fn(batch):
@@ -195,48 +237,6 @@ def multi_collate_fn(batch):
             tensors[idx] = F.pad(tensors[idx], pad=[pad, pad], value=0)
 
     return torch.stack(tensors, dim=0), targets, scales
-
-
-def create_data_loaders(args, train_transform, val_transform):
-
-    """
-    A function for creating datasets where the data is sent to the desired device before being given to the model.
-    This is done because data transfer is a serious bottleneck in k-space learning and is best done asynchronously.
-    Also, the Fourier Transform is best done on the GPU instead of on CPU.
-    Finally, Sending k-space data to device beforehand removes the need to also send generated label data to device.
-    This reduces data transfer significantly.
-    The only problem is that sending to GPU cannot be batched with this method.
-    However, this seems to be a small price to pay.
-    """
-    assert callable(train_transform) and callable(val_transform), 'Transforms should be callable functions.'
-
-    train_dataset, val_dataset = create_datasets(args, train_transform, val_transform)
-
-    if args.batch_size == 1:
-        collate_fn = single_collate_fn
-    elif args.batch_size > 1:
-        collate_fn = multi_collate_fn
-    else:
-        raise RuntimeError('Invalid batch size')
-
-    # Generating Data Loaders
-    train_loader = DataLoader(
-        dataset=train_dataset,
-        batch_size=args.batch_size,
-        shuffle=True,
-        num_workers=args.num_workers,
-        pin_memory=args.pin_memory,
-        collate_fn=collate_fn
-    )
-
-    val_loader = DataLoader(
-        dataset=val_dataset,
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
-        pin_memory=args.pin_memory,
-        collate_fn=collate_fn
-    )
-    return train_loader, val_loader
 
 
 def create_custom_datasets(args, transform=None):
@@ -330,7 +330,52 @@ def make_grid_triplet(image_recons, image_targets):
     return image_recons, image_targets, deltas
 
 
-def make_k_grid(kspace_recons, smoothing_factor=8):
+def make_rss_slice(image, dim=1, resolution=320):
+    assert image.dim() == 4, 'Real-valued images are expected.'
+    if image.size(0) > 1:
+        raise NotImplementedError('Batch size is expected to be 1.')
+
+    top = (image.size(-2) - resolution) // 2
+    left = (image.size(-1) - resolution) // 2
+
+    image = image.detach()[:, :, top:top+resolution, left:left+resolution]
+
+    if image.size(1) == 1:  # Single-coil
+        return image.squeeze().to(device='cpu', non_blocking=True)
+    elif image.size(1) != 15:
+        raise ValueError('Invalid number of coils for this dataset.')
+
+    rss = root_sum_of_squares(image, dim=dim).squeeze()
+    return rss.to(device='cpu', non_blocking=True)
+
+
+def standardize_image(image):
+    maximum = image.max()
+    minimum = image.min()
+    scale = 1 / (maximum - minimum)
+    return (image - minimum) * scale
+
+
+def make_img_grid(image, shrink_scale):
+    if image.size(0) > 1:
+        raise NotImplementedError('Batch size is expected to be 1.')
+
+    image_grid = image.detach().squeeze()
+    image_grid = standardize_image(image_grid)
+
+    if image_grid.size(0) == 15:  # Multi-coil case.
+        image_grid = torch.cat(torch.chunk(image_grid.view(-1, image_grid.size(-1)), chunks=5, dim=0), dim=1)
+
+    if shrink_scale < 1:
+        image_grid = F.interpolate(image_grid.expand(1, 1, -1, -1),
+                                   scale_factor=shrink_scale, mode='bicubic', align_corners=True)
+    elif shrink_scale > 1:
+        raise UserWarning('shrink scale is expected to be below 1. Using image with the same size as input.')
+
+    return image_grid.squeeze().to(device='cpu', non_blocking=True)
+
+
+def make_k_grid(kspace_recons, smoothing_factor=8, shrink_scale=1):
     """
     Function for making k-space visualizations for Tensorboard.
     """
@@ -342,19 +387,25 @@ def make_k_grid(kspace_recons, smoothing_factor=8):
         raise NotImplementedError('Mini-batch size greater than 1 has not been implemented yet.')
 
     # Assumes that the smallest values will be close enough to 0 as to not matter much.
-    kspace_view = complex_abs(kspace_recons.detach()).squeeze(dim=0)
+    kspace_grid = complex_abs(kspace_recons.detach()).squeeze(dim=0)
     # Scaling & smoothing.
     # smoothing_factor converted to float32 tensor. expm1 and log1p require float32 tensors.
     # They cannot accept python integers.
     sf = torch.tensor(smoothing_factor, dtype=torch.float32)
-    kspace_view *= torch.expm1(sf) / kspace_view.max()
-    kspace_view = torch.log1p(kspace_view)  # Adds 1 to input for natural log.
-    kspace_view /= kspace_view.max()  # Normalization to 0~1 range.
+    kspace_grid *= torch.expm1(sf) / kspace_grid.max()
+    kspace_grid = torch.log1p(kspace_grid)  # Adds 1 to input for natural log.
+    kspace_grid /= kspace_grid.max()  # Standardization to 0~1 range.
 
-    if kspace_view.size(0) == 15:
-        kspace_view = torch.cat(torch.chunk(kspace_view.view(-1, kspace_view.size(-1)), chunks=5, dim=0), dim=1)
+    if kspace_grid.size(0) == 15:
+        kspace_grid = torch.cat(torch.chunk(kspace_grid.view(-1, kspace_grid.size(-1)), chunks=5, dim=0), dim=1)
 
-    return kspace_view.squeeze().cpu()
+    if shrink_scale < 1:
+        kspace_grid = F.interpolate(kspace_grid.expand(1, 1, -1, -1),
+                                    scale_factor=shrink_scale, mode='bicubic', align_corners=True)
+    elif shrink_scale > 1:
+        raise UserWarning('shrink scale is expected to be below 1. Using image with the same size as input.')
+
+    return kspace_grid.squeeze().to(device='cpu', non_blocking=True)
 
 
 def visualize_from_kspace(kspace_recons, kspace_targets, smoothing_factor=4):
