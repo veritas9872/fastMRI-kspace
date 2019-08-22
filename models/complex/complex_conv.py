@@ -101,6 +101,8 @@ class ComplexConv2d(nn.Module):
         self.conv_real = nn.Conv2d(**kwargs)
         self.conv_imag = nn.Conv2d(**kwargs)
 
+        self.oc = out_channels
+
         # Weight initialization. Somewhat inelegant in style but it works (I think...).
         init = ComplexInitializer(method='kaiming')
         weight_real, weight_imag = init.get_weight_inits(weight_shape=self.conv_real.weight.shape)
@@ -111,18 +113,11 @@ class ComplexConv2d(nn.Module):
     def forward(self, tensor: Tensor) -> Tensor:
         assert tensor.dim() == 5, 'Expected (N,2,C,H,W) format.'
         assert tensor.size(1) == 2, 'Expected real/imag to be represented in the second dimension, dim=1.'
-        real = self.conv_real(tensor[:, 0]) - self.conv_imag(tensor[:, 1])
-        imag = self.conv_real(tensor[:, 1]) + self.conv_imag(tensor[:, 0])
+        r = tensor[:, 0]  # Separating the tensor before convolution increases speed for some reason.
+        i = tensor[:, 1]  # Maybe slice indexing forces copying of memory.
+        real = self.conv_real(r) - self.conv_imag(i)
+        imag = self.conv_real(i) + self.conv_imag(r)
         return torch.stack([real, imag], dim=1)
-
-    def _other_forward(self, tensor: Tensor) -> Tensor:
-        assert tensor.dim() == 5, 'Expected (N,2,C,H,W) format.'
-        assert tensor.size(1) == 2, 'Expected real/imag to be represented in the second dimension, dim=1.'
-        n, _, c, h, w = tensor.shape
-        folded = tensor.view(n * 2, c, h, w)
-        real_conv = self.conv_real(folded).view(tensor.shape)
-        imag_conv = self.conv_imag(folded).view(tensor.shape)
-        real = real_conv[:, 0] - imag_conv[:, 1]
 
 
 class ComplexSpatialDropout2d(nn.Module):
@@ -232,8 +227,39 @@ class ComplexSpatialDropout2d(nn.Module):
 #         weight = np.concatenate([weight_real, weight_imag], axis=-1)
 #
 #         return weight
-#
-#
-# if __name__ == '__main__':
-#     test = ComplexIndependentFilters(kernel_size=(3, 3), input_dim=32, weight_dim=2, nb_filters=100)
-#     test(weight_shape=(100, 32, 3, 3))
+
+
+if __name__ == '__main__':
+    # torch.autograd.set_grad_enabled(False)
+    tensor = torch.rand(1, 2, 15, 320, 320)
+    conv_real = nn.Conv2d(in_channels=15, out_channels=4, kernel_size=3, padding=1)
+    conv_imag = nn.Conv2d(in_channels=15, out_channels=4, kernel_size=3, padding=1)
+
+    def forward(tensor: Tensor) -> Tensor:
+        assert tensor.dim() == 5, 'Expected (N,2,C,H,W) format.'
+        assert tensor.size(1) == 2, 'Expected real/imag to be represented in the second dimension, dim=1.'
+
+        r = tensor[:, 0]
+        i = tensor[:, 1]
+        print('Why?')
+        print(r.shape)
+        real = conv_real(r) - conv_imag(i)
+        print('?')
+        imag = conv_real(i) + conv_imag(r)
+        return torch.stack([real, imag], dim=1)
+
+    def _other_forward(tensor: Tensor) -> Tensor:
+        assert tensor.dim() == 5, 'Expected (N,2,C,H,W) format.'
+        assert tensor.size(1) == 2, 'Expected real/imag to be represented in the second dimension, dim=1.'
+        n, _, c, h, w = tensor.shape
+        folded = tensor.view(n * 2, c, h, w)  # Merge to batch dimension for efficient calculation.
+        real_conv = conv_real(folded).view(tensor.shape)
+        imag_conv = conv_imag(folded).view(tensor.shape)
+        real = real_conv[:, 0] - imag_conv[:, 1]
+        imag = real_conv[:, 1] + imag_conv[:, 0]
+        return torch.stack([real, imag], dim=1)
+
+    x = forward(tensor)
+    y = _other_forward(tensor)
+
+    print(torch.all(x == y))
