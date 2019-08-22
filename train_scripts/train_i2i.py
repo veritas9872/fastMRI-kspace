@@ -134,10 +134,7 @@ if __name__ == '__main__':
 
         # Model specific parameters.
         train_method='I2I',  # Weighted semi-k-space to complex-valued image.
-        # num_groups=16,  # Maybe try 16 now since chans is 64.
         chans=64,
-        # negative_slope=0.1,
-        # interp_mode='nearest',
         use_residual=True,
         # l1_ratio=0.5,
         num_depth_blocks=32,
