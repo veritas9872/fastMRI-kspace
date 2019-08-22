@@ -262,7 +262,9 @@ class ModelTrainerI2I:
             # Adding RSS images of reconstructions and targets.
             if 'rss_recons' in recons:
                 recon_rss = standardize_image(recons['rss_recons'])
+                delta_rss = standardize_image(targets['rss_targets'] - recons['rss_recons'])
                 self.writer.add_image(f'{mode} RSS Recons/{acc}/{step}', recon_rss, **kwargs)
+                self.writer.add_image(f'{mode} RSS Delta/{acc}/{step}', delta_rss, **kwargs)
 
             if epoch == 1:  # Maybe add input images too later on.
                 img_target_grid = make_img_grid(targets['img_targets'], self.shrink_scale)
@@ -273,9 +275,8 @@ class ModelTrainerI2I:
                 self.writer.add_image(f'{mode} Image Targets/{acc}/{step}', img_target_grid, **kwargs)
                 self.writer.add_image(f'{mode} Input Images/{acc}/{step}', img_grid, **kwargs)
 
-                if 'rss_targets' in targets:
-                    target_rss = standardize_image(targets['rss_targets'])
-                    self.writer.add_image(f'{mode} RSS Targets/{acc}/{step}', target_rss, **kwargs)
+                target_rss = standardize_image(targets['rss_targets'])
+                self.writer.add_image(f'{mode} RSS Targets/{acc}/{step}', target_rss, **kwargs)
 
     def _get_slice_metrics(self, recons, targets, extra_params):
         img_recons = recons['img_recons'].detach()  # Just in case.
