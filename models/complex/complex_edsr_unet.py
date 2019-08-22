@@ -14,6 +14,7 @@ class ComplexConvLayer(nn.Module):
         )
 
     def forward(self, tensor: Tensor) -> Tensor:
+        assert tensor.dim() == 5 and tensor.size(1) == 2, 'Invalid shape!'
         return self.layer(tensor)
 
 
@@ -33,7 +34,7 @@ class ComplexResBlock(nn.Module):
 
 
 class ComplexResizeConv(nn.Module):
-    def __init__(self, in_chans: int, out_chans: int, scale_factor=2., negative_slope=0.01, res_scale=1.):
+    def __init__(self, in_chans: int, out_chans: int, scale_factor=2., negative_slope=0.01):
         super().__init__()
         self.layers = nn.Sequential(
             ComplexConv2d(in_channels=in_chans, out_channels=out_chans, kernel_size=3, padding=1),
@@ -78,8 +79,7 @@ class ComplexEDSRUNet(nn.Module):
         self.up_reshape_layers = nn.ModuleList()
         self.up_res_blocks = nn.ModuleList()
         for _ in range(num_pool_layers - 1):
-            deconv = ComplexResizeConv(in_chans=ch, out_chans=ch, scale_factor=2,
-                                       negative_slope=negative_slope, res_scale=res_scale)
+            deconv = ComplexResizeConv(in_chans=ch, out_chans=ch, scale_factor=2, negative_slope=negative_slope)
             conv = ComplexConvLayer(in_chans=ch * 2, out_chans=ch // 2, stride=1, negative_slope=negative_slope)
             res = ComplexResBlock(num_chans=ch // 2, negative_slope=negative_slope, res_scale=res_scale)
             self.upscale_layers.append(deconv)
@@ -87,8 +87,7 @@ class ComplexEDSRUNet(nn.Module):
             self.up_res_blocks.append(res)
             ch //= 2
         else:
-            deconv = ComplexResizeConv(in_chans=ch, out_chans=ch, scale_factor=2,
-                                       negative_slope=negative_slope, res_scale=res_scale)
+            deconv = ComplexResizeConv(in_chans=ch, out_chans=ch, scale_factor=2, negative_slope=negative_slope)
             conv = ComplexConvLayer(in_chans=ch * 2, out_chans=ch, stride=1, negative_slope=negative_slope)
             res = ComplexResBlock(num_chans=ch, negative_slope=negative_slope, res_scale=res_scale)
             self.upscale_layers.append(deconv)
@@ -120,4 +119,3 @@ class ComplexEDSRUNet(nn.Module):
             output = self.up_res_blocks[idx](output)
 
         return tensor + self.final_layers(output)
-

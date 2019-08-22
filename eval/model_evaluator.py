@@ -81,6 +81,86 @@ class ModelEvaluator:
         self._save_reconstructions(reconstructions)
 
 
+class MultiAccelerationModelEvaluator:
+    """
+    Model evaluator for evaluating models trained on different accelerations.
+    Does not separate cases for weight suppression, only for 4-fold and 8-fold accelerations.
+    """
+    def __init__(self, model, checkpoint_path_4, checkpoint_path_8, challenge, data_loader,
+                 pre_processing, post_processing, data_root, out_dir, device):
+
+        assert isinstance(model, nn.Module), '`model` must be a Pytorch Module.'
+        assert isinstance(data_loader, DataLoader), '`data_loader` must be a Pytorch DataLoader.'
+        assert callable(pre_processing), '`pre_processing` must be a callable function.'
+        assert callable(post_processing), 'post_processing must be a callable function.'
+        assert challenge in ('singlecoil', 'multicoil'), 'Invalid challenge.'
+        assert not Path(out_dir).exists(), 'Output directory already exists!'
+
+        torch.autograd.set_grad_enabled(False)
+
+        self.model = model.eval()
+        self.checkpoint_path_4 = checkpoint_path_4
+        self.checkpoint_path_8 = checkpoint_path_8
+        self.data_loader = data_loader
+        self.challenge = challenge
+        self.pre_processing = pre_processing
+        self.post_processing = post_processing
+        self.data_root = data_root
+        self.out_dir = Path(out_dir)
+        self.device = device
+
+    def _create_partial_reconstructions(self, checkpoint_path, acceleration):
+        reconstructions = defaultdict(list)
+        self.model = load_model_from_checkpoint(self.model, checkpoint_path).to(self.device).eval()
+
+        for data in tqdm(self.data_loader, total=len(self.data_loader.dataset)):
+            kspace_target, target, attrs, file_name, slice_num = data
+
+            if attrs['acceleration'] != acceleration:
+                continue  # Not very efficient since data is still loaded and sent to GPU device. However, it will do.
+
+            inputs, targets, extra_params = self.pre_processing(kspace_target, target, attrs, file_name, slice_num)
+            outputs = self.model(inputs)  # Use inputs.to(device) if necessary for different transforms.
+            recons = self.post_processing(outputs, extra_params)
+            assert recons.dim() == 2, 'Unexpected dimensions. Batch size is expected to be 1.'
+
+            recons = recons.cpu().numpy()
+            file_name = Path(file_name).name
+            reconstructions[file_name].append((int(slice_num), recons))
+
+        reconstructions = {
+            file_name: np.stack([recon for _, recon in sorted(recons_list)])
+            for file_name, recons_list in reconstructions.items()
+        }
+
+        return reconstructions
+
+    def _save_reconstructions(self, reconstructions):
+        """
+        Saves the reconstructions from a model into h5 files that is appropriate for submission
+        to the leaderboard. Also includes compression for faster data transfer.
+        Args:
+            reconstructions (dict[str, np.array]): A dictionary mapping input filenames to
+                corresponding reconstructions (of shape num_slices x height x width).
+        """
+        self.out_dir.mkdir(exist_ok=False)  # Throw an error to prevent overwriting.
+        gzip = dict(compression='gzip', compression_opts=1, shuffle=True, fletcher32=True)
+        for file_name, recons in tqdm(reconstructions.items()):
+            with h5py.File(self.out_dir / file_name, mode='x', libver='latest') as f:  # Overwriting throws an error.
+                f.create_dataset('reconstruction', data=recons, **gzip)
+
+    def create_and_save_reconstructions(self):
+        print('Beginning Reconstruction.')
+        reconstructions_4 = self._create_partial_reconstructions(checkpoint_path=self.checkpoint_path_4, acceleration=4)
+        reconstructions_8 = self._create_partial_reconstructions(checkpoint_path=self.checkpoint_path_8, acceleration=8)
+        print('Beginning Saving.')
+
+        # Rather slow and inefficient but this makes for better looking code.
+        reconstructions = dict(**reconstructions_4, **reconstructions_8)
+        self._save_reconstructions(reconstructions)
+
+
+
 def main(args):
     from models.edsr_unet import UNet  # Moving import line here to reduce confusion.
     from data.input_transforms import PreProcessIMG, Prefetch2Device

@@ -51,7 +51,7 @@ class ComplexConv2d(nn.Module):
         self.conv_real = nn.Conv2d(**kwargs)
         self.conv_imag = nn.Conv2d(**kwargs)
 
-        # Weight initialization. Somewhat inelegant in style but it works (I think...).
+        # Weight initialization. Somewhat inelegant in style but it works.
         init = ComplexInitializer(method='kaiming')
         weight_real, weight_imag = init.get_weight_inits(weight_shape=self.conv_real.weight.shape)
         new_weights = {'conv_real.weight': weight_real, 'conv_imag.weight': weight_imag}
