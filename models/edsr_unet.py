@@ -56,7 +56,7 @@ class ResizeConv(nn.Module):
 
 
 class UNet(nn.Module):
-    def __init__(self, in_chans, out_chans, chans, num_pool_layers, num_depth_blocks, res_scale=0.1, drop_rate=0.,
+    def __init__(self, in_chans, out_chans, chans, num_pool_layers, num_depth_blocks, res_scale=0.1,
                  use_residual=True, use_ca=True, reduction=16, use_gap=True, use_gmp=True):
         super().__init__()
         self.in_chans = in_chans
@@ -107,7 +107,6 @@ class UNet(nn.Module):
             self.up_res_blocks.append(res)
             assert chans == ch, 'Channel indexing error!'
 
-        self.drop = nn.Dropout2d(p=drop_rate)
         self.final_layers = nn.Conv2d(in_channels=ch, out_channels=out_chans, kernel_size=1)
 
         assert len(self.down_reshape_layers) == len(self.down_res_blocks) == len(self.upscale_layers) \
@@ -138,6 +137,5 @@ class UNet(nn.Module):
             output = self.up_reshape_layers[idx](output)
             output = self.up_res_blocks[idx](output)
 
-        output = self.drop(output)  # Added dropout here.
         output = self.final_layers(output)
         return (tensor + output) if self.use_residual else output

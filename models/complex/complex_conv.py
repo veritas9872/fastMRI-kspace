@@ -64,6 +64,7 @@ class ComplexConv2d(nn.Module):
         # This increases the speed significantly by removing unnecessary memory copies as in a naive implementation.
         r = tensor.narrow(dim=1, start=0, length=1).squeeze(dim=1)
         i = tensor.narrow(dim=1, start=1, length=1).squeeze(dim=1)
+
         real = self.conv_real(r) - self.conv_imag(i)
         imag = self.conv_real(i) + self.conv_imag(r)
         return torch.stack([real, imag], dim=1)

@@ -7,16 +7,16 @@ from utils.run_utils import initialize, save_dict_as_json, get_logger, create_ar
 from utils.data_loaders import create_prefetch_data_loaders
 
 from train.subsample import RandomMaskFunc, UniformMaskFunc
-from data.input_transforms import PreProcessIMG
-from data.output_transforms import PostProcessIMG
+from data.rss_inputs import PreProcessRSS
+from data.rss_outputs import PostProcessRSS
 
-from train.new_model_trainers.img_to_img import ModelTrainerI2I
+from train.new_model_trainers.img_to_rss import ModelTrainerRSS
 from metrics.new_1d_ssim import SSIMLoss, LogSSIMLoss
 from metrics.combination_losses import L1SSIMLoss
 from models.edsr_unet import UNet
 
 
-def train_img_to_img(args):
+def train_img_to_rss(args):
     # Creating checkpoint and logging directories, as well as the run name.
     ckpt_path = Path(args.ckpt_root)
     ckpt_path.mkdir(exist_ok=True)
@@ -70,33 +70,32 @@ def train_img_to_img(args):
         train_mask_func = UniformMaskFunc(args.center_fractions_train, args.accelerations_train)
         val_mask_func = UniformMaskFunc(args.center_fractions_val, args.accelerations_val)
 
-    input_train_transform = PreProcessIMG(mask_func=train_mask_func, challenge=args.challenge, device=device,
-                                          augment_data=args.augment_data, use_seed=False, crop_center=args.crop_center)
-    input_val_transform = PreProcessIMG(mask_func=val_mask_func, challenge=args.challenge, device=device,
-                                        augment_data=False, use_seed=True, crop_center=args.crop_center)
+    input_train_transform = PreProcessRSS(mask_func=train_mask_func, challenge=args.challenge, device=device,
+                                          augment_data=args.augment_data, use_seed=False)
+    input_val_transform = PreProcessRSS(mask_func=val_mask_func, challenge=args.challenge, device=device,
+                                        augment_data=False, use_seed=True)
 
-    output_train_transform = PostProcessIMG(challenge=args.challenge)
-    output_val_transform = PostProcessIMG(challenge=args.challenge)
+    output_train_transform = PostProcessRSS(challenge=args.challenge, residual_rss=args.residual_rss)
+    output_val_transform = PostProcessRSS(challenge=args.challenge, residual_rss=args.residual_rss)
 
     # DataLoaders
     train_loader, val_loader = create_prefetch_data_loaders(args)
 
     losses = dict(
-        # img_loss=SSIMLoss(filter_size=7).to(device=device)
-        img_loss=LogSSIMLoss(filter_size=5).to(device=device)
-        # img_loss=nn.L1Loss()
-        # img_loss=L1SSIMLoss(filter_size=7, l1_ratio=args.l1_ratio).to(device=device)
+        # rss_loss=SSIMLoss(filter_size=7).to(device=device)
+        rss_loss=LogSSIMLoss(filter_size=7).to(device=device)
+        # rss_loss=nn.L1Loss()
+        # rss_loss=L1SSIMLoss(filter_size=7, l1_ratio=args.l1_ratio).to(device=device)
     )
 
-    data_chans = 1 if args.challenge == 'singlecoil' else 15
-    model = UNet(in_chans=data_chans, out_chans=data_chans, chans=args.chans, num_pool_layers=args.num_pool_layers,
+    model = UNet(in_chans=15, out_chans=1, chans=args.chans, num_pool_layers=args.num_pool_layers,
                  num_depth_blocks=args.num_depth_blocks, res_scale=args.res_scale, use_residual=args.use_residual,
                  use_ca=args.use_ca, reduction=args.reduction, use_gap=args.use_gap, use_gmp=args.use_gmp).to(device)
 
     optimizer = optim.Adam(model.parameters(), lr=args.init_lr)
     scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.lr_red_epochs, gamma=args.lr_red_rate)
 
-    trainer = ModelTrainerI2I(args, model, optimizer, train_loader, val_loader, input_train_transform,
+    trainer = ModelTrainerRSS(args, model, optimizer, train_loader, val_loader, input_train_transform,
                               input_val_transform, output_train_transform, output_val_transform, losses, scheduler)
 
     try:
@@ -121,8 +120,8 @@ if __name__ == '__main__':
         smoothing_factor=8,
 
         # Variables that occasionally change.
-        center_fractions_train=[0.08],
-        accelerations_train=[4],
+        center_fractions_train=[0.08, 0.04],
+        accelerations_train=[4, 8],
         center_fractions_val=[0.08, 0.04],
         accelerations_val=[4, 8],
 
@@ -132,12 +131,14 @@ if __name__ == '__main__':
         use_gt=True,
 
         # Model specific parameters.
-        train_method='I2I',  # Weighted semi-k-space to complex-valued image.
+        train_method='I2R',
         chans=64,
-        use_residual=True,
+        use_residual=False,
+        residual_rss=True,
         # l1_ratio=0.5,
         num_depth_blocks=32,
         res_scale=0.1,
+        drop_rate=0.,  # Dropout rate for spatial dropout.
         augment_data=True,
         crop_center=True,
 
@@ -152,14 +153,14 @@ if __name__ == '__main__':
         use_gmp=False,
 
         # Learning rate scheduling.
-        lr_red_epochs=[25, 35],
-        lr_red_rate=0.2,
+        lr_red_epochs=[40, 55],
+        lr_red_rate=0.25,
 
         # Variables that change frequently.
         use_slice_metrics=True,
-        num_epochs=40,
+        num_epochs=60,
 
-        gpu=1,  # Set to None for CPU mode.
+        gpu=0,  # Set to None for CPU mode.
         num_workers=3,
         init_lr=1E-4,
         max_to_keep=1,
@@ -171,4 +172,4 @@ if __name__ == '__main__':
         start_slice_val=0,
     )
     options = create_arg_parser(**settings).parse_args()
-    train_img_to_img(options)
+    train_img_to_rss(options)

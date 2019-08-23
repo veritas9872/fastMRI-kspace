@@ -76,16 +76,16 @@ class L1CSSIM(nn.Module):  # Replace this with a system of summing losses in Mod
         return cssim + self.l1_weight * l1_loss
 
 
-def psnr(img_comp, img_orig, data_range):
+def psnr(img_comp, img_orig, data_range=None):
     assert img_comp.size() == img_orig.size()
 
-    # true_range = img_orig.max() - img_orig.min()
-    #
-    # if data_range is None:
-    #     data_range = true_range
-    #
-    # if true_range > data_range:
-    #     raise ValueError('True data range is greater than given value range.')
+    true_range = img_orig.max() - img_orig.min()
+
+    if data_range is None:
+        data_range = true_range
+
+    if true_range > data_range:
+        raise UserWarning('True data range is greater than given value range.')
 
     err = F.mse_loss(img_comp, img_orig, reduction='mean')
 
