@@ -11,7 +11,7 @@ from data.complex_inputs import PreProcessComplex
 from data.complex_outputs import PostProcessComplex
 
 from train.new_model_trainers.img_only import ModelTrainerIMG
-from models.complex.complex_edsr import ComplexEDSR
+from models.complex.complex_edsr_unet import ComplexEDSRUNet
 from metrics.new_1d_ssim import SSIMLoss, LogSSIMLoss
 
 
@@ -68,10 +68,15 @@ def train_complex_model(args):
         train_mask_func = UniformMaskFunc(args.center_fractions_train, args.accelerations_train)
         val_mask_func = UniformMaskFunc(args.center_fractions_val, args.accelerations_val)
 
-    input_train_transform = PreProcessComplex(train_mask_func, args.challenge, device, augment_data=args.augment_data,
-                                              use_seed=False, crop_center=args.crop_center, crop_ud=args.crop_ud)
-    input_val_transform = PreProcessComplex(val_mask_func, args.challenge, device, augment_data=False,
-                                            use_seed=True, crop_center=args.crop_center, crop_ud=args.crop_ud)
+    divisor = 2 ** args.num_pool_layers
+
+    input_train_transform = PreProcessComplex(
+        train_mask_func, args.challenge, device, augment_data=args.augment_data,
+        use_seed=False, crop_center=args.crop_center, crop_ud=args.crop_ud, divisor=divisor)
+
+    input_val_transform = PreProcessComplex(
+        val_mask_func, args.challenge, device, augment_data=False,
+        use_seed=True, crop_center=args.crop_center, crop_ud=args.crop_ud, divisor=divisor)
 
     output_train_transform = PostProcessComplex(challenge=args.challenge)
     output_val_transform = PostProcessComplex(challenge=args.challenge)
@@ -81,14 +86,18 @@ def train_complex_model(args):
 
     losses = dict(
         # img_loss=SSIMLoss(filter_size=7).to(device=device)
-        # img_loss=LogSSIMLoss(filter_size=5).to(device=device),
-        img_loss=nn.L1Loss()
+        img_loss=LogSSIMLoss(filter_size=5).to(device=device),
+        # img_loss=nn.L1Loss()
     )
 
     data_chans = 1 if args.challenge == 'singlecoil' else 15  # Multicoil has 15 coils with 2 for real/imag
 
-    model = ComplexEDSR(in_chans=data_chans, out_chans=data_chans, chans=args.chans, num_blocks=args.num_blocks,
-                        negative_slope=args.negative_slope, res_scale=args.res_scale).to(device)
+    # model = ComplexEDSR(in_chans=data_chans, out_chans=data_chans, chans=args.chans, num_blocks=args.num_blocks,
+    #                     negative_slope=args.negative_slope, res_scale=args.res_scale).to(device)
+
+    model = ComplexEDSRUNet(in_chans=data_chans, out_chans=data_chans, chans=args.chans,
+                            num_pool_layers=args.num_pool_layers, num_depth_blocks=args.num_depth_blocks,
+                            negative_slope=args.negative_slope, res_scale=args.res_scale).to(device)
 
     optimizer = optim.Adam(model.parameters(), lr=args.init_lr)
     scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.lr_red_epochs, gamma=args.lr_red_rate)
@@ -118,8 +127,8 @@ if __name__ == '__main__':
         smoothing_factor=8,
 
         # Variables that occasionally change.
-        center_fractions_train=[0.08],
-        accelerations_train=[4],
+        center_fractions_train=[0.08, 0.04],
+        accelerations_train=[4, 8],
         center_fractions_val=[0.08, 0.04],
         accelerations_val=[4, 8],
         random_sampling=True,
@@ -132,9 +141,9 @@ if __name__ == '__main__':
         # Model specific parameters.
         train_method='COMPLEX',
         num_blocks=32,
-        # num_pool_layers=4,
-        # num_depth_blocks=2,
-        res_scale=1,
+        num_pool_layers=3,
+        num_depth_blocks=32,
+        res_scale=0.1,
         negative_slope=0.1,
         chans=32,  # This is half the true number of channels since real and imaginary parts are separate.
 
@@ -144,19 +153,20 @@ if __name__ == '__main__':
 
         # Learning rate scheduling.
         lr_red_epochs=[25, 35],
-        lr_red_rate=0.2,
+        lr_red_rate=0.25,
 
         # Variables that change frequently.
         use_slice_metrics=True,
         num_epochs=40,
 
-        gpu=1,  # Set to None for CPU mode.
-        num_workers=1,
-        init_lr=1E-4,
+        gpu=0,  # Set to None for CPU mode.
+        num_workers=3,
+        init_lr=2E-4,  # Experimenting with higher learning rate.
         max_to_keep=1,
-        # prev_model_ckpt='',
+        prev_model_ckpt=
+        '/home/veritas/PycharmProjects/fastMRI-kspace/checkpoints/COMPLEX/Trial 03  2019-08-22 22-46-16/ckpt_005.tar',
 
-        sample_rate_train=0.2,
+        sample_rate_train=1,
         start_slice_train=0,
         sample_rate_val=1,
         start_slice_val=0,

@@ -160,7 +160,6 @@ class MultiAccelerationModelEvaluator:
         self._save_reconstructions(reconstructions)
 
 
-
 def main(args):
     from models.edsr_unet import UNet  # Moving import line here to reduce confusion.
     from data.input_transforms import PreProcessIMG, Prefetch2Device
@@ -176,31 +175,24 @@ def main(args):
 
     print(f'Device {device} has been selected.')
 
-    # model = UNet(
-    #     in_chans=15, out_chans=15, chans=args.chans, num_pool_layers=args.num_pool_layers, num_groups=args.num_groups,
-    #     negative_slope=args.negative_slope, use_residual=args.use_residual, interp_mode=args.interp_mode,
-    #     use_ca=args.use_ca, reduction=args.reduction, use_gap=args.use_gap, use_gmp=args.use_gmp).to(device)
-
     data_chans = 1 if args.challenge == 'singlecoil' else 15
     model = UNet(in_chans=data_chans, out_chans=data_chans, chans=args.chans, num_pool_layers=args.num_pool_layers,
                  num_depth_blocks=args.num_depth_blocks, res_scale=args.res_scale, use_residual=args.use_residual,
                  use_ca=args.use_ca, reduction=args.reduction, use_gap=args.use_gap, use_gmp=args.use_gmp).to(device)
 
-    dataset = CustomSliceData(root=args.data_root, transform=Prefetch2Device(device), challenge=args.challenge,
-                              sample_rate=1, start_slice=0, use_gt=False)
+    dataset = CustomSliceData(root=args.data_root, transform=Prefetch2Device(device),
+                              challenge=args.challenge, sample_rate=1, start_slice=0, use_gt=False)
 
-    data_loader = DataLoader(dataset, batch_size=1, shuffle=False, num_workers=args.num_workers,
-                             collate_fn=temp_collate_fn, pin_memory=False)
+    data_loader = DataLoader(dataset, batch_size=1, shuffle=False,
+                             num_workers=args.num_workers, collate_fn=temp_collate_fn, pin_memory=False)
 
     mask_func = RandomMaskFunc(args.center_fractions, args.accelerations)
     divisor = 2 ** args.num_pool_layers  # For UNet size fitting.
 
     # This is for the validation set, not the test set. The test set requires a different pre-processing function.
     if Path(args.data_root).name.endswith('val'):
-        pre_processing = PreProcessValIMG(mask_func=mask_func, challenge=args.challenge, device=device,
-                                          crop_center=False, divisor=divisor)
-        # pre_processing = PreProcessIMG(mask_func=mask_func, challenge=args.challenge, device=device,
-        #                                augment_data=False, use_seed=True, crop_center=True)
+        pre_processing = PreProcessIMG(mask_func=mask_func, challenge=args.challenge, device=device,
+                                       augment_data=False, use_seed=True, crop_center=True)
     elif Path(args.data_root).name.endswith('test_v2'):
         pre_processing = PreProcessTestIMG(challenge=args.challenge, device=device, crop_center=True)
     else:
@@ -208,8 +200,15 @@ def main(args):
 
     post_processing = PostProcessTestIMG(challenge=args.challenge)
 
-    evaluator = ModelEvaluator(model, args.checkpoint_path, args.challenge, data_loader,
-                               pre_processing, post_processing, args.data_root, args.out_dir, device)
+    # Single acceleration, single model version.
+    # evaluator = ModelEvaluator(model, args.checkpoint_path, args.challenge, data_loader,
+    #                            pre_processing, post_processing, args.data_root, args.out_dir, device)
+
+    evaluator = MultiAccelerationModelEvaluator(
+        model=model, checkpoint_path_4=args.checkpoint_path_4, checkpoint_path_8=args.checkpoint_path_8,
+        challenge=args.challenge, data_loader=data_loader, pre_processing=pre_processing,
+        post_processing=post_processing, data_root=args.data_root, out_dir=args.out_dir, device=device
+    )
 
     evaluator.create_and_save_reconstructions()
 
@@ -230,26 +229,22 @@ if __name__ == '__main__':
 
         # Model specific parameters.
         chans=64,
-        num_pool_layers=4,
-        # num_groups=16,
-        # negative_slope=0.1,
-
-        num_depth_blocks=4,
+        num_pool_layers=3,
+        num_depth_blocks=32,
         res_scale=0.1,
-
         use_residual=True,
-        # interp_mode='nearest',
-        use_ca=False,
+        use_ca=True,
         reduction=16,
-        use_gap=False,
+        use_gap=True,
         use_gmp=False,
 
         # Parameters for reconstruction.
-        data_root='/media/veritas/D/FastMRI/multicoil_test_v2',
-        checkpoint_path='/home/veritas/PycharmProjects/fastMRI-kspace/checkpoints/I2I/'
-                        'Trial 26  2019-08-16 18-14-01/ckpt_039.tar',
+        data_root='/media/veritas/D/FastMRI/multicoil_val',
+        # checkpoint_path='',
+        checkpoint_path_4='',
+        checkpoint_path_8='',
 
-        out_dir='./i2i_26_test'  # Change this every time! Attempted overrides will throw errors by design.
+        out_dir='./temp'  # Change this every time! Attempted overrides will throw errors by design.
     )
 
     parser = create_arg_parser(**defaults).parse_args()
