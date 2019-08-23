@@ -1,4 +1,3 @@
-import torch
 from torch import nn, Tensor
 
 from data.data_transforms import complex_abs, fft2, center_crop, root_sum_of_squares
@@ -39,4 +38,3 @@ class PostProcessComplex(nn.Module):
             recons['rss_recons'] = rss_recon
 
         return recons  # recons are not rescaled except rss_recons.
-
