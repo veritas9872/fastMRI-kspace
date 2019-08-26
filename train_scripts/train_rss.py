@@ -122,6 +122,11 @@ if __name__ == '__main__':
         # Variables that occasionally change.
         center_fractions_train=[0.08, 0.04],
         accelerations_train=[4, 8],
+        # When using single acceleration for train and two accelerations for validation,
+        # please remember that the validation loss is calculated for both accelerations,
+        # including the one that the model was not trained for.
+        # This may result in the checkpoint not being saved,
+        # even though performance on one acceleration improves significantly.
         center_fractions_val=[0.08, 0.04],
         accelerations_val=[4, 8],
 
@@ -138,7 +143,6 @@ if __name__ == '__main__':
         # l1_ratio=0.5,
         num_depth_blocks=32,
         res_scale=0.1,
-        drop_rate=0.,  # Dropout rate for spatial dropout.
         augment_data=True,
         crop_center=True,
 
