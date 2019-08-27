@@ -46,7 +46,7 @@ class ModelEvaluator:
             kspace_target, target, attrs, file_name, slice_num = data
             inputs, targets, extra_params = self.pre_processing(kspace_target, target, attrs, file_name, slice_num)
             outputs = self.model(inputs)  # Use inputs.to(device) if necessary for different transforms.
-            recons = self.post_processing(outputs, extra_params)
+            recons = self.post_processing(outputs, targets, extra_params)
             assert recons.dim() == 2, 'Unexpected dimensions. Batch size is expected to be 1.'
 
             recons = recons.cpu().numpy()
@@ -163,8 +163,9 @@ class MultiAccelerationModelEvaluator:
 def main(args):
     from models.edsr_unet import UNet  # Moving import line here to reduce confusion.
     from data.input_transforms import PreProcessIMG, Prefetch2Device
-    from eval.input_test_transform import PreProcessTestIMG, PreProcessValIMG
-    from eval.output_test_transforms import PostProcessTestIMG
+    from data.rss_inputs import PreProcessRSS
+    from eval.input_test_transform import PreProcessTestIMG, PreProcessValIMG, PreProcessTestRSS
+    from eval.output_test_transforms import PostProcessTestIMG, PostProcessTestRSS
     from train.subsample import RandomMaskFunc
 
     # Selecting device
@@ -175,8 +176,8 @@ def main(args):
 
     print(f'Device {device} has been selected.')
 
-    data_chans = 1 if args.challenge == 'singlecoil' else 15
-    model = UNet(in_chans=data_chans, out_chans=data_chans, chans=args.chans, num_pool_layers=args.num_pool_layers,
+    # data_chans = 1 if args.challenge == 'singlecoil' else 15
+    model = UNet(in_chans=15, out_chans=1, chans=args.chans, num_pool_layers=args.num_pool_layers,
                  num_depth_blocks=args.num_depth_blocks, res_scale=args.res_scale, use_residual=args.use_residual,
                  use_ca=args.use_ca, reduction=args.reduction, use_gap=args.use_gap, use_gmp=args.use_gmp).to(device)
 
@@ -187,28 +188,32 @@ def main(args):
                              num_workers=args.num_workers, collate_fn=temp_collate_fn, pin_memory=False)
 
     mask_func = RandomMaskFunc(args.center_fractions, args.accelerations)
-    divisor = 2 ** args.num_pool_layers  # For UNet size fitting.
+    # divisor = 2 ** args.num_pool_layers  # For UNet size fitting.
 
     # This is for the validation set, not the test set. The test set requires a different pre-processing function.
     if Path(args.data_root).name.endswith('val'):
-        pre_processing = PreProcessIMG(mask_func=mask_func, challenge=args.challenge, device=device,
-                                       augment_data=False, use_seed=True, crop_center=True)
+        # pre_processing = PreProcessIMG(mask_func=mask_func, challenge=args.challenge, device=device,
+        #                                augment_data=False, use_seed=True, crop_center=True)
+        pre_processing = PreProcessRSS(mask_func=mask_func, challenge=args.challenge, device=device,
+                                       augment_data=False, use_seed=True)
     elif Path(args.data_root).name.endswith('test_v2'):
-        pre_processing = PreProcessTestIMG(challenge=args.challenge, device=device, crop_center=True)
+        pre_processing = PreProcessTestRSS(challenge=args.challenge, device=device)
+        # pre_processing = PreProcessTestIMG(challenge=args.challenge, device=device, crop_center=True)
     else:
         raise NotImplementedError('Invalid data root. If using the original test set, please change to test_v2.')
 
-    post_processing = PostProcessTestIMG(challenge=args.challenge)
+    # post_processing = PostProcessTestIMG(challenge=args.challenge)
+    post_processing = PostProcessTestRSS(challenge=args.challenge, residual_rss=args.residual_rss)
 
     # Single acceleration, single model version.
-    # evaluator = ModelEvaluator(model, args.checkpoint_path, args.challenge, data_loader,
-    #                            pre_processing, post_processing, args.data_root, args.out_dir, device)
+    evaluator = ModelEvaluator(model, args.checkpoint_path, args.challenge, data_loader,
+                               pre_processing, post_processing, args.data_root, args.out_dir, device)
 
-    evaluator = MultiAccelerationModelEvaluator(
-        model=model, checkpoint_path_4=args.checkpoint_path_4, checkpoint_path_8=args.checkpoint_path_8,
-        challenge=args.challenge, data_loader=data_loader, pre_processing=pre_processing,
-        post_processing=post_processing, data_root=args.data_root, out_dir=args.out_dir, device=device
-    )
+    # evaluator = MultiAccelerationModelEvaluator(
+    #     model=model, checkpoint_path_4=args.checkpoint_path_4, checkpoint_path_8=args.checkpoint_path_8,
+    #     challenge=args.challenge, data_loader=data_loader, pre_processing=pre_processing,
+    #     post_processing=post_processing, data_root=args.data_root, out_dir=args.out_dir, device=device
+    # )
 
     evaluator.create_and_save_reconstructions()
 
@@ -219,7 +224,7 @@ if __name__ == '__main__':
         multiprocessing.set_start_method(method='spawn')
 
     defaults = dict(
-        gpu=1,  # Set to None for CPU mode.
+        gpu=0,  # Set to None for CPU mode.
         challenge='multicoil',
         num_workers=4,
 
@@ -232,19 +237,21 @@ if __name__ == '__main__':
         num_pool_layers=3,
         num_depth_blocks=32,
         res_scale=0.1,
-        use_residual=True,
+        use_residual=False,
+        residual_rss=True,
         use_ca=True,
         reduction=16,
         use_gap=True,
         use_gmp=False,
 
         # Parameters for reconstruction.
-        data_root='/media/veritas/D/FastMRI/multicoil_val',
-        # checkpoint_path='',
-        checkpoint_path_4='',
-        checkpoint_path_8='',
+        data_root='/media/veritas/D/FastMRI/multicoil_test_v2',
+        checkpoint_path=
+        '/home/veritas/PycharmProjects/fastMRI-kspace/checkpoints/I2R/Trial 01  2019-08-23 17-46-32/ckpt_047.tar',
+        # checkpoint_path_4='',
+        # checkpoint_path_8='',
 
-        out_dir='./temp'  # Change this every time! Attempted overrides will throw errors by design.
+        out_dir='./i2r_1_47_test'  # Change this every time! Attempted overrides will throw errors by design.
     )
 
     parser = create_arg_parser(**defaults).parse_args()

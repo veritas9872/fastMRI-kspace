@@ -1,7 +1,6 @@
 import torch
 from torch import nn, Tensor
-
-from data.data_transforms import center_crop, root_sum_of_squares
+import torch.nn.functional as F
 
 
 class PostProcessRSS(nn.Module):
@@ -25,6 +24,9 @@ class PostProcessRSS(nn.Module):
 
         if self.residual_rss:  # Residual RSS image is added.
             rss_recon = (rss_recon + targets['rss_inputs'])
+
+        # Removing impossible negative values.
+        rss_recon = F.relu(rss_recon)
 
         # Rescaling to original scale. Problematic if scale sensitive losses such as L1 or MSE are used.
         rss_recon = rss_recon * extra_params['img_scales']

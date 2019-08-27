@@ -56,6 +56,7 @@ def test_ssim_scale_invariance(scale):
     'scale', [2, 4, 7]
 )
 def test_ms_ssim_scale_invariance(scale):
+    torch.manual_seed(123)  # Added seed because of variability in results.
     inputs = torch.rand(3, 3, 256, 256)
     target = torch.rand(3, 3, 256, 256)
     loss1 = MSSSIM(reduction='none', max_val=1.)(inputs, target)

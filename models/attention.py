@@ -1,5 +1,5 @@
 import torch
-from torch import nn
+from torch import nn, Tensor
 
 
 # class GlobalMaxPooling2D(nn.Module):  # This tried to find why GMP was so much slower than GAP.
@@ -45,22 +45,22 @@ class ChannelAttention(nn.Module):
 
         self.sigmoid = nn.Sigmoid()
 
-    def forward(self, tensor):
+    def forward(self, tensor: Tensor):
         if not (self.use_gap or self.use_gmp):
             return tensor
 
         batch, chans, _, _ = tensor.shape
         if self.use_gap and self.use_gmp:
-            gap = self.gap(tensor).view(batch, chans)
-            gmp = self.gmp(tensor).view(batch, chans)
+            gap = self.gap(tensor.detach()).view(batch, chans)
+            gmp = self.gmp(tensor.detach()).view(batch, chans)
             features = self.layer(gap) + self.layer(gmp)
 
         elif self.use_gap:
-            gap = self.gap(tensor).view(batch, chans)
+            gap = self.gap(tensor.detach()).view(batch, chans)
             features = self.layer(gap)
 
         elif self.use_gmp:
-            gmp = self.gmp(tensor).view(batch, chans)
+            gmp = self.gmp(tensor.detach()).view(batch, chans)
             features = self.layer(gmp)
 
         else:
@@ -104,8 +104,8 @@ class SpatialAttention(nn.Module):
         self.use_cmp = use_cmp
 
         padding = dilation * (kernel_size - 1) // 2
-        self.conv = \
-            nn.Conv2d(in_channels=2, out_channels=1, kernel_size=kernel_size, padding=padding, dilation=dilation)
+        self.conv = nn.Conv2d(in_channels=2, out_channels=1, kernel_size=kernel_size,
+                              padding=padding, dilation=dilation)
 
         self.sigmoid = nn.Sigmoid()
 
