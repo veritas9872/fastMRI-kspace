@@ -6,11 +6,11 @@ from models.attention import ChannelAttention, SpatialAttention
 
 
 class BasicConvBlock(nn.Module):
-    def __init__(self, in_chans, out_chans, negative_slope=0.01, stride=1):
+    def __init__(self, in_chans, out_chans, stride=1):
         super().__init__()
         self.layers = nn.Sequential(
             nn.Conv2d(in_chans, out_chans, kernel_size=3, stride=stride, padding=1),
-            nn.LeakyReLU(negative_slope=negative_slope),
+            nn.ReLU(),
         )
 
     def forward(self, tensor):
@@ -18,14 +18,14 @@ class BasicConvBlock(nn.Module):
 
 
 class ResBlock(nn.Module):
-    def __init__(self, num_chans, kernel_size=3, res_scale=1., negative_slope=0.01,
+    def __init__(self, num_chans, kernel_size=3, res_scale=1.,
                  use_ca=True, reduction=16, use_gap=True, use_gmp=True,
                  use_sa=True, sa_kernel_size=7, sa_dilation=1, use_cap=True, use_cmp=True):
         super().__init__()
         assert kernel_size % 2, 'Kernel size is expected to be an odd number.'
         self.layer = nn.Sequential(
             nn.Conv2d(in_channels=num_chans, out_channels=num_chans, kernel_size=kernel_size, padding=kernel_size // 2),
-            nn.LeakyReLU(negative_slope=negative_slope),
+            nn.ReLU(),
             nn.Conv2d(in_channels=num_chans, out_channels=num_chans, kernel_size=kernel_size, padding=kernel_size // 2),
         )
         self.ca = ChannelAttention(num_chans=num_chans, reduction=reduction, use_gap=use_gap, use_gmp=use_gmp)
@@ -44,11 +44,11 @@ class ResBlock(nn.Module):
 
 
 class ResizeConv(nn.Module):
-    def __init__(self, in_chans, out_chans, negative_slope=0.01, scale_factor=2):
+    def __init__(self, in_chans, out_chans, scale_factor=2):
         super().__init__()
         self.layers = nn.Sequential(
             nn.Conv2d(in_channels=in_chans, out_channels=out_chans, kernel_size=3, padding=1),
-            nn.LeakyReLU(negative_slope=negative_slope)
+            nn.ReLU()
         )
         self.scale_factor = scale_factor
 
@@ -59,8 +59,7 @@ class ResizeConv(nn.Module):
 
 class UNet(nn.Module):
     def __init__(self, in_chans, out_chans, chans, num_pool_layers, num_depth_blocks,
-                 res_scale=0.1, use_residual=True, negative_slope=0.01,
-                 use_ca=True, reduction=16, use_gap=True, use_gmp=True,
+                 res_scale=0.1, use_residual=True, use_ca=True, reduction=16, use_gap=True, use_gmp=True,
                  use_sa=True, sa_kernel_size=7, sa_dilation=1, use_cap=True, use_cmp=True):
 
         super().__init__()
@@ -74,21 +73,21 @@ class UNet(nn.Module):
                       sa_kernel_size=sa_kernel_size, sa_dilation=sa_dilation, use_cap=use_cap, use_cmp=use_cmp)
 
         # First block should have no reduction in feature map size.
-        conv = BasicConvBlock(in_chans=in_chans, out_chans=chans, stride=1, negative_slope=negative_slope)
+        conv = BasicConvBlock(in_chans=in_chans, out_chans=chans, stride=1)
         res = ResBlock(num_chans=chans, kernel_size=3, res_scale=res_scale, **kwargs)
         self.down_reshape_layers = nn.ModuleList([conv])
         self.down_res_blocks = nn.ModuleList([res])
 
         ch = chans
         for _ in range(num_pool_layers - 1):
-            conv = BasicConvBlock(in_chans=ch, out_chans=ch * 2, stride=2, negative_slope=negative_slope)
+            conv = BasicConvBlock(in_chans=ch, out_chans=ch * 2, stride=2)
             res = ResBlock(num_chans=ch * 2, res_scale=res_scale, **kwargs)
             self.down_reshape_layers.append(conv)
             self.down_res_blocks.append(res)
             ch *= 2
 
         # Size reduction happens at the beginning of a block, hence the need for stride here.
-        self.mid_conv = BasicConvBlock(in_chans=ch, out_chans=ch, stride=2, negative_slope=negative_slope)
+        self.mid_conv = BasicConvBlock(in_chans=ch, out_chans=ch, stride=2)
         self.mid_res_blocks = nn.ModuleList()
         for _ in range(num_depth_blocks):
             self.mid_res_blocks.append(ResBlock(num_chans=ch, res_scale=res_scale, **kwargs))
@@ -98,7 +97,7 @@ class UNet(nn.Module):
         self.up_res_blocks = nn.ModuleList()
         for _ in range(num_pool_layers - 1):
             deconv = ResizeConv(in_chans=ch, out_chans=ch, scale_factor=2)
-            conv = BasicConvBlock(in_chans=ch * 2, out_chans=ch // 2, stride=1, negative_slope=negative_slope)
+            conv = BasicConvBlock(in_chans=ch * 2, out_chans=ch // 2, stride=1)
             res = ResBlock(num_chans=ch // 2, res_scale=res_scale, **kwargs)
             self.upscale_layers.append(deconv)
             self.up_reshape_layers.append(conv)
@@ -106,7 +105,7 @@ class UNet(nn.Module):
             ch //= 2
         else:  # Last block of up-sampling.
             deconv = ResizeConv(in_chans=ch, out_chans=ch,  scale_factor=2)
-            conv = BasicConvBlock(in_chans=ch * 2, out_chans=ch, stride=1, negative_slope=negative_slope)
+            conv = BasicConvBlock(in_chans=ch * 2, out_chans=ch, stride=1)
             res = ResBlock(num_chans=ch, res_scale=res_scale, **kwargs)
             self.upscale_layers.append(deconv)
             self.up_reshape_layers.append(conv)

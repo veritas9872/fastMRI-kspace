@@ -229,8 +229,8 @@ if __name__ == '__main__':
         num_workers=4,
 
         # Parameters for validation set evaluation.
-        center_fractions=[0.08, 0.04],
-        accelerations=[4, 8],
+        center_fractions=[0.08],
+        accelerations=[4],
 
         # Model specific parameters.
         chans=64,
@@ -245,13 +245,15 @@ if __name__ == '__main__':
         use_gmp=False,
 
         # Parameters for reconstruction.
-        data_root='/media/veritas/D/FastMRI/multicoil_test_v2',
+        data_root='/media/veritas/D/FastMRI/multicoil_val',
         checkpoint_path=
         '/home/veritas/PycharmProjects/fastMRI-kspace/checkpoints/I2R/Trial 01  2019-08-23 17-46-32/ckpt_047.tar',
-        # checkpoint_path_4='',
+        # checkpoint_path_4=
+        # '/home/veritas/PycharmProjects/fastMRI-kspace/checkpoints/I2R/Trial 09  2019-08-28 11-34-33/ckpt_001.tar',
         # checkpoint_path_8='',
 
-        out_dir='./i2r_1_47_test'  # Change this every time! Attempted overrides will throw errors by design.
+        # Change this every time! Attempted overrides will throw errors by design.
+        out_dir='./i2r_4_check_old'
     )
 
     parser = create_arg_parser(**defaults).parse_args()

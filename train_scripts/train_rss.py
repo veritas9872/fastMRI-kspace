@@ -14,6 +14,7 @@ from train.new_model_trainers.img_to_rss import ModelTrainerRSS
 from metrics.new_1d_ssim import SSIMLoss, LogSSIMLoss
 from metrics.combination_losses import L1SSIMLoss
 from models.new_edsr_unet import UNet
+# from models.edsr_unet import UNet
 
 
 def train_img_to_rss(args):
@@ -88,15 +89,17 @@ def train_img_to_rss(args):
         # rss_loss=L1SSIMLoss(filter_size=7, l1_ratio=args.l1_ratio).to(device=device)
     )
 
+    # Original EDSR UNet model
     # model = UNet(in_chans=15, out_chans=1, chans=args.chans, num_pool_layers=args.num_pool_layers,
     #              num_depth_blocks=args.num_depth_blocks, res_scale=args.res_scale, use_residual=args.use_residual,
     #              use_ca=args.use_ca, reduction=args.reduction, use_gap=args.use_gap, use_gmp=args.use_gmp).to(device)
 
+    # New EDSR UNet model.
     model = UNet(in_chans=15, out_chans=1, chans=args.chans, num_pool_layers=args.num_pool_layers,
                  num_depth_blocks=args.num_depth_blocks, res_scale=args.res_scale, use_residual=args.use_residual,
-                 negative_slope=args.negative_slope, use_ca=args.use_ca, reduction=args.reduction,
-                 use_gap=args.use_gap, use_gmp=args.use_gmp, use_sa=args.use_sa, sa_kernel_size=args.sa_kernel_size,
-                 sa_dilation=args.sa_dilation, use_cap=args.use_cap, use_cmp=args.use_cmp).to(device)
+                 use_ca=args.use_ca, reduction=args.reduction, use_gap=args.use_gap, use_gmp=args.use_gmp,
+                 use_sa=args.use_sa, sa_kernel_size=args.sa_kernel_size, sa_dilation=args.sa_dilation,
+                 use_cap=args.use_cap, use_cmp=args.use_cmp).to(device)
 
     optimizer = optim.Adam(model.parameters(), lr=args.init_lr)
     scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.lr_red_epochs, gamma=args.lr_red_rate)
@@ -146,13 +149,10 @@ if __name__ == '__main__':
         chans=64,
         use_residual=False,
         residual_rss=True,
-        # l1_ratio=0.5,
         num_depth_blocks=32,
         res_scale=0.1,
         augment_data=True,
         crop_center=True,
-        negative_slope=0,
-
 
         # TensorBoard related parameters.
         max_images=8,  # Maximum number of images to save.
@@ -165,21 +165,21 @@ if __name__ == '__main__':
         use_gmp=False,
 
         # Spatial Attention
-        use_sa=False,
+        use_sa=True,
         sa_kernel_size=7,
         sa_dilation=1,
-        use_cap=False,
-        use_cmp=False,
+        use_cap=True,
+        use_cmp=True,
 
         # Learning rate scheduling.
-        lr_red_epochs=[40, 55],
+        lr_red_epochs=[50, 75],
         lr_red_rate=0.25,
 
         # Variables that change frequently.
         use_slice_metrics=True,
-        num_epochs=60,
+        num_epochs=80,
 
-        gpu=1,  # Set to None for CPU mode.
+        gpu=0,  # Set to None for CPU mode.
         num_workers=3,
         init_lr=1E-4,
         max_to_keep=1,

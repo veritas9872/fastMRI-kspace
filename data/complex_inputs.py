@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 
-from data.data_transforms import apply_info_mask, ifft2, complex_center_crop, fft2, complex_abs
+from data.data_transforms import apply_info_mask, ifft2, complex_center_crop, fft2, complex_abs, root_sum_of_squares
 
 
 class PreProcessComplex:
@@ -51,7 +51,7 @@ class PreProcessComplex:
             else:
                 raise NotImplementedError('Please crop center or up-down.')
 
-            cmg_scale = torch.std(complex_image)
+            cmg_scale = torch.std(complex_image)  # Maybe change this since complex neural networks are being used now.
             complex_image /= cmg_scale
             cmg_target /= cmg_scale
 
@@ -84,14 +84,16 @@ class PreProcessComplex:
 
             # The image target is obtained after flipping the complex image.
             # This removes the need to flip the image target.
-            img_target = complex_abs(cmg_target)
+            # img_target = complex_abs(cmg_target)
             img_inputs = complex_abs(complex_image)
 
             # Use plurals as keys to reduce confusion.
-            targets = {'kspace_targets': kspace_target, 'cmg_targets': cmg_target,
-                       'img_targets': img_target, 'img_inputs': img_inputs}
+            targets = {'kspace_targets': kspace_target}  # , 'cmg_targets': cmg_target,
+            # 'img_targets': img_target, 'img_inputs': img_inputs}
 
             if self.challenge == 'multicoil':
+                input_rss = root_sum_of_squares(img_inputs, dim=1)
+                targets['rss_inputs'] = input_rss.squeeze()
                 targets['rss_targets'] = target
 
             # Converting to N2CHW format for Complex CNN.

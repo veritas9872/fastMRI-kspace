@@ -30,6 +30,7 @@ def gaussian_filter(input: torch.Tensor, kernel: torch.Tensor) -> torch.Tensor:
     """
 
     ch = input.size(1)  # The kernel is expected to have been expanded by the number of channels already.
+    # No padding is used, thus removing the edges from consideration.
     out = F.conv2d(input, kernel, stride=1, padding=0, groups=ch)
     out = F.conv2d(out, kernel.transpose(-2, -1), stride=1, padding=0, groups=ch)
     return out

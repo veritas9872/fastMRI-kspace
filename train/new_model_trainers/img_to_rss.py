@@ -20,6 +20,9 @@ def get_class_name(obj):
 
 
 class ModelTrainerRSS:
+    """
+    Model trainer that has RSS outputs. The inputs maybe complex or magnitude images.
+    """
     def __init__(self, args, model, optimizer, train_loader, val_loader, input_train_transform, input_val_transform,
                  output_train_transform, output_val_transform, losses, scheduler=None):
 

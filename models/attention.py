@@ -28,6 +28,11 @@ class GlobalMaxPooling2d(nn.Module):
 
 
 class ChannelAttention(nn.Module):
+    """
+    Detaching gradients when performing channel attention.
+    I do not think this causes any problems in learning.
+    After all, it is hard to get the global average to learn anything as attention (I think).
+    """
     def __init__(self, num_chans, reduction=16, use_gap=True, use_gmp=True):
         super().__init__()
         self.gap = nn.AdaptiveAvgPool2d(1)  # Global Average Pooling.
@@ -51,16 +56,16 @@ class ChannelAttention(nn.Module):
 
         batch, chans, _, _ = tensor.shape
         if self.use_gap and self.use_gmp:
-            gap = self.gap(tensor.detach()).view(batch, chans)
-            gmp = self.gmp(tensor.detach()).view(batch, chans)
+            gap = self.gap(tensor).view(batch, chans)
+            gmp = self.gmp(tensor).view(batch, chans)
             features = self.layer(gap) + self.layer(gmp)
 
         elif self.use_gap:
-            gap = self.gap(tensor.detach()).view(batch, chans)
+            gap = self.gap(tensor).view(batch, chans)
             features = self.layer(gap)
 
         elif self.use_gmp:
-            gmp = self.gmp(tensor.detach()).view(batch, chans)
+            gmp = self.gmp(tensor).view(batch, chans)
             features = self.layer(gmp)
 
         else:
