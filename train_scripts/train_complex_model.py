@@ -156,11 +156,12 @@ if __name__ == '__main__':
         use_slice_metrics=True,
         num_epochs=40,
 
-        gpu=0,  # Set to None for CPU mode.
+        gpu=1,  # Set to None for CPU mode.
         num_workers=2,
         init_lr=1E-4,  # Experimenting with higher learning rate.
         max_to_keep=1,
-        # prev_model_ckpt='',
+        prev_model_ckpt=
+        '/home/veritas/PycharmProjects/fastMRI-kspace/checkpoints/CC2R/Trial 01  2019-08-27 16-53-55/ckpt_011.tar',
 
         sample_rate_train=1,
         start_slice_train=0,
