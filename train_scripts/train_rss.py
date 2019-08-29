@@ -12,7 +12,7 @@ from data.rss_outputs import PostProcessRSS
 
 from train.new_model_trainers.img_to_rss import ModelTrainerRSS
 from metrics.new_1d_ssim import SSIMLoss, LogSSIMLoss
-from metrics.combination_losses import L1SSIMLoss
+# from metrics.combination_losses import L1SSIMLoss
 from models.new_edsr_unet import UNet
 # from models.edsr_unet import UNet
 
@@ -151,7 +151,7 @@ if __name__ == '__main__':
         residual_rss=True,
         num_depth_blocks=32,
         res_scale=0.1,
-        augment_data=True,
+        augment_data=False,
         crop_center=True,
 
         # TensorBoard related parameters.
@@ -165,11 +165,11 @@ if __name__ == '__main__':
         use_gmp=False,
 
         # Spatial Attention
-        use_sa=True,
+        use_sa=False,
         sa_kernel_size=7,
         sa_dilation=1,
-        use_cap=True,
-        use_cmp=True,
+        use_cap=False,
+        use_cmp=False,
 
         # Learning rate scheduling.
         lr_red_epochs=[50, 75],

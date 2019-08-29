@@ -86,6 +86,7 @@ def train_complex_model(args):
 
     losses = dict(
         rss_loss=LogSSIMLoss(filter_size=7).to(device=device)
+        # rss_loss=SSIMLoss(filter_size=7).to(device=device)
     )
 
     data_chans = 1 if args.challenge == 'singlecoil' else 15  # Multicoil has 15 coils with 2 for real/imag
