@@ -128,6 +128,37 @@ class ModelTrainerRSS:
         self.logger.info(f'Finishing Training Loop. Total elapsed time: '
                          f'{toc_toc // 3600} hr {(toc_toc // 60) % 60} min {toc_toc % 60} sec.')
 
+    def train_model_(self, train_ratio: int):
+        tic_tic = time()
+        self.logger.info('Beginning Asymmetric Training Loop.')
+
+        val_epoch_loss = 2  # Hack...
+
+        for epoch in range(1, self.num_epochs + 1):  # 1 based indexing of epochs.
+            tic = time()  # Training
+            train_epoch_loss, train_epoch_metrics = self._train_epoch(epoch=epoch)
+            toc = int(time() - tic)
+            self._log_epoch_outputs(epoch, train_epoch_loss, train_epoch_metrics, elapsed_secs=toc, training=True)
+
+            if epoch % train_ratio == 0:
+                tic = time()  # Validation
+                val_epoch_loss, val_epoch_metrics = self._val_epoch(epoch=epoch)
+                toc = int(time() - tic)
+                self._log_epoch_outputs(epoch, val_epoch_loss, val_epoch_metrics, elapsed_secs=toc, training=False)
+
+            self.manager.save(metric=val_epoch_loss, verbose=True)
+
+            if self.scheduler is not None:
+                if self.metric_scheduler:  # If the scheduler is a metric based scheduler, include metrics.
+                    self.scheduler.step(metrics=val_epoch_loss)
+                else:
+                    self.scheduler.step()
+
+        self.writer.close()  # Flushes remaining data to TensorBoard.
+        toc_toc = int(time() - tic_tic)
+        self.logger.info(f'Finishing Training Loop. Total elapsed time: '
+                         f'{toc_toc // 3600} hr {(toc_toc // 60) % 60} min {toc_toc % 60} sec.')
+
     def _train_epoch(self, epoch):
         self.model.train()
         torch.autograd.set_grad_enabled(True)

@@ -44,13 +44,14 @@ class ResBlock(nn.Module):
 
 
 class EDSRModel(nn.Module):
-    def __init__(self, in_chans, out_chans, num_res_blocks, chans, res_scale, reduction):
+    def __init__(self, in_chans, out_chans, chans, num_depth_blocks, res_scale, reduction, use_residual=False):
         super().__init__()
-        self.num_res_blocks = num_res_blocks
+        self.num_depth_blocks = num_depth_blocks
+        self.use_residual = use_residual
         self.head = nn.Conv2d(in_channels=in_chans, out_channels=chans, kernel_size=3, padding=1)
 
         body = list()
-        for _ in range(num_res_blocks):
+        for _ in range(num_depth_blocks):
             body.append(ResBlock(num_chans=chans, kernel_size=3, res_scale=res_scale, reduction=reduction))
         self.body = nn.Sequential(*body)
 
@@ -59,4 +60,7 @@ class EDSRModel(nn.Module):
     def forward(self, tensor):
         output = self.head(tensor)
         output = output + self.body(output)  # Residual in the entire body as well.
-        return self.tail(output)
+        output = self.tail(output)
+        if self.use_residual:
+            output = tensor + output
+        return output

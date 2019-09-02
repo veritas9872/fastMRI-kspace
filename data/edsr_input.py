@@ -48,8 +48,8 @@ class PreProcessEDSR:
                 left = torch.randint(low=0, high=self.resolution-self.patch_size, size=(1,)).squeeze()
                 top = torch.randint(low=0, high=self.resolution-self.patch_size, size=(1,)).squeeze()
 
-                input_image = input_image[:, :, top:top+self.patch_size, left:self.patch_size]
-                target = target[top:top+self.patch_size, left:self.patch_size]
+                input_image = input_image[:, :, top:top+self.patch_size, left:left+self.patch_size]
+                target = target[top:top+self.patch_size, left:left+self.patch_size]
 
             extra_params = {'img_scales': img_scale, 'masks': mask}
             extra_params.update(info)

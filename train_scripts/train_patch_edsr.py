@@ -7,14 +7,12 @@ from utils.run_utils import initialize, save_dict_as_json, get_logger, create_ar
 from utils.data_loaders import create_prefetch_data_loaders
 
 from train.subsample import RandomMaskFunc, UniformMaskFunc
-from data.rss_inputs import PreProcessRSS
-from data.rss_outputs import PostProcessRSS
+from data.edsr_input import PreProcessEDSR
+from data.edsr_output  import PostProcessEDSR
 
 from train.new_model_trainers.img_to_rss import ModelTrainerRSS
 from metrics.new_1d_ssim import SSIMLoss, LogSSIMLoss
-# from metrics.combination_losses import L1SSIMLoss
-from models.new_edsr_unet import UNet
-# from models.edsr_unet import UNet
+from models.edsr_model import EDSRModel
 
 
 def train_img_to_rss(args):
@@ -71,45 +69,37 @@ def train_img_to_rss(args):
         train_mask_func = UniformMaskFunc(args.center_fractions_train, args.accelerations_train)
         val_mask_func = UniformMaskFunc(args.center_fractions_val, args.accelerations_val)
 
-    input_train_transform = PreProcessRSS(mask_func=train_mask_func, challenge=args.challenge, device=device,
-                                          augment_data=args.augment_data, use_seed=False)
-    input_val_transform = PreProcessRSS(mask_func=val_mask_func, challenge=args.challenge, device=device,
-                                        augment_data=False, use_seed=True)
+    input_train_transform = PreProcessEDSR(mask_func=train_mask_func, challenge=args.challenge, device=device,
+                                           augment_data=args.augment_data, use_seed=False,
+                                           use_patch=True, patch_size=args.patch_size)
+    input_val_transform = PreProcessEDSR(mask_func=val_mask_func, challenge=args.challenge, device=device,
+                                         augment_data=False, use_seed=True,
+                                         use_patch=False, patch_size=args.patch_size)
 
-    output_train_transform = PostProcessRSS(challenge=args.challenge, residual_rss=args.residual_rss)
-    output_val_transform = PostProcessRSS(challenge=args.challenge, residual_rss=args.residual_rss)
+    output_train_transform = PostProcessEDSR(challenge=args.challenge, residual_rss=args.residual_rss)
+    output_val_transform = PostProcessEDSR(challenge=args.challenge, residual_rss=args.residual_rss)
 
     # DataLoaders
     train_loader, val_loader = create_prefetch_data_loaders(args)
 
     losses = dict(
-        rss_loss=SSIMLoss(filter_size=7).to(device=device)
-        # rss_loss=LogSSIMLoss(filter_size=7).to(device=device)
+        # rss_loss=SSIMLoss(filter_size=7).to(device=device)
+        rss_loss=LogSSIMLoss(filter_size=7).to(device=device)
         # rss_loss=nn.L1Loss()
         # rss_loss=L1SSIMLoss(filter_size=7, l1_ratio=args.l1_ratio).to(device=device)
     )
 
-    # Original EDSR UNet model
-    # model = UNet(in_chans=15, out_chans=1, chans=args.chans, num_pool_layers=args.num_pool_layers,
-    #              num_depth_blocks=args.num_depth_blocks, res_scale=args.res_scale, use_residual=args.use_residual,
-    #              use_ca=args.use_ca, reduction=args.reduction, use_gap=args.use_gap, use_gmp=args.use_gmp).to(device)
-
-    # New EDSR UNet model.
-    model = UNet(in_chans=15, out_chans=1, chans=args.chans, num_pool_layers=args.num_pool_layers,
-                 num_depth_blocks=args.num_depth_blocks, res_scale=args.res_scale, use_residual=args.use_residual,
-                 use_ca=args.use_ca, reduction=args.reduction, use_gap=args.use_gap, use_gmp=args.use_gmp,
-                 use_sa=args.use_sa, sa_kernel_size=args.sa_kernel_size, sa_dilation=args.sa_dilation,
-                 use_cap=args.use_cap, use_cmp=args.use_cmp).to(device)
+    model = EDSRModel(in_chans=15, out_chans=1,  chans=args.chans, num_depth_blocks=args.num_depth_blocks,
+                      res_scale=args.res_scale, reduction=args.reduction, use_residual=False).to(device)
 
     optimizer = optim.Adam(model.parameters(), lr=args.init_lr)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer=optimizer, factor=args.lr_red_rate, patience=10, verbose=True)
-
+    # scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer=optimizer, factor=args.lr_red_rate, verbose=True)
+    scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.lr_red_epochs, gamma=args.lr_red_rate)
     trainer = ModelTrainerRSS(args, model, optimizer, train_loader, val_loader, input_train_transform,
                               input_val_transform, output_train_transform, output_val_transform, losses, scheduler)
 
     try:
-        trainer.train_model()
+        trainer.train_model_(train_ratio=25)  # Hack!!
     except KeyboardInterrupt:
         trainer.writer.close()
         logger.warning('Closing summary writer due to KeyboardInterrupt.')
@@ -126,7 +116,7 @@ if __name__ == '__main__':
         log_root='./logs',
         ckpt_root='./checkpoints',
         batch_size=1,  # This MUST be 1 for now.
-        save_best_only=True,
+        save_best_only=False,
         smoothing_factor=8,
 
         # Variables that occasionally change.
@@ -139,51 +129,36 @@ if __name__ == '__main__':
         # even though performance on one acceleration improves significantly.
         center_fractions_val=[0.08, 0.04],
         accelerations_val=[4, 8],
-
         random_sampling=True,
-        num_pool_layers=3,
         verbose=False,
         use_gt=True,
 
         # Model specific parameters.
-        train_method='I2R',
-        chans=64,
-        use_residual=False,
-        residual_rss=False,
+        train_method='Patch',
+        chans=256,
+        residual_rss=True,
         num_depth_blocks=32,
         res_scale=0.1,
-        augment_data=True,
-        crop_center=True,
+        augment_data=False,
+        patch_size=48,
+        reduction=16,  # SE module reduction rate.
 
         # TensorBoard related parameters.
         max_images=8,  # Maximum number of images to save.
         shrink_scale=1,  # Scale to shrink output image size.
 
-        # Channel Attention.
-        use_ca=True,
-        reduction=16,
-        use_gap=True,
-        use_gmp=False,
-
-        # Spatial Attention
-        use_sa=False,
-        sa_kernel_size=7,
-        sa_dilation=1,
-        use_cap=False,
-        use_cmp=False,
-
         # Learning rate scheduling.
-        # lr_red_epochs=[50, 75],
-        lr_red_rate=0.25,
+        lr_red_epochs=[70, 90],
+        lr_red_rate=0.2,
 
         # Variables that change frequently.
         use_slice_metrics=True,
-        num_epochs=80,
+        num_epochs=100,
 
-        gpu=1,  # Set to None for CPU mode.
+        gpu=0,  # Set to None for CPU mode.
         num_workers=3,
         init_lr=1E-4,
-        max_to_keep=1,
+        max_to_keep=3,
         # prev_model_ckpt='',
 
         sample_rate_train=1,
