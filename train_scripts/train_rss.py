@@ -11,10 +11,8 @@ from data.rss_inputs import PreProcessRSS
 from data.rss_outputs import PostProcessRSS
 
 from train.new_model_trainers.img_to_rss import ModelTrainerRSS
-from metrics.new_1d_ssim import SSIMLoss, LogSSIMLoss
-# from metrics.combination_losses import L1SSIMLoss
-from models.new_edsr_unet import UNet
-# from models.edsr_unet import UNet
+from metrics.new_1d_ssim import SSIMLoss
+from models.newer_edsr_unet import UNet
 
 
 def train_img_to_rss(args):
@@ -72,9 +70,9 @@ def train_img_to_rss(args):
         val_mask_func = UniformMaskFunc(args.center_fractions_val, args.accelerations_val)
 
     input_train_transform = PreProcessRSS(mask_func=train_mask_func, challenge=args.challenge, device=device,
-                                          augment_data=args.augment_data, use_seed=False)
+                                          augment_data=args.augment_data, use_seed=False, fat_info=args.fat_info)
     input_val_transform = PreProcessRSS(mask_func=val_mask_func, challenge=args.challenge, device=device,
-                                        augment_data=False, use_seed=True)
+                                        augment_data=False, use_seed=True, fat_info=args.fat_info)
 
     output_train_transform = PostProcessRSS(challenge=args.challenge, residual_rss=args.residual_rss)
     output_val_transform = PostProcessRSS(challenge=args.challenge, residual_rss=args.residual_rss)
@@ -89,24 +87,17 @@ def train_img_to_rss(args):
         # rss_loss=L1SSIMLoss(filter_size=7, l1_ratio=args.l1_ratio).to(device=device)
     )
 
-    # Original EDSR UNet model
-    # model = UNet(in_chans=15, out_chans=1, chans=args.chans, num_pool_layers=args.num_pool_layers,
-    #              num_depth_blocks=args.num_depth_blocks, res_scale=args.res_scale, use_residual=args.use_residual,
-    #              use_ca=args.use_ca, reduction=args.reduction, use_gap=args.use_gap, use_gmp=args.use_gmp).to(device)
-
-    # New EDSR UNet model.
-    model = UNet(in_chans=15, out_chans=1, chans=args.chans, num_pool_layers=args.num_pool_layers,
+    in_chans = 16 if args.fat_info else 15
+    model = UNet(in_chans=in_chans, out_chans=1, chans=args.chans, num_pool_layers=args.num_pool_layers,
                  num_depth_blocks=args.num_depth_blocks, res_scale=args.res_scale, use_residual=args.use_residual,
-                 use_ca=args.use_ca, reduction=args.reduction, use_gap=args.use_gap, use_gmp=args.use_gmp,
-                 use_sa=args.use_sa, sa_kernel_size=args.sa_kernel_size, sa_dilation=args.sa_dilation,
-                 use_cap=args.use_cap, use_cmp=args.use_cmp).to(device)
+                 reduction=args.reduction, p=args.drop_prob).to(device)
 
     optimizer = optim.Adam(model.parameters(), lr=args.init_lr)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer=optimizer, factor=args.lr_red_rate, patience=10, verbose=True)
+    # scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+    #     optimizer=optimizer, factor=args.lr_red_rate, patience=10, verbose=True)
 
     trainer = ModelTrainerRSS(args, model, optimizer, train_loader, val_loader, input_train_transform,
-                              input_val_transform, output_train_transform, output_val_transform, losses, scheduler)
+                              input_val_transform, output_train_transform, output_val_transform, losses, scheduler=None)
 
     try:
         trainer.train_model()
@@ -126,20 +117,14 @@ if __name__ == '__main__':
         log_root='./logs',
         ckpt_root='./checkpoints',
         batch_size=1,  # This MUST be 1 for now.
-        save_best_only=True,
+        save_best_only=False,
         smoothing_factor=8,
 
         # Variables that occasionally change.
-        center_fractions_train=[0.08, 0.04],
-        accelerations_train=[4, 8],
-        # When using single acceleration for train and two accelerations for validation,
-        # please remember that the validation loss is calculated for both accelerations,
-        # including the one that the model was not trained for.
-        # This may result in the checkpoint not being saved,
-        # even though performance on one acceleration improves significantly.
+        center_fractions_train=[0.08],
+        accelerations_train=[4],
         center_fractions_val=[0.08, 0.04],
         accelerations_val=[4, 8],
-
         random_sampling=True,
         num_pool_layers=3,
         verbose=False,
@@ -147,43 +132,32 @@ if __name__ == '__main__':
 
         # Model specific parameters.
         train_method='I2R',
-        chans=64,
+        chans=128,
         use_residual=False,
         residual_rss=False,
         num_depth_blocks=32,
         res_scale=0.1,
         augment_data=True,
         crop_center=True,
+        reduction=16,
+        fat_info=False,
 
         # TensorBoard related parameters.
         max_images=8,  # Maximum number of images to save.
         shrink_scale=1,  # Scale to shrink output image size.
 
-        # Channel Attention.
-        use_ca=True,
-        reduction=16,
-        use_gap=True,
-        use_gmp=False,
-
-        # Spatial Attention
-        use_sa=False,
-        sa_kernel_size=7,
-        sa_dilation=1,
-        use_cap=False,
-        use_cmp=False,
-
         # Learning rate scheduling.
         # lr_red_epochs=[50, 75],
-        lr_red_rate=0.25,
+        # lr_red_rate=0.2,
 
         # Variables that change frequently.
         use_slice_metrics=True,
-        num_epochs=80,
+        num_epochs=100,
 
         gpu=1,  # Set to None for CPU mode.
         num_workers=3,
         init_lr=1E-4,
-        max_to_keep=1,
+        max_to_keep=10,
         # prev_model_ckpt='',
 
         sample_rate_train=1,

@@ -7,7 +7,7 @@ class PreProcessRSS:
     """
     Rather hack filled implementation of input transform for RSS inputs.
     """
-    def __init__(self, mask_func, challenge, device, augment_data=False, use_seed=True, resolution=320):
+    def __init__(self, mask_func, challenge, device, augment_data=False, use_seed=True, resolution=320, fat_info=False):
         assert callable(mask_func), '`mask_func` must be a callable function.'
         assert challenge == 'multicoil', 'Challenge must be multicoil for this.'
 
@@ -17,6 +17,7 @@ class PreProcessRSS:
         self.augment_data = augment_data
         self.use_seed = use_seed
         self.resolution = resolution  # Only has effect when center_crop is True.
+        self.fat_info = fat_info
 
     def __call__(self, kspace_target, target, attrs, file_name, slice_num):
         assert isinstance(kspace_target, torch.Tensor), 'k-space target was expected to be a Pytorch Tensor.'
@@ -66,5 +67,11 @@ class PreProcessRSS:
             # Use plurals as keys to reduce confusion.
             input_rss = root_sum_of_squares(input_image, dim=1).squeeze()
             targets = {'img_inputs': input_image, 'rss_targets': target, 'rss_inputs': input_rss}
+
+            if self.fat_info:
+                fat_supp = extra_params['acquisition'] == 'CORPDFS_FBK'  # Fat suppressed acquisition.
+                batch, _, height, width = input_image.shape
+                fat_info = torch.ones(size=(batch, 1, height, width), device=self.device) * fat_supp
+                input_image = torch.cat([input_image, fat_info], dim=1)
 
         return input_image, targets, extra_params

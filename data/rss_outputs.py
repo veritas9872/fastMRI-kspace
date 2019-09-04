@@ -23,7 +23,7 @@ class PostProcessRSS(nn.Module):
         assert rss_recon.shape == rss_target.shape
 
         if self.residual_rss:  # Residual RSS image is added.
-            rss_recon = (rss_recon + targets['rss_inputs'])
+            rss_recon = (rss_recon + targets['rss_inputs'])  # rss_inputs is scaled with img_scales.
 
         # Removing impossible negative values.
         rss_recon = F.relu(rss_recon)
