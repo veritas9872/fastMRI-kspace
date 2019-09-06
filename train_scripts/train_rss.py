@@ -13,7 +13,7 @@ from data.rss_outputs import PostProcessRSS
 from train.new_model_trainers.img_to_rss import ModelTrainerRSS
 from metrics.new_1d_ssim import SSIMLoss, LogSSIMLoss
 from metrics.combination_losses import L1SSIMLoss
-from models.edsr_unet import UNet
+from models.new_edsr_unet import UNet
 
 
 def train_img_to_rss(args):
@@ -83,17 +83,25 @@ def train_img_to_rss(args):
 
     losses = dict(
         # rss_loss=SSIMLoss(filter_size=7).to(device=device)
-        rss_loss=LogSSIMLoss(filter_size=7).to(device=device)
+        rss_loss=SSIMLoss(filter_size=7).to(device=device)
         # rss_loss=nn.L1Loss()
         # rss_loss=L1SSIMLoss(filter_size=7, l1_ratio=args.l1_ratio).to(device=device)
     )
 
+    # model = UNet(in_chans=15, out_chans=1, chans=args.chans, num_pool_layers=args.num_pool_layers,
+    #              num_depth_blocks=args.num_depth_blocks, res_scale=args.res_scale, use_residual=args.use_residual,
+    #              use_ca=args.use_ca, reduction=args.reduction, use_gap=args.use_gap, use_gmp=args.use_gmp).to(device)
+
     model = UNet(in_chans=15, out_chans=1, chans=args.chans, num_pool_layers=args.num_pool_layers,
                  num_depth_blocks=args.num_depth_blocks, res_scale=args.res_scale, use_residual=args.use_residual,
-                 use_ca=args.use_ca, reduction=args.reduction, use_gap=args.use_gap, use_gmp=args.use_gmp).to(device)
+                 use_ca=args.use_ca, reduction=args.reduction, use_gap=args.use_gap, use_gmp=args.use_gmp,
+                 use_sa=False, sa_kernel_size=7, sa_dilation=1,
+                 use_cap=False, use_cmp=False).to(device)
 
     optimizer = optim.Adam(model.parameters(), lr=args.init_lr)
-    scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.lr_red_epochs, gamma=args.lr_red_rate)
+    # scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.lr_red_epochs, gamma=args.lr_red_rate)
+
+    scheduler = None
 
     trainer = ModelTrainerRSS(args, model, optimizer, train_loader, val_loader, input_train_transform,
                               input_val_transform, output_train_transform, output_val_transform, losses, scheduler)
@@ -112,11 +120,11 @@ if __name__ == '__main__':
     settings = dict(
         # Variables that almost never change.
         challenge='multicoil',
-        data_root='/media/veritas/D/FastMRI',
+        data_root='/media/user/Data/compFastMRI',
         log_root='./logs',
         ckpt_root='./checkpoints',
         batch_size=1,  # This MUST be 1 for now.
-        save_best_only=True,
+        save_best_only=False,
         smoothing_factor=8,
 
         # Variables that occasionally change.
@@ -139,7 +147,7 @@ if __name__ == '__main__':
         train_method='I2R',
         chans=64,
         use_residual=False,
-        residual_rss=True,
+        residual_rss=False,
         # l1_ratio=0.5,
         num_depth_blocks=32,
         res_scale=0.1,
@@ -147,7 +155,7 @@ if __name__ == '__main__':
         crop_center=True,
 
         # TensorBoard related parameters.
-        max_images=8,  # Maximum number of images to save.
+        max_images=10,  # Maximum number of images to save.
         shrink_scale=1,  # Scale to shrink output image size.
 
         # Channel Attention.
@@ -157,18 +165,18 @@ if __name__ == '__main__':
         use_gmp=False,
 
         # Learning rate scheduling.
-        lr_red_epochs=[40, 55],
-        lr_red_rate=0.25,
+        # lr_red_epochs=[40, 55],
+        # lr_red_rate=0.25,
 
         # Variables that change frequently.
         use_slice_metrics=True,
-        num_epochs=60,
+        num_epochs=100,
 
         gpu=0,  # Set to None for CPU mode.
-        num_workers=3,
+        num_workers=4,
         init_lr=1E-4,
-        max_to_keep=1,
-        # prev_model_ckpt='',
+        max_to_keep=10,
+        prev_model_ckpt='checkpoints/I2R/Trial-01/ckpt_018.tar',
 
         sample_rate_train=1,
         start_slice_train=0,

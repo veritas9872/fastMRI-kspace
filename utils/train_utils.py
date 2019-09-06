@@ -105,9 +105,9 @@ class CheckpointManager:
         return save_path, is_best  # So that one can see whether this one is the best or not.
 
     def load(self, load_dir, load_optimizer=True):
-        save_dict = torch.load(load_dir)
+        save_dict = torch.load(load_dir, map_location='cuda')
 
-        self.model.load_state_dict(save_dict['model_state_dict'])
+        self.model.load_state_dict(save_dict['model_state_dict'], strict=False)
         print(f'Loaded model parameters from {load_dir}')
 
         if load_optimizer:
