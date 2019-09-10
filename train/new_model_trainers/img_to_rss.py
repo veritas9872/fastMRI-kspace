@@ -83,7 +83,6 @@ class ModelTrainerRSS:
 
         self.verbose = args.verbose
         self.num_epochs = args.num_epochs
-        self.smoothing_factor = args.smoothing_factor
         self.use_slice_metrics = args.use_slice_metrics
 
         # This part should get SSIM, not 1 - SSIM.
@@ -277,10 +276,12 @@ class ModelTrainerRSS:
 
             if epoch == 1:  # Maybe add input images too later on.
                 # Not actually the input but the RSS of the input images.
-                input_rss = standardize_image(targets['rss_inputs'])
                 target_rss = standardize_image(targets['rss_targets'])
-                self.writer.add_image(f'{mode} RSS Inputs/{acc}/{step}', input_rss, **kwargs)
                 self.writer.add_image(f'{mode} RSS Targets/{acc}/{step}', target_rss, **kwargs)
+
+                if 'rss_inputs' in targets:
+                    input_rss = standardize_image(targets['rss_inputs'])
+                    self.writer.add_image(f'{mode} RSS Inputs/{acc}/{step}', input_rss, **kwargs)
 
     def _get_slice_metrics(self, recons, targets, extra_params):
         rss_metrics = dict()

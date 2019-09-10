@@ -1,7 +1,8 @@
 import torch
 import torch.nn.functional as F
 
-from data.data_transforms import apply_info_mask, ifft2, complex_center_crop, fft2, complex_abs, root_sum_of_squares
+from data.data_transforms import apply_info_mask, ifft2, complex_center_crop, fft2, \
+    complex_abs, root_sum_of_squares, ifft1, fft1
 
 
 class PreProcessComplex:
@@ -17,7 +18,7 @@ class PreProcessComplex:
         self.augment_data = augment_data
         self.use_seed = use_seed
         self.crop_center = crop_center
-        self.resolution = resolution  # Only has effect when center_crop is True.
+        self.resolution = resolution
         self.crop_ud = crop_ud
         self.divisor = divisor
 
@@ -85,15 +86,15 @@ class PreProcessComplex:
             # The image target is obtained after flipping the complex image.
             # This removes the need to flip the image target.
             # img_target = complex_abs(cmg_target)
-            img_inputs = complex_abs(complex_image)
+            # img_inputs = complex_abs(complex_image)
 
             # Use plurals as keys to reduce confusion.
             targets = {'kspace_targets': kspace_target}  # , 'cmg_targets': cmg_target,
             # 'img_targets': img_target, 'img_inputs': img_inputs}
 
             if self.challenge == 'multicoil':
-                input_rss = root_sum_of_squares(img_inputs, dim=1)
-                targets['rss_inputs'] = input_rss.squeeze()
+                # input_rss = root_sum_of_squares(img_inputs, dim=1)
+                # targets['rss_inputs'] = input_rss.squeeze()
                 targets['rss_targets'] = target
 
             # Converting to N2CHW format for Complex CNN.
@@ -108,3 +109,121 @@ class PreProcessComplex:
             inputs = F.pad(inputs, pad=pad, value=0)
 
         return inputs, targets, extra_params
+
+
+class PreProcessComplexWSK:
+    def __init__(self, mask_func, weight_func, challenge, device, use_seed=True, augment_data=False,
+                 crop_center=False, resolution=320, crop_ud=True, divisor=1):
+
+        assert callable(mask_func), '`mask_func` must be a callable function.'
+        if callable(weight_func):
+            self.use_weight = True
+        elif weight_func is None:
+            self.use_weight = False
+        else:
+            raise NotImplementedError('Something went wrong.')
+
+        if challenge not in ('singlecoil', 'multicoil'):
+            raise ValueError(f'Challenge should either be "singlecoil" or "multicoil"')
+
+        self.mask_func = mask_func
+        self.weight_func = weight_func
+        self.challenge = challenge
+        self.device = device
+        self.use_seed = use_seed
+        self.augment_data = augment_data
+        self.crop_center = crop_center
+        self.resolution = resolution
+        self.crop_ud = crop_ud
+        self.divisor = divisor
+
+    def __call__(self, kspace_target, target, attrs, file_name, slice_num):
+        assert isinstance(kspace_target, torch.Tensor), 'k-space target was expected to be a Pytorch Tensor.'
+        if kspace_target.dim() == 3:  # If the collate function does not expand dimensions for single-coil.
+            kspace_target = kspace_target.expand(1, 1, -1, -1, -1)
+        elif kspace_target.dim() == 4:  # If the collate function does not expand dimensions for multi-coil.
+            kspace_target = kspace_target.expand(1, -1, -1, -1, -1)
+        elif kspace_target.dim() != 5:  # Expanded k-space should have 5 dimensions.
+            raise RuntimeError('k-space target has invalid shape!')
+
+        if kspace_target.size(0) != 1:
+            raise NotImplementedError('Batch size should be 1 for now.')
+
+        with torch.no_grad():
+            seed = None if not self.use_seed else tuple(map(ord, file_name))
+            masked_kspace, mask, info = apply_info_mask(kspace_target, self.mask_func, seed)
+
+            # Complex image made from down-sampled k-space.
+            complex_image = ifft2(masked_kspace)
+            cmg_target = ifft2(kspace_target)
+
+            if self.crop_center:
+                complex_image = complex_center_crop(complex_image, shape=(self.resolution, self.resolution))
+                cmg_target = complex_center_crop(cmg_target, shape=(self.resolution, self.resolution))
+            elif self.crop_ud:  # left-right dimensions are left as-is.
+                complex_image = complex_center_crop(complex_image, shape=(self.resolution, complex_image.size(-2)))
+                cmg_target = complex_center_crop(cmg_target, shape=(self.resolution, cmg_target.size(-2)))
+            else:
+                raise NotImplementedError('Please crop center or up-down.')
+
+            # Data augmentation by flipping images up-down and left-right.
+            if self.augment_data:
+                flip_lr = torch.rand(()) < 0.5
+                flip_ud = torch.rand(()) < 0.5
+
+                if flip_lr and flip_ud:
+                    # Last dim is real/complex dimension for complex image and target.
+                    complex_image = torch.flip(complex_image, dims=(-3, -2))
+                    cmg_target = torch.flip(cmg_target, dims=(-3, -2))
+                    target = torch.flip(target, dims=(-2, -1))  # Has only two dimensions, height and width.
+
+                elif flip_ud:
+                    complex_image = torch.flip(complex_image, dims=(-3,))
+                    cmg_target = torch.flip(cmg_target, dims=(-3,))
+                    target = torch.flip(target, dims=(-2,))
+
+                elif flip_lr:
+                    complex_image = torch.flip(complex_image, dims=(-2,))
+                    cmg_target = torch.flip(cmg_target, dims=(-2,))
+                    target = torch.flip(target, dims=(-1,))
+
+            semi_kspace_input = fft1(complex_image, direction='width')
+            semi_kspace_target = fft1(cmg_target, direction='width')
+
+            if self.use_weight:
+                weighting = self.weight_func(semi_kspace_input)
+                semi_kspace_input *= weighting
+
+            sk_scale = torch.std(semi_kspace_input)  # Maybe not the best idea since we are using complex convolutions.
+            extra_params = {'sk_scales': sk_scale, 'masks': mask}
+            if self.use_weight:
+                extra_params['weightings'] = weighting
+            extra_params.update(info)
+            extra_params.update(attrs)
+
+            # The image target is obtained after flipping the complex image.
+            # This removes the need to flip the image target.
+            semi_kspace_input /= sk_scale
+            semi_kspace_target /= sk_scale
+            # kspace_target /= sk_scale
+            cmg_target /= sk_scale
+            img_target = complex_abs(cmg_target)
+
+            # Use plurals as keys to reduce confusion.
+            targets = {'img_targets': img_target, 'cmg_targets': cmg_target, 'semi_kspace_targets': semi_kspace_target}
+
+            if self.challenge == 'multicoil':
+                targets['rss_targets'] = target
+
+            # Converting to N2CHW format for Complex CNN.
+            semi_kspace_input = semi_kspace_input.permute(dims=(0, 4, 1, 2, 3))
+            margin = semi_kspace_input.size(-1) % self.divisor
+            if margin > 0:
+                pad = [(self.divisor - margin) // 2, (1 + self.divisor - margin) // 2]
+            else:  # This is a fix to prevent padding by half the divisor when margin=0.
+                pad = [0, 0]
+
+            # This pads at the last dimension of a tensor with 0.
+            semi_kspace_input = F.pad(semi_kspace_input, pad=pad, value=0)
+
+        return semi_kspace_input, targets, extra_params

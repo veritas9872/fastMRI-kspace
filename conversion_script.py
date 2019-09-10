@@ -84,12 +84,47 @@ def check_same(old_folder, new_folder):
         print('All is well!')
 
 
+def make_compressed_test_dataset(data_folder, save_dir, **save_params):
+    data_path = Path(data_folder)
+    files = data_path.glob('*.h5')
+
+    save_path = Path(save_dir)
+    save_path.mkdir(exist_ok=True)
+    save_path = save_path / data_path.stem
+    save_path.mkdir()
+
+    for file in sorted(files):
+        print(f'Processing {file}')
+        with h5py.File(file, mode='r') as old_hf:
+            attrs = dict(old_hf.attrs)
+            kspace = np.asarray(old_hf['kspace'])
+            mask = old_hf['mask'][()]
+            attrs.update({'mask': mask})
+
+            # Chunk size should be below 1M for cache utilization. Complex data is 8 bytes.
+            if kspace.ndim == 3:  # Single-coil case
+                chunk = (1, kspace.shape[-2] // 4, kspace.shape[-1])  # dim=-2 is always 640 for fastMRI.
+
+            elif kspace.ndim == 4:  # Multi-coil case
+                chunk = (1, 1, kspace.shape[-2] // 4, kspace.shape[-1])
+            else:
+                raise TypeError('Invalid dimensions of input k-space data')
+
+        check_chunk_size(kspace, chunk, file)
+
+        with h5py.File(save_path / file.name, mode='x', libver='latest') as new_hf:
+            new_hf.attrs.update(attrs)
+            new_hf.create_dataset('kspace', data=kspace, chunks=chunk, **save_params)
+
+
 if __name__ == '__main__':
     # train_dir = '/media/veritas/E/fastMRI/multicoil_train'
     # val_dir = '/media/veritas/E/fastMRI/multicoil_val'
-    test_dir = '/media/veritas/E/fastMRI/singlecoil_test_v2'
+    # test_dir = '/media/veritas/E/fastMRI/singlecoil_test_v2'
+    test_dir = '/media/veritas/E/fastMRI/multicoil_test_v2'
+    challenge_dir = '/media/veritas/E/fastMRI/multicoil_challenge'
 
-    data_root = '/media/veritas/D/FastMRI'  # Compressed Fast MRI Dataset
+    data_root = '/media/veritas/D/FastMRI_'  # Compressed Fast MRI Dataset
     data_path_ = Path(data_root)
 
     # For floating point values, I have found that gzip level 1 and 9 give almost the same compression.
@@ -105,7 +140,8 @@ if __name__ == '__main__':
     # Use compression if storing on hard drive, not SSD.
     # make_compressed_dataset(train_dir, data_root, **kwargs)
     # make_compressed_dataset(val_dir, data_root, **kwargs)
-    make_compressed_dataset(test_dir, data_root, **kwargs)
+    make_compressed_test_dataset(test_dir, data_root, **kwargs)
+    make_compressed_test_dataset(challenge_dir, data_root, **kwargs)
 
     # check_same(train_dir, data_path_ / 'new_singlecoil_train')
     # check_same(val_dir, data_path_ / 'new_singlecoil_val')

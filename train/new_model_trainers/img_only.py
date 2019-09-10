@@ -102,7 +102,7 @@ class ModelTrainerIMG:
         Optimizer: {get_class_name(optimizer)}.
         Input Transforms: {get_class_name(input_val_transform)}.
         Output Transform: {get_class_name(output_val_transform)}.
-        Image Domain Loss: {get_class_name(losses["img_loss"])}.
+        Image Domain Loss: {get_class_name(losses['img_loss'])}.
         Learning-Rate Scheduler: {get_class_name(scheduler)}.
         ''')  # This part has parts different for IMG and CMG losses!!
 
@@ -239,13 +239,16 @@ class ModelTrainerIMG:
             # The delta image is obtained by subtracting at the complex image, not the real valued image.
             delta_image = complex_abs(targets['cmg_targets'] - recons['cmg_recons'])
             delta_img_grid = make_img_grid(delta_image, self.shrink_scale)
-            kspace_recon_grid = make_k_grid(recons['kspace_recons'], self.smoothing_factor, self.shrink_scale)
 
             acc = extra_params['acceleration']
             kwargs = dict(global_step=epoch, dataformats='HW')
-            self.writer.add_image(f'{mode} k-space Recons/{acc}/{step}', kspace_recon_grid, **kwargs)
+
             self.writer.add_image(f'{mode} Image Recons/{acc}/{step}', img_recon_grid, **kwargs)
             self.writer.add_image(f'{mode} Delta Image/{acc}/{step}', delta_img_grid, **kwargs)
+
+            if 'kspace_recons' in recons:
+                kspace_recon_grid = make_k_grid(recons['kspace_recons'], self.smoothing_factor, self.shrink_scale)
+                self.writer.add_image(f'{mode} k-space Recons/{acc}/{step}', kspace_recon_grid, **kwargs)
 
             # Adding RSS images of reconstructions and targets.
             if 'rss_recons' in recons:
@@ -262,14 +265,17 @@ class ModelTrainerIMG:
 
             if epoch == 1:  # Maybe add input images too later on.
                 img_target_grid = make_img_grid(targets['img_targets'], self.shrink_scale)
-                kspace_target_grid = make_k_grid(targets['kspace_targets'], self.smoothing_factor, self.shrink_scale)
-
-                # Not actually the input but what the input looks like as an image.
-                img_grid = make_img_grid(targets['img_inputs'], self.shrink_scale)
-
-                self.writer.add_image(f'{mode} k-space Targets/{acc}/{step}', kspace_target_grid, **kwargs)
                 self.writer.add_image(f'{mode} Image Targets/{acc}/{step}', img_target_grid, **kwargs)
-                self.writer.add_image(f'{mode} Inputs as Images/{acc}/{step}', img_grid, **kwargs)
+
+                if 'kspace_targets' in targets:
+                    kspace_target_grid = \
+                        make_k_grid(targets['kspace_targets'], self.smoothing_factor, self.shrink_scale)
+                    self.writer.add_image(f'{mode} k-space Targets/{acc}/{step}', kspace_target_grid, **kwargs)
+
+                if 'img_inputs' in targets:
+                    # Not actually the input but what the input looks like as an image.
+                    img_grid = make_img_grid(targets['img_inputs'], self.shrink_scale)
+                    self.writer.add_image(f'{mode} Inputs as Images/{acc}/{step}', img_grid, **kwargs)
 
                 if 'rss_targets' in targets:
                     target_rss = standardize_image(targets['rss_targets'])

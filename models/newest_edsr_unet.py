@@ -65,62 +65,36 @@ class ResizeConv(nn.Module):
         return self.layers(output)
 
 
-class ShuffleUp(nn.Module):
-    def __init__(self, in_chans, out_chans, scale_factor=2):
-        super().__init__()
-        self.layer = nn.Sequential(
-            nn.Conv2d(in_channels=in_chans, out_channels=out_chans * scale_factor ** 2, kernel_size=3, padding=1),
-            nn.PixelShuffle(upscale_factor=scale_factor),
-            nn.ReLU()
-        )
-
-    def forward(self, tensor):
-        return self.layer(tensor)
-
-
 class UNet(nn.Module):
     def __init__(self, in_chans, out_chans, chans, num_pool_layers, num_depth_blocks,
-                 res_scale=0.1, use_residual=True, reduction=16, use_shuffle=False):
-
+                 res_scale=1., use_residual=False, reduction=16):
         super().__init__()
-        self.in_chans = in_chans
-        self.out_chans = out_chans
-        self.chans = chans
         self.num_pool_layers = num_pool_layers
         self.num_depth_blocks = num_depth_blocks  # This must be a positive integer.
         self.use_residual = use_residual
-        self.use_shuffle = use_shuffle
 
         # First block should have no reduction in feature map size.
         conv = AdapterConv(in_chans=in_chans, out_chans=chans, stride=1, reduction=reduction)
-        res = ResBlock(num_chans=chans, kernel_size=3, res_scale=res_scale, reduction=reduction)
-        self.down_reshape_layers = nn.ModuleList([conv])
-        self.down_res_blocks = nn.ModuleList([res])
+        self.down_layers = nn.ModuleList([conv])
 
         ch = chans
         for _ in range(num_pool_layers - 1):
             conv = AdapterConv(in_chans=ch, out_chans=ch * 2, stride=2, reduction=reduction)
-            res = ResBlock(num_chans=ch * 2, res_scale=res_scale, reduction=reduction)
-            self.down_reshape_layers.append(conv)
-            self.down_res_blocks.append(res)
+            self.down_layers.append(conv)
             ch *= 2
 
         # Size reduction happens at the beginning of a block, hence the need for stride here.
         self.mid_conv = AdapterConv(in_chans=ch, out_chans=ch, stride=2, reduction=reduction)
         mid_res_blocks = list()
-        for _ in range(num_depth_blocks):
+        for _ in range(num_depth_blocks):  # Dropout present in middle residual layers.
             mid_res_blocks.append(ResBlock(num_chans=ch, res_scale=res_scale, reduction=reduction))
         self.mid_res_blocks = nn.Sequential(*mid_res_blocks)
 
         self.upscale_layers = nn.ModuleList()
         self.up_reshape_layers = nn.ModuleList()
         self.up_res_blocks = nn.ModuleList()
-
         for _ in range(num_pool_layers - 1):
-            if use_shuffle:
-                deconv = ShuffleUp(in_chans=ch, out_chans=ch, scale_factor=2)
-            else:
-                deconv = ResizeConv(in_chans=ch, out_chans=ch, scale_factor=2)
+            deconv = ResizeConv(in_chans=ch, out_chans=ch, scale_factor=2)
             conv = AdapterConv(in_chans=ch * 2, out_chans=ch // 2, stride=1, reduction=reduction)
             res = ResBlock(num_chans=ch // 2, res_scale=res_scale, reduction=reduction)
             self.upscale_layers.append(deconv)
@@ -128,10 +102,7 @@ class UNet(nn.Module):
             self.up_res_blocks.append(res)
             ch //= 2
         else:  # Last block of up-sampling.
-            if use_shuffle:
-                deconv = ShuffleUp(in_chans=ch, out_chans=ch, scale_factor=2)
-            else:
-                deconv = ResizeConv(in_chans=ch, out_chans=ch, scale_factor=2)
+            deconv = ResizeConv(in_chans=ch, out_chans=ch,  scale_factor=2)
             conv = AdapterConv(in_chans=ch * 2, out_chans=ch, stride=1, reduction=reduction)
             res = ResBlock(num_chans=ch, res_scale=res_scale, reduction=reduction)
             self.upscale_layers.append(deconv)
@@ -141,17 +112,16 @@ class UNet(nn.Module):
 
         self.final_layers = nn.Conv2d(in_channels=ch, out_channels=out_chans, kernel_size=1)
 
-        assert len(self.down_reshape_layers) == len(self.down_res_blocks) == len(self.upscale_layers) \
-            == len(self.up_reshape_layers) == len(self.up_res_blocks) == self.num_pool_layers, 'Layer number error!'
+        assert len(self.down_layers) == len(self.upscale_layers) == len(self.up_reshape_layers)\
+            == len(self.up_res_blocks) == self.num_pool_layers, 'Layer number error!'
 
     def forward(self, tensor):
         stack = list()
         output = tensor
 
         # Down-Sampling
-        for idx in range(self.num_pool_layers):
-            output = self.down_reshape_layers[idx](output)
-            output = self.down_res_blocks[idx](output)
+        for layer in self.down_layers:
+            output = layer(output)
             stack.append(output)
 
         # Middle blocks

@@ -47,6 +47,10 @@ class PreProcessRSS:
             extra_params.update(info)
             extra_params.update(attrs)
 
+            if target is 0:
+                target = center_crop(root_sum_of_squares(complex_abs(ifft2(kspace_target)), dim=1),
+                                     shape=(self.resolution, self.resolution)).squeeze()
+
             # Data augmentation by flipping images up-down and left-right.
             if self.augment_data:
                 flip_lr = torch.rand(()) < 0.5
