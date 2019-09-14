@@ -1,5 +1,5 @@
 import torch
-from torch import nn, optim
+from torch import optim
 
 from pathlib import Path
 
@@ -12,9 +12,8 @@ from data.rss_outputs import PostProcessRSS
 
 from train.new_model_trainers.img_to_rss import ModelTrainerRSS
 from metrics.new_1d_ssim import SSIMLoss
-# from models.newer_edsr_unet import UNet
-# from models.barbellnet import BarbellNet
-from models.rcab_unet import UNetRCA
+# from models.dense_unet import UNet
+from models.dense_head_rir_unet import UNet
 
 
 def train_img_to_rss(args):
@@ -82,29 +81,16 @@ def train_img_to_rss(args):
     # DataLoaders
     train_loader, val_loader = create_prefetch_data_loaders(args)
 
-    losses = dict(
-        rss_loss=SSIMLoss(filter_size=7).to(device=device)
-        # rss_loss=LogSSIMLoss(filter_size=7).to(device=device)
-        # rss_loss=nn.L1Loss()
-        # rss_loss=L1SSIMLoss(filter_size=7, l1_ratio=args.l1_ratio).to(device=device)
-    )
+    losses = dict(rss_loss=SSIMLoss(filter_size=7).to(device=device))
 
     in_chans = 16 if args.fat_info else 15
-    # model = UNet(in_chans=in_chans, out_chans=1, chans=args.chans, num_pool_layers=args.num_pool_layers,
-    #              num_depth_blocks=args.num_depth_blocks, res_scale=args.res_scale, use_residual=args.use_residual,
-    #              reduction=args.reduction, p=args.drop_prob).to(device)
-
-    # model = BarbellNet(in_chans=in_chans, out_chans=1, chans=args.chans, num_pool_layers=args.num_pool_layers,
-    #                    num_depth_blocks=args.num_depth_blocks, res_scale=args.res_scale, use_residual=args.use_residual,
-    #                    reduction=args.reduction).to(device)
-
-    model = UNetRCA(in_chans=in_chans, out_chans=1, chans=args.chans, num_pool_layers=args.num_pool_layers,
-                    num_res_groups=args.num_res_groups, num_res_blocks=args.num_res_blocks, res_scale=args.res_scale,
-                    use_residual=args.use_residual, reduction=args.reduction).to(device)
+    model = UNet(in_chans=in_chans, out_chans=1, chans=args.chans, num_pool_layers=args.num_pool_layers,
+                 num_res_groups=args.num_res_groups, num_res_blocks_per_group=args.num_res_blocks_per_group,
+                 growth_rate=args.growth_rate, num_dense_layers=args.num_dense_layers, use_dense_ca=args.use_dense_ca,
+                 num_res_layers=args.num_res_layers, res_scale=args.res_scale, reduction=args.reduction,
+                 thick_base=args.thick_base).to(device)
 
     optimizer = optim.Adam(model.parameters(), lr=args.init_lr)
-    # scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-    #     optimizer=optimizer, factor=args.lr_red_rate, patience=10, verbose=True)
 
     trainer = ModelTrainerRSS(args, model, optimizer, train_loader, val_loader, input_train_transform,
                               input_val_transform, output_train_transform, output_val_transform, losses, scheduler=None)
@@ -128,33 +114,37 @@ if __name__ == '__main__':
         ckpt_root='./checkpoints',
         batch_size=1,  # This MUST be 1 for now.
         save_best_only=False,
-        # smoothing_factor=8,
 
         # Variables that occasionally change.
-        center_fractions_train=[0.08],
-        accelerations_train=[4],
+        center_fractions_train=[0.08, 0.04],
+        accelerations_train=[4, 8],
         center_fractions_val=[0.08, 0.04],
         accelerations_val=[4, 8],
         random_sampling=True,
-        num_pool_layers=2,
         verbose=False,
         use_gt=True,
 
         # Model specific parameters.
         train_method='I2R',
+        num_pool_layers=2,
+        use_dense_ca=False,
         chans=128,
-        use_residual=False,
+        thick_base=False,
+
+        num_res_layers=1,
         residual_rss=False,
         # num_depth_blocks=32,
-
         num_res_groups=4,
-        num_res_blocks=8,
+        num_res_blocks_per_group=8,
 
-        res_scale=0.1,
+        num_dense_layers=8,
+        growth_rate=32,
+
         augment_data=True,
         crop_center=True,
         reduction=16,
         fat_info=False,
+        res_scale=0.1,
 
         # TensorBoard related parameters.
         max_images=8,  # Maximum number of images to save.
@@ -166,12 +156,12 @@ if __name__ == '__main__':
 
         # Variables that change frequently.
         use_slice_metrics=True,
-        num_epochs=10,
+        num_epochs=40,
 
-        gpu=1,  # Set to None for CPU mode.
+        gpu=0,  # Set to None for CPU mode.
         num_workers=3,
         init_lr=1E-4,
-        max_to_keep=10,
+        max_to_keep=100,
         # prev_model_ckpt='',
 
         sample_rate_train=1,
@@ -180,4 +170,5 @@ if __name__ == '__main__':
         start_slice_val=0,
     )
     options = create_arg_parser(**settings).parse_args()
+    torch.backends.cudnn.benchmark = True  # Increases speed for constant sized inputs.
     train_img_to_rss(options)

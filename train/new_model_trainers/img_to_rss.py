@@ -143,6 +143,7 @@ class ModelTrainerRSS:
                 tic = time()  # Validation
                 val_epoch_loss, val_epoch_metrics = self._val_epoch(epoch=epoch)
                 toc = int(time() - tic)
+                # Known bug: targets and other things that need be displayed only once will not be displayed.
                 self._log_epoch_outputs(epoch, val_epoch_loss, val_epoch_metrics, elapsed_secs=toc, training=False)
 
             self.manager.save(metric=val_epoch_loss, verbose=True)

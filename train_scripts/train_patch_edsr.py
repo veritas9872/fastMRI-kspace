@@ -8,10 +8,10 @@ from utils.data_loaders import create_prefetch_data_loaders
 
 from train.subsample import RandomMaskFunc, UniformMaskFunc
 from data.edsr_input import PreProcessEDSR
-from data.edsr_output  import PostProcessEDSR
+from data.edsr_output import PostProcessEDSR
 
 from train.new_model_trainers.img_to_rss import ModelTrainerRSS
-from metrics.new_1d_ssim import SSIMLoss, LogSSIMLoss
+from metrics.new_1d_ssim import SSIMLoss
 from models.edsr_model import EDSRModel
 
 
@@ -83,8 +83,8 @@ def train_img_to_rss(args):
     train_loader, val_loader = create_prefetch_data_loaders(args)
 
     losses = dict(
-        # rss_loss=SSIMLoss(filter_size=7).to(device=device)
-        rss_loss=LogSSIMLoss(filter_size=7).to(device=device)
+        rss_loss=SSIMLoss(filter_size=7).to(device=device)
+        # rss_loss=LogSSIMLoss(filter_size=7).to(device=device)
         # rss_loss=nn.L1Loss()
         # rss_loss=L1SSIMLoss(filter_size=7, l1_ratio=args.l1_ratio).to(device=device)
     )
@@ -94,12 +94,13 @@ def train_img_to_rss(args):
 
     optimizer = optim.Adam(model.parameters(), lr=args.init_lr)
     # scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer=optimizer, factor=args.lr_red_rate, verbose=True)
-    scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.lr_red_epochs, gamma=args.lr_red_rate)
+    # scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.lr_red_epochs, gamma=args.lr_red_rate)
+    scheduler = None
     trainer = ModelTrainerRSS(args, model, optimizer, train_loader, val_loader, input_train_transform,
                               input_val_transform, output_train_transform, output_val_transform, losses, scheduler)
 
     try:
-        trainer.train_model_(train_ratio=25)  # Hack!!
+        trainer.train_model_(train_ratio=10)  # Hack!!
     except KeyboardInterrupt:
         trainer.writer.close()
         logger.warning('Closing summary writer due to KeyboardInterrupt.')
@@ -117,11 +118,11 @@ if __name__ == '__main__':
         ckpt_root='./checkpoints',
         batch_size=1,  # This MUST be 1 for now.
         save_best_only=False,
-        smoothing_factor=8,
+        # smoothing_factor=8,
 
         # Variables that occasionally change.
-        center_fractions_train=[0.08, 0.04],
-        accelerations_train=[4, 8],
+        center_fractions_train=[0.08],
+        accelerations_train=[4],
         # When using single acceleration for train and two accelerations for validation,
         # please remember that the validation loss is calculated for both accelerations,
         # including the one that the model was not trained for.
@@ -135,30 +136,30 @@ if __name__ == '__main__':
 
         # Model specific parameters.
         train_method='Patch',
-        chans=256,
-        residual_rss=True,
-        num_depth_blocks=32,
-        res_scale=0.1,
+        chans=64,
+        residual_rss=False,
+        num_depth_blocks=80,
+        res_scale=1,
         augment_data=False,
-        patch_size=48,
-        reduction=16,  # SE module reduction rate.
+        patch_size=96,
+        reduction=8,  # SE module reduction rate.
 
         # TensorBoard related parameters.
         max_images=8,  # Maximum number of images to save.
         shrink_scale=1,  # Scale to shrink output image size.
 
         # Learning rate scheduling.
-        lr_red_epochs=[70, 90],
-        lr_red_rate=0.2,
+        # lr_red_epochs=[70, 90],
+        # lr_red_rate=0.2,
 
         # Variables that change frequently.
         use_slice_metrics=True,
-        num_epochs=100,
+        num_epochs=10,
 
         gpu=0,  # Set to None for CPU mode.
         num_workers=3,
         init_lr=1E-4,
-        max_to_keep=3,
+        max_to_keep=2,
         # prev_model_ckpt='',
 
         sample_rate_train=1,

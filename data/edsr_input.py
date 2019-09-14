@@ -45,6 +45,7 @@ class PreProcessEDSR:
             # No subtraction by the mean. I do not know if this is a good idea or not.
 
             if self.use_patch:
+                assert self.resolution == 320
                 left = torch.randint(low=0, high=self.resolution-self.patch_size, size=(1,)).squeeze()
                 top = torch.randint(low=0, high=self.resolution-self.patch_size, size=(1,)).squeeze()
 
