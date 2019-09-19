@@ -115,11 +115,11 @@ class MultiAccelerationModelEvaluator:
 
         for data in tqdm(self.data_loader, total=len(self.data_loader.dataset)):
             kspace_target, target, attrs, file_name, slice_num = data
+            inputs, targets, extra_params = self.pre_processing(kspace_target, target, attrs, file_name, slice_num)
 
-            if attrs['acceleration'] != acceleration:
+            if extra_params['acceleration'] != acceleration:
                 continue  # Not very efficient since data is still loaded and sent to GPU device. However, it will do.
 
-            inputs, targets, extra_params = self.pre_processing(kspace_target, target, attrs, file_name, slice_num)
             outputs = self.model(inputs)  # Use inputs.to(device) if necessary for different transforms.
             recons = self.post_processing(outputs, extra_params)
             assert recons.dim() == 2, 'Unexpected dimensions. Batch size is expected to be 1.'

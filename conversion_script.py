@@ -39,18 +39,21 @@ def make_compressed_dataset(data_folder, save_dir, **save_params):
             # Chunk size should be below 1M for cache utilization. Complex data is 8 bytes.
             if kspace.ndim == 3:  # Single-coil case
                 chunk = (1, kspace.shape[-2] // 4, kspace.shape[-1])  # dim=-2 is always 640 for fastMRI.
-                # chunk = (1, 640, kspace.shape[-1])
                 recons_key = 'reconstruction_esc'
 
             elif kspace.ndim == 4:
                 chunk = (1, 1, kspace.shape[-2] // 4, kspace.shape[-1])
-                # chunk = (1, 15, 640, kspace.shape[-1])
                 recons_key = 'reconstruction_rss'
             else:
                 raise TypeError('Invalid dimensions of input k-space data')
 
             test_set = recons_key not in old_hf.keys()
-            labels = np.asarray(old_hf[recons_key]) if not test_set else None
+            if test_set:
+                mask = old_hf['mask'][()]
+                attrs.update({'mask': mask})
+                labels = None
+            else:
+                labels = np.asarray(old_hf[recons_key])
 
         check_chunk_size(kspace, chunk, file)
 
@@ -121,8 +124,8 @@ if __name__ == '__main__':
     # train_dir = '/media/veritas/E/fastMRI/multicoil_train'
     # val_dir = '/media/veritas/E/fastMRI/multicoil_val'
     # test_dir = '/media/veritas/E/fastMRI/singlecoil_test_v2'
-    test_dir = '/media/veritas/E/fastMRI/multicoil_test_v2'
-    challenge_dir = '/media/veritas/E/fastMRI/multicoil_challenge'
+    test_dir = '/media/veritas/E/fastMRI/singlecoil_test_v2'
+    # challenge_dir = '/media/veritas/E/fastMRI/multicoil_challenge'
 
     data_root = '/media/veritas/D/FastMRI_'  # Compressed Fast MRI Dataset
     data_path_ = Path(data_root)
@@ -141,7 +144,7 @@ if __name__ == '__main__':
     # make_compressed_dataset(train_dir, data_root, **kwargs)
     # make_compressed_dataset(val_dir, data_root, **kwargs)
     make_compressed_test_dataset(test_dir, data_root, **kwargs)
-    make_compressed_test_dataset(challenge_dir, data_root, **kwargs)
+    # make_compressed_test_dataset(challenge_dir, data_root, **kwargs)
 
     # check_same(train_dir, data_path_ / 'new_singlecoil_train')
     # check_same(val_dir, data_path_ / 'new_singlecoil_val')
