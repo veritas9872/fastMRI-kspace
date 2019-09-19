@@ -25,7 +25,7 @@ class AdapterConv(nn.Module):
     def __init__(self, in_chans, out_chans, stride=1, reduction=16):
         super().__init__()
         self.layers = nn.Sequential(
-            nn.Conv2d(in_chans, out_chans, kernel_size=3, stride=stride, padding=1),
+            nn.Conv2d(in_chans, out_chans, kernel_size=3, stride=stride, padding=1, bias=True),
             nn.ReLU()
         )
         self.ca = ChannelAttention(num_chans=out_chans, reduction=reduction)

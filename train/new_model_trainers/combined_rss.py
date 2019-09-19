@@ -1,6 +1,6 @@
 import torch
 from torch import nn, optim, multiprocessing
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, ConcatDataset
 from torch.utils.tensorboard.writer import SummaryWriter
 
 from tqdm import tqdm
@@ -17,6 +17,10 @@ from metrics.custom_losses import psnr, nmse
 # Send this somewhere else soon...
 def get_class_name(obj):
     return 'None' if obj is None else str(obj.__class__).split("'")[1]
+
+
+def temp_collate_fn(batch):
+    return batch[0]
 
 
 class ModelTrainerRSS:
@@ -73,6 +77,11 @@ class ModelTrainerRSS:
         self.optimizer = optimizer
         self.train_loader = train_loader
         self.val_loader = val_loader
+
+        concat_dataset = ConcatDataset([train_loader.dataset, val_loader.dataset])
+        self.concat_loader = DataLoader(dataset=concat_dataset, batch_size=args.batch_size, shuffle=True,
+                                        num_workers=args.num_workers, collate_fn=temp_collate_fn, pin_memory=False)
+
         self.input_train_transform = input_train_transform
         self.input_val_transform = input_val_transform
         self.output_train_transform = output_train_transform
@@ -102,7 +111,8 @@ class ModelTrainerRSS:
 
     def train_model(self):
         tic_tic = time()
-        self.logger.info('Beginning Training Loop.')
+        self.logger.info('Beginning Combined Training Loop.')
+
         for epoch in range(1, self.num_epochs + 1):  # 1 based indexing of epochs.
             tic = time()  # Training
             train_epoch_loss, train_epoch_metrics = self._train_epoch(epoch=epoch)
@@ -127,30 +137,28 @@ class ModelTrainerRSS:
         self.logger.info(f'Finishing Training Loop. Total elapsed time: '
                          f'{toc_toc // 3600} hr {(toc_toc // 60) % 60} min {toc_toc % 60} sec.')
 
-    def train_model_(self, train_ratio: int):
+    def train_model_concat(self):
         tic_tic = time()
-        self.logger.info('Beginning Asymmetric Training Loop.')
-
-        val_epoch_loss = 2  # Hack...
-
+        self.logger.info('Beginning Concatenated Training Loop.')
         for epoch in range(1, self.num_epochs + 1):  # 1 based indexing of epochs.
-            tic = time()  # Training
-            train_epoch_loss, train_epoch_metrics = self._train_epoch(epoch=epoch)
+            tic = time()  # Concatenated Training
+            train_epoch_loss, train_epoch_metrics = self._train_concat_epoch(epoch=epoch)
             toc = int(time() - tic)
             self._log_epoch_outputs(epoch, train_epoch_loss, train_epoch_metrics, elapsed_secs=toc, training=True)
 
-            if epoch % train_ratio == 0:
-                tic = time()  # Validation
-                val_epoch_loss, val_epoch_metrics = self._val_epoch(epoch=epoch)
-                toc = int(time() - tic)
-                # Known bug: targets and other things that need be displayed only once will not be displayed.
-                self._log_epoch_outputs(epoch, val_epoch_loss, val_epoch_metrics, elapsed_secs=toc, training=False)
+            # tic = time()  # Validation
+            # val_epoch_loss, val_epoch_metrics = self._val_epoch(epoch=epoch)
+            # toc = int(time() - tic)
+            # self._log_epoch_outputs(epoch, val_epoch_loss, val_epoch_metrics, elapsed_secs=toc, training=False)
 
-            self.manager.save(metric=val_epoch_loss, verbose=True)
+            self.manager.save(metric=train_epoch_loss, verbose=True)
+
+            for idx, group in enumerate(self.optimizer.param_groups, start=1):
+                self.writer.add_scalar(f'learning_rate_{idx}', group['lr'], global_step=epoch)
 
             if self.scheduler is not None:
                 if self.metric_scheduler:  # If the scheduler is a metric based scheduler, include metrics.
-                    self.scheduler.step(metrics=val_epoch_loss)
+                    self.scheduler.step(metrics=train_epoch_loss)
                 else:
                     self.scheduler.step()
 
@@ -158,6 +166,40 @@ class ModelTrainerRSS:
         toc_toc = int(time() - tic_tic)
         self.logger.info(f'Finishing Training Loop. Total elapsed time: '
                          f'{toc_toc // 3600} hr {(toc_toc // 60) % 60} min {toc_toc % 60} sec.')
+
+    def _train_concat_epoch(self, epoch):
+        self.model.train()
+        torch.autograd.set_grad_enabled(True)
+
+        epoch_loss = list()  # Appending values to list due to numerical underflow and NaN values.
+        epoch_metrics = defaultdict(list)
+
+        data_loader = enumerate(self.concat_loader, start=1)  # Only the data-loader is different from _train_epoch.
+        if not self.verbose:  # tqdm has to be on the outermost iterator to function properly.
+            # Known but minor bug: The tqdm total is accurate only when batch size is 1.
+            data_loader = tqdm(data_loader, total=len(self.concat_loader.dataset))
+
+        for step, data in data_loader:
+            # Data pre-processing is expected to have gradient calculations removed inside already.
+            inputs, targets, extra_params = self.input_train_transform(*data)
+
+            # 'recons' is a dictionary containing k-space, complex image, and real image reconstructions.
+            recons, step_loss, step_metrics = self._train_step(inputs, targets, extra_params)
+            epoch_loss.append(step_loss.detach())  # Perhaps not elegant, but underflow makes this necessary.
+
+            # Gradients are not calculated so as to boost speed and remove weird errors.
+            with torch.no_grad():  # Update epoch loss and metrics
+                if self.use_slice_metrics:
+                    slice_metrics = self._get_slice_metrics(recons, targets, extra_params)
+                    step_metrics.update(slice_metrics)
+
+                [epoch_metrics[key].append(value.detach()) for key, value in step_metrics.items()]
+
+                if self.verbose:
+                    self._log_step_outputs(epoch, step, step_loss, step_metrics, training=True)
+
+        # Converted to scalar and dict with scalar values respectively.
+        return self._get_epoch_outputs(epoch, epoch_loss, epoch_metrics, training=True)
 
     def _train_epoch(self, epoch):
         self.model.train()
@@ -241,7 +283,6 @@ class ModelTrainerRSS:
         return recons, step_loss, step_metrics
 
     def _step(self, recons, targets, extra_params):
-        # Add max_val code here!
         step_loss = self.losses['rss_loss'](recons['rss_recons'], targets['rss_targets'])
 
         # If step_loss is a tuple, it is expected to contain all its component losses as a dict in its second element.
@@ -290,8 +331,6 @@ class ModelTrainerRSS:
         rss_recons = recons['rss_recons'].detach()
         rss_targets = targets['rss_targets'].detach()
 
-        max_val = extra_params['max']
-        # Add max_val here for accurate block level SSIM metrics!!
         rss_ssim = self.ssim(rss_recons, rss_targets)
         rss_psnr = psnr(rss_recons, rss_targets)
         rss_nmse = nmse(rss_recons, rss_targets)
@@ -301,7 +340,7 @@ class ModelTrainerRSS:
         rss_metrics['rss/nmse'] = rss_nmse
 
         # Additional metrics for separating between acceleration factors.
-        acc = extra_params['acceleration']
+        acc = extra_params["acceleration"]
         rss_metrics[f'rss_acc_{acc}/ssim'] = rss_ssim
         rss_metrics[f'rss_acc_{acc}/psnr'] = rss_psnr
         rss_metrics[f'rss_acc_{acc}/nmse'] = rss_nmse

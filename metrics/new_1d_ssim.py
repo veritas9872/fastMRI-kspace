@@ -242,7 +242,7 @@ class MSSSIM(nn.Module):
 
 class SSIMLoss(nn.Module):
     def __init__(self, filter_size=11, sigma=1.5, max_val=None, reduction='mean'):
-        r""" class for ssim
+        """ class for ssim
         Args:
             filter_size: (int, optional): the size of gauss kernel
             sigma: (float, optional): sigma of normal distribution
@@ -255,7 +255,9 @@ class SSIMLoss(nn.Module):
         self.max_val = max_val
         self.reduction = reduction
 
-    def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    def forward(self, input: torch.Tensor, target: torch.Tensor, max_val=None) -> torch.Tensor:
+        if max_val is not None:
+            self.max_val = max_val
         return self.one - ssim(input, target, max_val=self.max_val, kernel=self.kernel, reduction=self.reduction)
 
 
