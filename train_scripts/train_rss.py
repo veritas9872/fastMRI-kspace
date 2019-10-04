@@ -4,7 +4,7 @@ from torch import nn, optim
 from pathlib import Path
 
 from utils.run_utils import initialize, save_dict_as_json, get_logger, create_arg_parser
-from utils.data_loaders import create_prefetch_data_loaders
+from utils.data_loaders import create_prefetch_data_loaders, create_prefetch_data_loaders_end
 
 from train.subsample import RandomMaskFunc, UniformMaskFunc
 from data.rss_inputs import PreProcessRSS
@@ -13,7 +13,7 @@ from data.rss_outputs import PostProcessRSS
 from train.new_model_trainers.img_to_rss import ModelTrainerRSS
 from metrics.new_1d_ssim import SSIMLoss, LogSSIMLoss
 from metrics.combination_losses import L1SSIMLoss
-from models.new_edsr_unet import UNet
+from models.hj1_net import UNet
 
 
 def train_img_to_rss(args):
@@ -79,12 +79,13 @@ def train_img_to_rss(args):
     output_val_transform = PostProcessRSS(challenge=args.challenge, residual_rss=args.residual_rss)
 
     # DataLoaders
-    train_loader, val_loader = create_prefetch_data_loaders(args)
+    # train_loader, val_loader = create_prefetch_data_loaders(args)
+    train_loader, val_loader = create_prefetch_data_loaders_end(args)
 
     losses = dict(
         # rss_loss=SSIMLoss(filter_size=7).to(device=device)
-        rss_loss=SSIMLoss(filter_size=7).to(device=device)
-        # rss_loss=nn.L1Loss()
+        # rss_loss=SSIMLoss(filter_size=7, max_val=0.0002).to(device=device)
+        rss_loss=nn.L1Loss()
         # rss_loss=L1SSIMLoss(filter_size=7, l1_ratio=args.l1_ratio).to(device=device)
     )
 
@@ -100,6 +101,7 @@ def train_img_to_rss(args):
 
     optimizer = optim.Adam(model.parameters(), lr=args.init_lr)
     # scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.lr_red_epochs, gamma=args.lr_red_rate)
+    # scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=args.lr_step_epochs, gamma=args.lr_step_rate)
 
     scheduler = None
 
@@ -108,6 +110,7 @@ def train_img_to_rss(args):
 
     try:
         trainer.train_model()
+        # trainer.val_model()
     except KeyboardInterrupt:
         trainer.writer.close()
         logger.warning('Closing summary writer due to KeyboardInterrupt.')
@@ -139,13 +142,13 @@ if __name__ == '__main__':
         accelerations_val=[4, 8],
 
         random_sampling=True,
-        num_pool_layers=3,
+        num_pool_layers=2,
         verbose=False,
         use_gt=True,
 
         # Model specific parameters.
         train_method='I2R',
-        chans=64,
+        chans=128,
         use_residual=False,
         residual_rss=False,
         # l1_ratio=0.5,
@@ -165,23 +168,29 @@ if __name__ == '__main__':
         use_gmp=False,
 
         # Learning rate scheduling.
-        # lr_red_epochs=[40, 55],
-        # lr_red_rate=0.25,
+        lr_red_epochs=[40, 55],
+        lr_red_rate=0.25,
+
+        lr_step_epochs=1,
+        lr_step_rate=0.75,
 
         # Variables that change frequently.
         use_slice_metrics=True,
         num_epochs=100,
 
         gpu=0,  # Set to None for CPU mode.
-        num_workers=4,
+        num_workers=2,
         init_lr=1E-4,
         max_to_keep=10,
-        prev_model_ckpt='checkpoints/I2R/Trial-01/ckpt_018.tar',
+        prev_model_ckpt='checkpoints/I2R/Trial 61  2019-09-19 00-51-19/ckpt_055.tar',
 
         sample_rate_train=1,
-        start_slice_train=0,
+        start_slice_train=2,
+        end_slice_train=5,
         sample_rate_val=1,
-        start_slice_val=0,
+        start_slice_val=2,
+        end_slice_val=5,
+
     )
     options = create_arg_parser(**settings).parse_args()
     train_img_to_rss(options)

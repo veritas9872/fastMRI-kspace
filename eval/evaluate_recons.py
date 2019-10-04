@@ -8,6 +8,8 @@ from runstats import Statistics
 from skimage.measure import compare_psnr, compare_ssim
 from tqdm import tqdm
 
+from matplotlib import pyplot as plt
+
 
 def mse(gt, pred):
     """ Compute Mean Squared Error (MSE) """
@@ -75,6 +77,10 @@ class Metrics:
 def evaluate(args, recons_key):
     metrics = Metrics(METRIC_FUNCS)
 
+    max_nmse = 0
+    max_nmse_recons = None
+    max_nmse_targets = None
+
     for tgt_file in tqdm(args.target_path.iterdir()):
         with h5py.File(tgt_file, mode='r') as target, h5py.File(
           args.predictions_path / tgt_file.name, mode='r') as recons:
@@ -83,6 +89,19 @@ def evaluate(args, recons_key):
             target = target[recons_key][()]
             recons = recons['reconstruction'][()]
             metrics.push(target, recons)
+
+            max_nmse_targets = target
+            max_nmse_recons = recons
+
+    # for recon_slice_img, target_slice_img in zip(max_nmse_recons, max_nmse_targets):
+    #     print(f'recon range from {recon_slice_img.min()} to {recon_slice_img.max()}')
+    #     print(f'target range from {target_slice_img.min()} to {target_slice_img.max()}')
+    #     plt.subplot(1, 2, 1)
+    #     plt.imshow(recon_slice_img)
+    #     plt.subplot(1, 2, 2)
+    #     plt.imshow(target_slice_img)
+    #     plt.show()
+
     return metrics
 
 

@@ -13,6 +13,8 @@ from utils.train_utils import CheckpointManager, standardize_image
 from metrics.new_1d_ssim import SSIM
 from metrics.custom_losses import psnr, nmse
 
+import time as tm
+
 
 # Send this somewhere else soon...
 def get_class_name(obj):
@@ -26,6 +28,7 @@ class ModelTrainerRSS:
         # Allow multiple processes to access tensors on GPU. Add checking for multiple continuous runs.
         if multiprocessing.get_start_method(allow_none=True) is None:
             multiprocessing.set_start_method(method='spawn')
+        torch.backends.cudnn.benchmark = True
 
         self.logger = get_logger(name=__name__, save_file=args.log_path / args.run_name)
 
@@ -64,7 +67,7 @@ class ModelTrainerRSS:
 
         # loading from checkpoint if specified.
         if vars(args).get('prev_model_ckpt'):
-            self.manager.load(load_dir=args.prev_model_ckpt, load_optimizer=False)
+            self.manager.load(load_dir=args.prev_model_ckpt, load_optimizer=True)
 
         self.model = model
         self.optimizer = optimizer
@@ -124,6 +127,16 @@ class ModelTrainerRSS:
         toc_toc = int(time() - tic_tic)
         self.logger.info(f'Finishing Training Loop. Total elapsed time: '
                          f'{toc_toc // 3600} hr {(toc_toc // 60) % 60} min {toc_toc % 60} sec.')
+
+    def val_model(self):
+
+        tic = time()  # Validation
+        val_epoch_loss, val_epoch_metrics = self._val_epoch(epoch=0)
+        toc = int(time() - tic)
+        self._log_epoch_outputs(0, val_epoch_loss, val_epoch_metrics, elapsed_secs=toc, training=False)
+
+        self.writer.close()  # Flushes remaining data to TensorBoard.
+        tm.sleep(1)
 
     def _train_epoch(self, epoch):
         self.model.train()

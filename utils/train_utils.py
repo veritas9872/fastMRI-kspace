@@ -107,7 +107,7 @@ class CheckpointManager:
     def load(self, load_dir, load_optimizer=True):
         save_dict = torch.load(load_dir, map_location='cuda')
 
-        self.model.load_state_dict(save_dict['model_state_dict'], strict=False)
+        self.model.load_state_dict(save_dict['model_state_dict'], strict=True)
         print(f'Loaded model parameters from {load_dir}')
 
         if load_optimizer:
@@ -134,7 +134,7 @@ def load_model_from_checkpoint(model, load_dir):
     """
     assert isinstance(model, nn.Module), 'Model must be a Pytorch module.'
     assert Path(load_dir).exists(), 'The specified directory does not exist'
-    save_dict = torch.load(load_dir)
+    save_dict = torch.load(load_dir, map_location='cuda')
     model.load_state_dict(save_dict['model_state_dict'])
     return model  # Not actually necessary to return the model but doing so anyway.
 

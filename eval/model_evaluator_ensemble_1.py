@@ -24,7 +24,7 @@ def psnr(gt, pred):
 
 class ModelEvaluator:
     def __init__(self, model, checkpoint_path, challenge, data_loader,
-                 pre_processing, post_processing, data_root, out_dir, device):
+                 pre_processing, post_processing, data_root, out_dir, device, ensemble):
 
         assert isinstance(model, nn.Module), '`model` must be a Pytorch Module.'
         assert isinstance(data_loader, DataLoader), '`data_loader` must be a Pytorch DataLoader.'
@@ -45,6 +45,7 @@ class ModelEvaluator:
         self.data_root = data_root
         self.out_dir = Path(out_dir)
         self.device = device
+        self.ensemble = ensemble
 
     def _create_reconstructions(self):
         reconstructions = defaultdict(list)
@@ -52,7 +53,10 @@ class ModelEvaluator:
         for data in tqdm(self.data_loader, total=len(self.data_loader.dataset)):
             kspace_target, target, attrs, file_name, slice_num = data
             inputs, targets, extra_params = self.pre_processing(kspace_target, target, attrs, file_name, slice_num)
-            outputs = self.model(inputs)  # Use inputs.to(device) if necessary for different transforms.
+            if self.ensemble:
+                outputs = ModelEvaluator.self_ensemble(inputs, self.model)
+            else:
+                outputs = self.model(inputs)  # Use inputs.to(device) if necessary for different transforms.
             recons = self.post_processing(outputs, extra_params)
             assert recons.dim() == 2, 'Unexpected dimensions. Batch size is expected to be 1.'
 
@@ -97,6 +101,26 @@ class ModelEvaluator:
         print('Beginning Saving.')
         self._save_reconstructions(reconstructions)
 
+    @staticmethod
+    def self_ensemble(inputs, model):
+
+        flip_lrud = torch.flip(inputs, dims=(-2, -1))
+        flip_ud = torch.flip(inputs, dims=(-2,))
+        flip_lr = torch.flip(inputs, dims=(-1,))
+
+        outputs_lr = model(flip_lr)
+        outputs_ud = model(flip_ud)
+        outputs_lrud = model(flip_lrud)
+        outputs = model(inputs)
+
+        outputs_lr = torch.flip(outputs_lr, dims=(-1,))
+        outputs_ud = torch.flip(outputs_ud, dims=(-2,))
+        outputs_lrud = torch.flip(outputs_lrud, dims=(-2, -1))
+
+        mean_outputs = (outputs + outputs_lr + outputs_ud + outputs_lrud) / 4
+
+        return mean_outputs
+
 
 class MultiAccelerationModelEvaluator:
     """
@@ -104,7 +128,7 @@ class MultiAccelerationModelEvaluator:
     Does not separate cases for weight suppression, only for 4-fold and 8-fold accelerations.
     """
     def __init__(self, model, checkpoint_path_4, checkpoint_path_8, challenge, data_loader,
-                 pre_processing, post_processing, data_root, out_dir, device):
+                 pre_processing, post_processing, data_root, out_dir, device, ensemble):
 
         assert isinstance(model, nn.Module), '`model` must be a Pytorch Module.'
         assert isinstance(data_loader, DataLoader), '`data_loader` must be a Pytorch DataLoader.'
@@ -125,6 +149,7 @@ class MultiAccelerationModelEvaluator:
         self.data_root = data_root
         self.out_dir = Path(out_dir)
         self.device = device
+        self.ensemble = ensemble
 
     def _create_partial_reconstructions(self, checkpoint_path, acceleration):
         reconstructions = defaultdict(list)
@@ -133,18 +158,20 @@ class MultiAccelerationModelEvaluator:
         for data in tqdm(self.data_loader, total=len(self.data_loader.dataset)):
             kspace_target, target, attrs, file_name, slice_num = data
 
-            if attrs['acceleration'] != acceleration:
-                continue  # Not very efficient since data is still loaded and sent to GPU device. However, it will do.
-
             inputs, targets, extra_params = self.pre_processing(kspace_target, target, attrs, file_name, slice_num)
-            outputs = self.model(inputs)  # Use inputs.to(device) if necessary for different transforms.
+
+            if extra_params['acceleration'] != acceleration:
+                continue  # Not very efficient since data is still loaded and sent to GPU device. However, it will do.
+            if self.ensemble:
+                outputs = self.self_ensemble(inputs, self.model)
+            else:
+                print('not ensemble')
+                outputs = self.model(inputs)  # Use inputs.to(device) if necessary for different transforms.
             recons = self.post_processing(outputs, extra_params)
             assert recons.dim() == 2, 'Unexpected dimensions. Batch size is expected to be 1.'
 
             recons = recons.cpu().numpy()
             file_name = Path(file_name).name
-
-
 
             reconstructions[file_name].append((int(slice_num), recons))
 
@@ -179,9 +206,29 @@ class MultiAccelerationModelEvaluator:
         reconstructions = dict(**reconstructions_4, **reconstructions_8)
         self._save_reconstructions(reconstructions)
 
+    @staticmethod
+    def self_ensemble(inputs, model):
+
+        flip_lrud = torch.flip(inputs, dims=(-2, -1))
+        flip_ud = torch.flip(inputs, dims=(-2,))
+        flip_lr = torch.flip(inputs, dims=(-1,))
+
+        outputs_lr = model(flip_lr)
+        outputs_ud = model(flip_ud)
+        outputs_lrud = model(flip_lrud)
+        outputs = model(inputs)
+
+        outputs_lr = torch.flip(outputs_lr, dims=(-1,))
+        outputs_ud = torch.flip(outputs_ud, dims=(-2,))
+        outputs_lrud = torch.flip(outputs_lrud, dims=(-2, -1))
+
+        mean_outputs = (outputs + outputs_lr + outputs_ud + outputs_lrud) / 4
+
+        return mean_outputs
+
 
 def main(args):
-    from models.hj1_net import UNet  # Moving import line here to reduce confusion.
+    from models.new_edsr_unet import UNet  # Moving import line here to reduce confusion.
     from data.input_transforms import PreProcessIMG, Prefetch2Device
     from eval.input_test_transform import PreProcessTestIMG, PreProcessValIMG
     from eval.output_test_transforms import PostProcessTestIMG
@@ -200,11 +247,21 @@ def main(args):
     #              num_depth_blocks=args.num_depth_blocks, res_scale=args.res_scale, use_residual=args.use_residual,
     #              use_ca=args.use_ca, reduction=args.reduction, use_gap=args.use_gap, use_gmp=args.use_gmp).to(device)
 
+    # model = UNet(in_chans=15, out_chans=1, chans=args.chans, num_pool_layers=args.num_pool_layers,
+    #              num_depth_blocks=args.num_depth_blocks, res_scale=args.res_scale, use_residual=args.use_residual,
+    #              use_ca=args.use_ca, reduction=args.reduction, use_gap=args.use_gap, use_gmp=args.use_gmp,
+    #              use_sa=False, sa_kernel_size=7, sa_dilation=1,
+    #              use_cap=False, use_cmp=False).to(device)
+
+    # model = UNet(in_chans=15, out_chans=1, chans=args.chans, num_pool_layers=args.num_pool_layers,
+    #              num_res_groups=args.num_res_groups, num_res_blocks_per_group=args.num_res_blocks_per_group,
+    #              growth_rate=args.growth_rate, num_dense_layers=args.num_dense_layers,
+    #              use_dense_ca=args.use_dense_ca, num_res_layers=args.num_res_layers, res_scale=args.res_scale,
+    #              reduction=args.reduction, thick_base=args.thick_base).to(device)
+
     model = UNet(in_chans=15, out_chans=1, chans=args.chans, num_pool_layers=args.num_pool_layers,
                  num_depth_blocks=args.num_depth_blocks, res_scale=args.res_scale, use_residual=args.use_residual,
-                 use_ca=args.use_ca, reduction=args.reduction, use_gap=args.use_gap, use_gmp=args.use_gmp,
-                 use_sa=False, sa_kernel_size=7, sa_dilation=1,
-                 use_cap=False, use_cmp=False).to(device)
+                 use_ca=args.use_ca, reduction=args.reduction, use_gap=args.use_gap, use_gmp=args.use_gmp).to(device)
 
     dataset = CustomSliceData(root=args.data_root, transform=Prefetch2Device(device),
                               challenge=args.challenge, sample_rate=1, start_slice=0, use_gt=True)
@@ -229,12 +286,13 @@ def main(args):
 
     # Single acceleration, single model version.
     evaluator = ModelEvaluator(model, args.checkpoint_path, args.challenge, data_loader,
-                               pre_processing, post_processing, args.data_root, args.out_dir, device)
+                               pre_processing, post_processing, args.data_root, args.out_dir, device, args.ensemble)
 
     # evaluator = MultiAccelerationModelEvaluator(
     #     model=model, checkpoint_path_4=args.checkpoint_path_4, checkpoint_path_8=args.checkpoint_path_8,
     #     challenge=args.challenge, data_loader=data_loader, pre_processing=pre_processing,
-    #     post_processing=post_processing, data_root=args.data_root, out_dir=args.out_dir, device=device
+    #     post_processing=post_processing, data_root=args.data_root, out_dir=args.out_dir, device=device,
+    #     ensemble=args.ensemble
     # )
 
     evaluator.create_and_save_reconstructions()
@@ -246,32 +304,83 @@ if __name__ == '__main__':
         multiprocessing.set_start_method(method='spawn')
 
     defaults = dict(
-        gpu=0,  # Set to None for CPU mode.
+        # gpu=0,  # Set to None for CPU mode.
         challenge='multicoil',
-        num_workers=4,
+        # num_workers=4,
 
         # Parameters for validation set evaluation.
         center_fractions=[0.08, 0.04],
         accelerations=[4, 8],
 
         # Model specific parameters.
-        chans=128,
-        num_pool_layers=2,
+        # chans=128,
+        # num_pool_layers=2,
+        # num_depth_blocks=32,
+        # res_scale=0.1,
+        # use_residual=False,
+        # residual_rss=True,
+        # # use_ca=True,
+        # reduction=16,
+        # use_gap=True,
+        # use_gmp=False,
+
+        # Parameters for reconstruction.
+        data_root='/media/user/Data/compFastMRI/multicoil_test_v2',
+        checkpoint_path='checkpoints/I2R/Trial-01/ckpt_047.tar',
+        # checkpoint_path_4='checkpoints/I2R/Trial-01/2019-09-20-cp02-acc4.tar',
+        # checkpoint_path_8='checkpoints/I2R/Trial-01/2019-09-20-cp02-acc8.tar',
+
+        ensemble=True,
+
+        out_dir='./recons/JH_orig',  # Change this every time! Attempted overrides will throw errors by design.
+
+        # num_res_groups=4,
+        # num_res_blocks_per_group=8,
+        # growth_rate=32,
+        # num_dense_layers=8,
+        # use_dense_ca=False,
+        # num_res_layers=1,
+        # thick_base=False,
+        random_sampling=True,
+        num_pool_layers=3,
+        verbose=False,
+        use_gt=True,
+
+        # Model specific parameters.
+        train_method='I2R',
+        chans=64,
+        use_residual=False,
+        residual_rss=True,
+        # l1_ratio=0.5,
         num_depth_blocks=32,
         res_scale=0.1,
-        use_residual=False,
+        augment_data=True,
+        crop_center=True,
+
+        # TensorBoard related parameters.
+        # max_images=10,  # Maximum number of images to save.
+        # shrink_scale=1,  # Scale to shrink output image size.
+
+        # Channel Attention.
         use_ca=True,
         reduction=16,
         use_gap=True,
         use_gmp=False,
 
-        # Parameters for reconstruction.
-        data_root='/media/user/Data/compFastMRI/multicoil_test_v2',
-        checkpoint_path='checkpoints/I2R/Trial 30  2019-09-15 16-58-16/ckpt_015.tar',
-        # checkpoint_path_4='checkpoints/I2R/Trial 07  2019-09-07 13-06-04/ckpt_030.tar',
-        # checkpoint_path_8='checkpoints/I2R/Trial 07  2019-09-07 13-06-04/ckpt_030.tar',
+        # # Learning rate scheduling.
+        # lr_red_epochs=[40, 55],
+        # lr_red_rate=0.25,
+        #
+        # lr_step_epochs=1,
+        # lr_step_rate=0.75,
 
-        out_dir='./recons/I2R_T30_cp15_v2'  # Change this every time! Attempted overrides will throw errors by design.
+        # Variables that change frequently.
+        # use_slice_metrics=True,
+        # num_epochs=100,
+
+        gpu=0,  # Set to None for CPU mode.
+        num_workers=6,
+        # init_lr=1E-4,
     )
 
     parser = create_arg_parser(**defaults).parse_args()

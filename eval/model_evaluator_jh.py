@@ -181,7 +181,7 @@ class MultiAccelerationModelEvaluator:
 
 
 def main(args):
-    from models.hj1_net import UNet  # Moving import line here to reduce confusion.
+    from models.new_edsr_unet import UNet  # Moving import line here to reduce confusion.
     from data.input_transforms import PreProcessIMG, Prefetch2Device
     from eval.input_test_transform import PreProcessTestIMG, PreProcessValIMG
     from eval.output_test_transforms import PostProcessTestIMG
@@ -246,32 +246,73 @@ if __name__ == '__main__':
         multiprocessing.set_start_method(method='spawn')
 
     defaults = dict(
-        gpu=0,  # Set to None for CPU mode.
+        # Variables that almost never change.
         challenge='multicoil',
-        num_workers=4,
+        data_root='/media/user/Data/compFastMRI',
+        log_root='./logs',
+        ckpt_root='./checkpoints',
+        batch_size=1,  # This MUST be 1 for now.
+        save_best_only=False,
+        smoothing_factor=8,
 
-        # Parameters for validation set evaluation.
-        center_fractions=[0.08, 0.04],
-        accelerations=[4, 8],
+        # Variables that occasionally change.
+        center_fractions_train=[0.08, 0.04],
+        accelerations_train=[4, 8],
+        # When using single acceleration for train and two accelerations for validation,
+        # please remember that the validation loss is calculated for both accelerations,
+        # including the one that the model was not trained for.
+        # This may result in the checkpoint not being saved,
+        # even though performance on one acceleration improves significantly.
+        center_fractions_val=[0.08, 0.04],
+        accelerations_val=[4, 8],
+
+        random_sampling=True,
+        num_pool_layers=3,
+        verbose=False,
+        use_gt=True,
 
         # Model specific parameters.
-        chans=128,
-        num_pool_layers=2,
+        train_method='I2R',
+        chans=64,
+        use_residual=False,
+        residual_rss=True,
+        # l1_ratio=0.5,
         num_depth_blocks=32,
         res_scale=0.1,
-        use_residual=False,
+        augment_data=True,
+        crop_center=True,
+
+        # TensorBoard related parameters.
+        max_images=10,  # Maximum number of images to save.
+        shrink_scale=1,  # Scale to shrink output image size.
+
+        # Channel Attention.
         use_ca=True,
         reduction=16,
         use_gap=True,
         use_gmp=False,
 
-        # Parameters for reconstruction.
-        data_root='/media/user/Data/compFastMRI/multicoil_test_v2',
-        checkpoint_path='checkpoints/I2R/Trial 30  2019-09-15 16-58-16/ckpt_015.tar',
-        # checkpoint_path_4='checkpoints/I2R/Trial 07  2019-09-07 13-06-04/ckpt_030.tar',
-        # checkpoint_path_8='checkpoints/I2R/Trial 07  2019-09-07 13-06-04/ckpt_030.tar',
+        # Learning rate scheduling.
+        lr_red_epochs=[40, 55],
+        lr_red_rate=0.25,
 
-        out_dir='./recons/I2R_T30_cp15_v2'  # Change this every time! Attempted overrides will throw errors by design.
+        lr_step_epochs=1,
+        lr_step_rate=0.75,
+
+        # Variables that change frequently.
+        use_slice_metrics=True,
+        num_epochs=100,
+
+        gpu=0,  # Set to None for CPU mode.
+        num_workers=6,
+        init_lr=1E-4,
+        max_to_keep=10,
+        checkpoint_path='checkpoints/I2R/Trial-01/ckpt_047.tar',
+
+        sample_rate_train=1,
+        start_slice_train=3,
+        sample_rate_val=1,
+        start_slice_val=0,
     )
 
     parser = create_arg_parser(**defaults).parse_args()
