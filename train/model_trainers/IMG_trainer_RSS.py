@@ -159,16 +159,14 @@ class ModelTrainerIMG:
     def _train_step(self, inputs, targets, extra_params):
         self.optimizer.zero_grad()
         outputs = self.model(inputs)
-        recons = self.output_transform(outputs, targets, extra_params)
-        # import ipdb; ipdb.set_trace()
+        recons, rss_recons = self.output_transform(outputs, targets, extra_params)
         # Expects a single loss. No loss decomposition within domain implemented yet.
-        cmg_loss = self.losses['cmg_loss'](recons['cmg_recons'], targets['cmg_targets'])
-        img_loss = self.losses['img_loss'](recons['img_recons'], targets['img_targets'])
-        SSIM_loss = self.losses['ssim_loss'](recons['img_recons'], targets['img_targets'])
-        step_loss = cmg_loss + self.img_lambda * img_loss + self.ssim_lambda * SSIM_loss
+        img_loss = self.losses['img_loss'](rss_recons, targets['rss_targets'])
+        SSIM_loss = self.losses['ssim_loss'](rss_recons, targets['rss_targets'])
+        step_loss = self.img_lambda * img_loss + self.ssim_lambda * SSIM_loss
         step_loss.backward()
         self.optimizer.step()
-        step_metrics = {'cmg_loss': cmg_loss, 'img_loss': img_loss, 'SSIM_loss': SSIM_loss}
+        step_metrics = {'img_loss': img_loss, 'SSIM_loss': SSIM_loss}
         return recons, step_loss, step_metrics
 
     def _val_epoch(self, epoch):
@@ -229,15 +227,14 @@ class ModelTrainerIMG:
 
     def _val_step(self, inputs, targets, extra_params):
         outputs = self.model(inputs)
-        recons = self.output_transform(outputs, targets, extra_params)
+        recons, rss_recons = self.output_transform(outputs, targets, extra_params)
 
         # Expects a single loss. No loss decomposition within domain implemented yet.
-        cmg_loss = self.losses['cmg_loss'](recons['cmg_recons'], targets['cmg_targets'])
-        img_loss = self.losses['img_loss'](recons['img_recons'], targets['img_targets'])
-        SSIM_loss = self.losses['ssim_loss'](recons['img_recons'], targets['img_targets'])
-        step_loss = cmg_loss + self.img_lambda * img_loss + self.ssim_lambda * SSIM_loss
+        img_loss = self.losses['img_loss'](rss_recons, targets['rss_targets'])
+        SSIM_loss = self.losses['ssim_loss'](rss_recons, targets['rss_targets'])
+        step_loss = self.img_lambda * img_loss + self.ssim_lambda * SSIM_loss
 
-        step_metrics = {'cmg_loss': cmg_loss, 'img_loss': img_loss, 'SSIM_loss': SSIM_loss}
+        step_metrics = {'img_loss': img_loss, 'SSIM_loss': SSIM_loss}
         return recons, step_loss, step_metrics
 
     @staticmethod

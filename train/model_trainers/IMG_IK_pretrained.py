@@ -150,7 +150,7 @@ class ModelTrainerIMGIK:
             with torch.no_grad():  # Update epoch loss and metrics
                 if self.use_slice_metrics:
                     rss_img_recons = (recons['img_recons'] ** 2).sum(dim=1).sqrt().squeeze()
-                    rss_img_targets = (targets['img_targets'] ** 2).sum(dim=1).sqrt().squeeze()
+                    rss_img_targets = (targets['cc_img_targets'] ** 2).sum(dim=1).sqrt().squeeze()
                     slice_metrics = self._get_slice_metrics(rss_img_recons, rss_img_targets)
                     step_metrics.update(slice_metrics)
                 [epoch_metrics[key].append(value.detach()) for key, value in step_metrics.items()]
@@ -170,13 +170,12 @@ class ModelTrainerIMGIK:
 
         recons = self.output_transform(K_outputs, targets, extra_params)
         # Expects a single loss. No loss decomposition within domain implemented yet.
-        cmg_loss = self.losses['cmg_loss'](recons['cmg_recons'], targets['cmg_targets'])
-        img_loss = self.losses['img_loss'](recons['img_recons'], targets['img_targets'])
-        SSIM_loss = self.losses['ssim_loss'](recons['img_recons'], targets['img_targets'])
-        step_loss = cmg_loss * 0 + self.img_lambda * img_loss + self.ssim_lambda * SSIM_loss
+        img_loss = self.losses['img_loss'](recons['img_recons'], targets['cc_img_targets'])
+        SSIM_loss = self.losses['ssim_loss'](recons['img_recons'], targets['cc_img_targets'])
+        step_loss = self.img_lambda * img_loss + self.ssim_lambda * SSIM_loss
         step_loss.backward()
         self.optimizer.step()
-        step_metrics = {'cmg_loss': cmg_loss, 'img_loss': img_loss, 'SSIM_loss': SSIM_loss}
+        step_metrics = {'img_loss': img_loss, 'SSIM_loss': SSIM_loss}
         return recons, step_loss, step_metrics
 
     def _val_epoch(self, epoch):
@@ -201,7 +200,7 @@ class ModelTrainerIMGIK:
             if self.use_slice_metrics:
                 # RSS
                 rss_img_recons = (recons['img_recons'] ** 2).sum(dim=1).sqrt().squeeze()
-                rss_img_targets = (targets['img_targets'] ** 2).sum(dim=1).sqrt().squeeze()
+                rss_img_targets = (targets['cc_img_targets'] ** 2).sum(dim=1).sqrt().squeeze()
                 slice_metrics = self._get_slice_metrics(rss_img_recons, rss_img_targets)
                 step_metrics.update(slice_metrics)
 
@@ -214,11 +213,11 @@ class ModelTrainerIMGIK:
             # Condition ensures that self.display_interval != 0 and that the step is right for display.
             if self.display_interval and (step % self.display_interval == 0):
                 img_recon_grid, img_target_grid, img_delta_grid = \
-                    make_RSS(recons['img_recons'], targets['img_targets'])
+                    make_RSS(recons['img_recons'], targets['cc_img_targets'])
                 if epoch == 1:
                     img_input_grid = make_input_RSS(extra_params['img_inputs'])
                 kspace_recon_grid = make_k_grid(recons['kspace_recons'], self.smoothing_factor)
-                kspace_target_grid = make_k_grid(targets['kspace_targets'], self.smoothing_factor)
+                kspace_target_grid = make_k_grid(targets['cc_kspace_targets'], self.smoothing_factor)
 
                 self.writer.add_image(f'k-space_Recons/{step}', kspace_recon_grid, epoch, dataformats='HW')
                 self.writer.add_image(f'k-space_Targets/{step}', kspace_target_grid, epoch, dataformats='HW')
@@ -239,10 +238,10 @@ class ModelTrainerIMGIK:
 
         recons = self.output_transform(K_outputs, targets, extra_params)
         # Expects a single loss. No loss decomposition within domain implemented yet.
-        cmg_loss = self.losses['cmg_loss'](recons['cmg_recons'], targets['cmg_targets'])
-        img_loss = self.losses['img_loss'](recons['img_recons'], targets['img_targets'])
-        SSIM_loss = self.losses['ssim_loss'](recons['img_recons'], targets['img_targets'])
-        step_loss = cmg_loss * 0 + self.img_lambda * img_loss + self.ssim_lambda * SSIM_loss
+        cmg_loss = self.losses['cmg_loss'](recons['cmg_recons'], targets['cc_cmg_targets'])
+        img_loss = self.losses['img_loss'](recons['img_recons'], targets['cc_img_targets'])
+        SSIM_loss = self.losses['ssim_loss'](recons['img_recons'], targets['cc_img_targets'])
+        step_loss = cmg_loss + self.img_lambda * img_loss + self.ssim_lambda * SSIM_loss
 
         step_metrics = {'cmg_loss': cmg_loss, 'img_loss': img_loss, 'SSIM_loss': SSIM_loss}
         return recons, step_loss, step_metrics

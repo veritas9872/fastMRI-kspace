@@ -40,7 +40,7 @@ def _ssim(input, target, max_val, k1, k2, channel, kernel):
 
 
 @weak_script
-def ssim_loss(input, target, max_val, filter_size=11, k1=0.01, k2=0.03,
+def ssim_loss(input, target, max_val, filter_size=7, k1=0.01, k2=0.03,
               sigma=1.5, size_average=None, reduce=None, reduction='mean'):
     # type: (Tensor, Tensor, float, int, float, float, float, Optional[bool], Optional[bool], str) -> Tensor
     r"""ssim_loss(input, target, max_val, filter_size, k1, k2,

@@ -4,6 +4,142 @@ from torch import nn, optim
 from pathlib import Path
 
 
+class cycleGANCheckpointManager:
+    """
+    A checkpoint manager for Pytorch models and optimizers loosely based on Keras/Tensorflow Checkpointers.
+    I should note that I am not sure whether this works in Pytorch graph mode.
+    Giving up on saving as HDF5 files like in Keras. Just too annoying.
+    Note that the whole system is based on 1 indexing, not 0 indexing.
+    """
+    def __init__(self, modelG, modelD_cs, modelD_full, optimizerG, optimizerD_cs, optimizerD_full,
+                 mode='min', save_best_only=True, ckpt_dir='./checkpoints', max_to_keep=5):
+
+        # Type checking.
+        assert isinstance(max_to_keep, int) and (max_to_keep >= 0), 'Not a non-negative integer'
+        assert mode in ('min', 'max'), 'Mode must be either `min` or `max`'
+        ckpt_path = Path(ckpt_dir)
+        assert ckpt_path.exists(), 'Not a valid, existing path'
+
+        record_path = ckpt_path / 'Checkpoints.txt'
+
+        try:
+            record_file = open(record_path, mode='x')
+        except FileExistsError:
+            import sys
+            print('WARNING: It is recommended to have a separate checkpoint directory for each run.', file=sys.stderr)
+            print('Appending to previous Checkpoint record file!', file=sys.stderr)
+            record_file = open(record_path, mode='a')
+
+        print(f'Checkpoint List for {ckpt_path}', file=record_file)
+        record_file.close()
+
+        self.modelG = modelG
+        self.modelD_cs = modelD_cs
+        self.modelD_full = modelD_full
+        self.optimizerG = optimizerG
+        self.optimizerD_cs = optimizerD_cs
+        self.optimizerD_full = optimizerD_full
+        self.save_best_only = save_best_only
+        self.ckpt_path = ckpt_path
+        self.max_to_keep = max_to_keep
+        self.save_counter = 0
+        self.record_path = record_path
+        self.record_dict = dict()
+
+        if mode == 'min':
+            self.prev_best = float('inf')
+            self.mode = mode
+        elif mode == 'max':
+            self.prev_best = -float('inf')
+            self.mode = mode
+        else:
+            raise TypeError('Mode must be either `min` or `max`')
+
+    def _save(self, ckpt_name=None, **save_kwargs):
+        self.save_counter += 1
+        save_dictG = {'model_state_dict': self.modelG.state_dict(),
+                      'optimizer_state_dict': self.optimizerG.state_dict()}
+        save_dictD_cs = {'model_state_dict': self.modelD_cs.state_dict(),
+                         'optimizer_state_dict': self.optimizerD_cs.state_dict()}
+        save_dictD_full = {'model_state_dict': self.modelD_cs.state_dict(),
+                           'optimizer_state_dict': self.optimizerD_cs.state_dict()}
+        save_dictG.update(save_kwargs)
+        save_dictD_cs.update(save_kwargs)
+        save_dictD_full.update(save_kwargs)
+        save_pathG = self.ckpt_path / (f'ckpt_G{self.save_counter:03d}.tar')
+        save_pathD_cs = self.ckpt_path / (f'ckpt_D_cs{self.save_counter:03d}.tar')
+        save_pathD_full = self.ckpt_path / (f'ckpt_D_full{self.save_counter:03d}.tar')
+
+        torch.save(save_dictG, save_pathG)
+        torch.save(save_dictD_cs, save_pathD_cs)
+        torch.save(save_dictD_full, save_pathD_full)
+        print(f'Saved Checkpoint to {save_pathG}')
+        print(f'Checkpoint {self.save_counter:04d}: {save_pathG} {save_pathD_cs} {save_pathD_full}')
+
+        with open(file=self.record_path, mode='a') as file:
+            print(f'Checkpoint {self.save_counter:04d}: {save_pathG} {save_pathD_cs} {save_pathD_full}', file=file)
+
+        self.record_dict[self.save_counter] = save_pathG
+
+        if self.save_counter > self.max_to_keep:
+            for count, ckpt_path in self.record_dict.items():  # This system uses 1 indexing.
+                if (count <= (self.save_counter - self.max_to_keep)) and ckpt_path.exists():
+                    ckpt_path.unlink()  # Delete existing checkpoint
+
+        return save_pathG, save_pathD_cs, save_pathD_full
+
+    def save(self, metric, verbose=True, ckpt_name=None, **save_kwargs):  # save_kwargs are extra variables to save
+        if self.mode == 'min':
+            is_best = metric < self.prev_best
+        elif self.mode == 'max':
+            is_best = metric > self.prev_best
+        else:
+            raise TypeError('Mode must be either `min` or `max`')
+
+        save_pathG = None
+        if is_best or not self.save_best_only:
+            save_pathG, save_pathD_cs, save_pathD_full = self._save(ckpt_name, **save_kwargs)
+
+        if verbose:
+            if is_best:
+                print(f'Metric improved from {self.prev_best:.4e} to {metric:.4e}')
+            else:
+                print(f'Metric did not improve.')
+
+        if is_best:  # Update new best metric.
+            self.prev_best = metric
+
+        # Returns where the file was saved if any was saved. Also returns whether this was the best on the metric.
+        return save_pathG, is_best  # So that one can see whether this one is the best or not.
+
+    def load(self, load_dir_G, load_dir_D_cs, load_dir_D_full, load_optimizer=True):
+        save_dict_G = torch.load(load_dir_G)
+        save_dict_D_cs = torch.load(load_dir_D_cs)
+        save_dict_D_full = torch.load(load_dir_D_full)
+
+        self.modelG.load_state_dict(save_dict_G['model_state_dict'])
+        self.modelD_cs.load_state_dict(save_dict_D_cs['model_state_dict'])
+        self.modelD_full.load_state_dict(save_dict_D_full['model_state_dict'])
+        print(f'Loaded model parameters from {load_dir_G}')
+        print(f'Loaded model parameters from {load_dir_D_cs}')
+        print(f'Loaded model parameters from {load_dir_D_full}')
+
+        if load_optimizer:
+            self.optimizerG.load_state_dict(save_dict_G['optimizer_state_dict'])
+            self.optimizerD_cs.load_state_dict(save_dict_D_cs['optimizer_state_dict'])
+            self.optimizerD_full.load_state_dict(save_dict_D_full['optimizer_state_dict'])
+            print(f'Loaded optimizer parameters from {load_dir_G}')
+
+    def load_latest(self, load_root):
+        load_root = Path(load_root)
+        load_dir = sorted([x for x in load_root.iterdir() if x.is_dir()])[-1]
+        load_file = sorted([x for x in load_dir.iterdir() if x.is_file()])[-1]
+
+        print('Loading', load_file)
+        self.load(load_file, load_optimizer=False)
+        print('Done')
+
+
 class GANCheckpointManager:
     """
     A checkpoint manager for Pytorch models and optimizers loosely based on Keras/Tensorflow Checkpointers.
@@ -57,10 +193,12 @@ class GANCheckpointManager:
 
     def _save(self, ckpt_name=None, **save_kwargs):
         self.save_counter += 1
-        save_dictG = {'model_state_dict': self.modelG.state_dict(),
-                      'optimizer_state_dict': self.optimizerG.state_dict()}
-        save_dictD = {'model_state_dict': self.modelD.state_dict(),
-                      'optimizer_state_dict': self.optimizerD.state_dict()}
+        # save_dictG = {'model_state_dict': self.modelG.state_dict(),
+        #               'optimizer_state_dict': self.optimizerG.state_dict()}
+        # save_dictD = {'model_state_dict': self.modelD.state_dict(),
+        #               'optimizer_state_dict': self.optimizerD.state_dict()}
+        save_dictG = {'model_state_dict': self.modelG.state_dict()}
+        save_dictD = {'model_state_dict': self.modelD.state_dict()}
         save_dictG.update(save_kwargs)
         save_dictD.update(save_kwargs)
         save_pathG = self.ckpt_path / (f'ckpt_G{self.save_counter:03d}.tar')
@@ -107,15 +245,18 @@ class GANCheckpointManager:
         # Returns where the file was saved if any was saved. Also returns whether this was the best on the metric.
         return save_pathG, is_best  # So that one can see whether this one is the best or not.
 
-    def load(self, load_dir, load_optimizer=True):
-        save_dict = torch.load(load_dir)
+    def load(self, load_dirG, load_dirD, load_optimizer=True):
+        save_dictG = torch.load(load_dirG)
+        save_dictD = torch.load(load_dirD)
 
-        self.model.load_state_dict(save_dict['model_state_dict'])
-        print(f'Loaded model parameters from {load_dir}')
+        self.modelG.load_state_dict(save_dictG['model_state_dict'])
+        self.modelD.load_state_dict(save_dictD['model_state_dict'])
+        print(f'Loaded model parameters from {load_dirG}')
 
         if load_optimizer:
-            self.optimizer.load_state_dict(save_dict['optimizer_state_dict'])
-            print(f'Loaded optimizer parameters from {load_dir}')
+            self.optimizerG.load_state_dict(save_dictG['optimizer_state_dict'])
+            self.optimizerD.load_state_dict(save_dictD['optimizer_state_dict'])
+            print(f'Loaded optimizer parameters from {load_dirG}')
 
     def load_latest(self, load_root):
         load_root = Path(load_root)

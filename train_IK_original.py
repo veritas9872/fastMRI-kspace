@@ -8,11 +8,11 @@ from utils.run_utils import initialize, save_dict_as_json, get_logger, create_ar
 from utils.train_utils import create_custom_data_loaders, load_model_from_checkpoint
 
 from train.subsample import MaskFunc, UniformMaskFunc, RandomMaskFunc
-from data.input_transforms import Prefetch2Device, TrainPreProcessCC, TrainPreProcessHCCC
-from data.output_transforms import OutputTransformIK, MidTransformK, OutputTransformIKCrop
+from data.input_transforms import Prefetch2Device, TrainPreProcessCC
+from data.output_transforms import OutputTransformIK, MidTransformK
 
 from models.fc_unet import FCUnet, Unet
-from train.model_trainers.IMG_IK_pretrained import ModelTrainerIMGIK
+from train.model_trainers.IMG_IK_original import ModelTrainerIMGIK
 
 from metrics.custom_losses import logSSIMLoss, CSSIM
 
@@ -70,10 +70,10 @@ def train_img(args):
 
     data_prefetch = Prefetch2Device(device)
 
-    input_train_transform = TrainPreProcessHCCC(mask_func, args.challenge, args.device,
-                                                use_seed=False, divisor=divisor)
-    input_val_transform = TrainPreProcessHCCC(mask_func, args.challenge, args.device,
-                                              use_seed=True, divisor=divisor)
+    input_train_transform = TrainPreProcessCC(mask_func, args.challenge, args.device,
+                                              use_seed=False, divisor=divisor)
+    input_val_transform = TrainPreProcessCC(mask_func, args.challenge, args.device,
+                                            use_seed=True, divisor=divisor)
 
     # DataLoaders
     train_loader, val_loader = create_custom_data_loaders(args, transform=data_prefetch)
@@ -85,7 +85,7 @@ def train_img(args):
     )
 
     mid_transform = MidTransformK()
-    output_transform = OutputTransformIKCrop()
+    output_transform = OutputTransformIK()
 
     data_chans = 2 if args.challenge == 'singlecoil' else 30  # Multicoil has 15 coils with 2 for real/imag
 
@@ -95,8 +95,8 @@ def train_img(args):
                   num_pool_layers=args.k_num_pool_layers).to(device)
 
     # Load pretrained model I parameters
-    load_dir = './checkpoints/IMG/RSS_SSIM/ckpt_019.tar'
-    load_model_from_checkpoint(modelI, load_dir, strict=True)
+    I_load_dir = './checkpoints/IMG/[IMG]GRUP2_SSIM2/ckpt_012.tar'
+    load_model_from_checkpoint(modelI, I_load_dir, strict=True)
 
     # K_load_dir = './checkpoints/IMG/Trial 10  2019-08-15 21-01-57/ckpt_K014.tar'
     # load_model_from_checkpoint(modelK, K_load_dir, strict=True)
@@ -137,7 +137,7 @@ if __name__ == '__main__':
         init_lr=1e-4,
         gpu=0,  # Set to None for CPU mode.
         max_to_keep=1,
-        img_lambda=0,
+        img_lambda=3,
         ssim_lambda=10,
 
         start_slice=0,
@@ -148,8 +148,8 @@ if __name__ == '__main__':
         num_epochs=100,
         verbose=False,
         use_slice_metrics=True,  # Using slice metrics causes a 30% increase in training time.
-        lr_red_epoch=30,
-        lr_red_rate=0.2,
+        lr_red_epoch=50,
+        lr_red_rate=0.1,
     )
     options = create_arg_parser(**settings).parse_args()
     train_img(options)

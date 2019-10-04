@@ -15,23 +15,28 @@ from data.mri_data import CustomSliceData
 
 
 class ModelEvaluator:
-    def __init__(self, model, checkpoint_path, challenge, data_loader,
-                 pre_processing, post_processing, data_root, out_dir, device):
+    def __init__(self, modelI, modelK, checkpoint_path_I, checkpoint_path_K, challenge, data_loader,
+                 pre_processing, mid_processing, post_processing, data_root, out_dir, device):
 
-        assert isinstance(model, nn.Module), '`model` must be a Pytorch Module.'
+        assert isinstance(modelI, nn.Module), '`model` must be a Pytorch Module.'
+        assert isinstance(modelK, nn.Module), '`model` must be a Pytorch Module.'
         assert isinstance(data_loader, DataLoader), '`data_loader` must be a Pytorch DataLoader.'
         assert callable(pre_processing), '`pre_processing` must be a callable function.'
         assert callable(post_processing), 'post_processing must be a callable function.'
         assert challenge in ('singlecoil', 'multicoil'), 'Invalid challenge.'
 
         torch.autograd.set_grad_enabled(False)
-        self.model = load_model_from_checkpoint(model, checkpoint_path).to(device)
-        print(f'Loaded model parameters from {checkpoint_path}')
-        self.model.eval()
+        self.modelI = load_model_from_checkpoint(modelI, checkpoint_path_I).to(device)
+        print(f'Loaded modelI parameters from {checkpoint_path_I}')
+        self.modelI.eval()
+        self.modelK = load_model_from_checkpoint(modelK, checkpoint_path_K).to(device)
+        print(f'Loaded modelI parameters from {checkpoint_path_K}')
+        self.modelK.eval()
 
         self.data_loader = data_loader
         self.challenge = challenge
         self.pre_processing = pre_processing
+        self.mid_processing = mid_processing
         self.post_processing = post_processing
         self.data_root = data_root
         self.out_dir = Path(out_dir)
@@ -44,8 +49,10 @@ class ModelEvaluator:
 
             kspace_target, target, attrs, file_name, slice_num = data
             inputs, targets, extra_params = self.pre_processing(kspace_target, target, attrs, file_name, slice_num)
-            outputs = self.model(inputs)  # Use inputs.to(device) if necessary for different transforms.
-            recons = self.post_processing(outputs, extra_params)
+            I_outputs = self.modelI(inputs)  # Use inputs.to(device) if necessary for different transforms.
+            mid_outputs = self.mid_processing(I_outputs, target, extra_params)
+            K_outputs = self.modelK(mid_outputs['kspace_recons'])
+            recons = self.post_processing(K_outputs, extra_params)
 
             assert recons.dim() == 2, 'Unexpected dimensions. Batch size is expected to be 1.'
 
@@ -86,7 +93,7 @@ def main(args):
     from models.fc_unet import Unet  # Moving import line here to reduce confusion.
     from data.input_transforms import TestPreProcessCCInfo, Prefetch2Device
     from data.test_data_transforms import TestPreProcessCC
-    from data.output_transforms import OutputTransformCCTest
+    from data.output_transforms import OutputTransformIKTest, MidTransformK
     from train.subsample import RandomMaskFunc
 
     # Selecting device
@@ -97,8 +104,10 @@ def main(args):
 
     print(f'Device {device} has been selected.')
 
-    model = Unet(in_chans=args.data_chans, out_chans=args.data_chans, chans=args.chans,
-                 num_pool_layers=args.num_pool_layers).to(device)
+    modelI = Unet(in_chans=args.data_chans, out_chans=args.data_chans, chans=args.I_chans,
+                  num_pool_layers=args.num_pool_layers).to(device)
+    modelK = Unet(in_chans=args.data_chans, out_chans=args.data_chans, chans=args.K_chans,
+                  num_pool_layers=args.num_pool_layers).to(device)
 
     dataset = CustomSliceData(root=args.data_root, transform=Prefetch2Device(device), challenge=args.challenge,
                               sample_rate=1, start_slice=0, use_gt=True)
@@ -115,10 +124,12 @@ def main(args):
     else:
         pre_processing = TestPreProcessCC(challenge='multicoil', device=0)
 
-    post_processing = OutputTransformCCTest()
+    mid_processing = MidTransformK()
 
-    evaluator = ModelEvaluator(model, args.checkpoint_path, args.challenge, data_loader,
-                               pre_processing, post_processing, args.data_root, args.out_dir, device)
+    post_processing = OutputTransformIKTest()
+
+    evaluator = ModelEvaluator(modelI, modelK, args.checkpoint_path_I, args.checkpoint_path_K, args.challenge, data_loader,
+                               pre_processing, mid_processing, post_processing, args.data_root, args.out_dir, device)
 
     evaluator.create_and_save_reconstructions()
 
@@ -139,15 +150,18 @@ if __name__ == '__main__':
 
         # Model specific parameters.
         data_chans=30,
-        chans=64,
+        I_chans=64,
+        K_chans=32,
         num_pool_layers=5,
 
         # Parameters for reconstruction.
-        data_root='/media/harry/fastmri/fastMRI_data/multicoil_test_v2',
-        checkpoint_path='/home/harry/PycharmProjects/fastMRI-kspace/checkpoints/'
-                        'IMG/[IMG]GRU_P2/ckpt_G027.tar',
+        data_root='/media/harry/fastmri/fastMRI_data/multicoil_val',
+        checkpoint_path_I='/home/harry/PycharmProjects/fastMRI-kspace/checkpoints/'
+                          'IMG/[IMG]GRU_P2/ckpt_G027.tar',
+        checkpoint_path_K='/home/harry/PycharmProjects/fastMRI-kspace/checkpoints/'
+                          'IMG/[IMG]IK/ckpt_K067.tar',
 
-        out_dir='./GRU_P2_val'  # Change this every time! Attempted overrides will throw errors by design.
+        out_dir='./IK_val'  # Change this every time! Attempted overrides will throw errors by design.
     )
 
     parser = create_arg_parser(**defaults).parse_args()

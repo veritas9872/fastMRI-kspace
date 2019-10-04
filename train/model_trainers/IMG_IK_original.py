@@ -11,13 +11,15 @@ from collections import defaultdict
 from utils.run_utils import get_logger
 from utils.train_utils import CheckpointManager, make_grid_triplet, make_k_grid, make_input_triplet, \
                             make_input_RSS, make_RSS
+from utils.train_utils_gan import IKCheckpointManager, load_gan_model_from_checkpoint
+
 from metrics.my_ssim import ssim_loss
 from metrics.custom_losses import psnr_loss, nmse_loss
 
-from data.data_transforms import root_sum_of_squares, pre_RSS, complex_width_crop, width_crop
+from data.data_transforms import to_tensor, fft2, ifft2, kspace_to_nchw, nchw_to_kspace
 
 
-class ModelTrainerIMG:
+class ModelTrainerIMGIK:
     """
     Model Trainer for k-space learning or complex image learning
     with losses in complex image domains and real valued image domains.
@@ -25,15 +27,15 @@ class ModelTrainerIMG:
     while all losses are obtained from either complex images or real-valued images.
     """
 
-    def __init__(self, args, model, optimizer, train_loader, val_loader,
-                 input_train_transform, input_val_transform, output_transform, losses, scheduler=None):
+    def __init__(self, args, modelI, modelK, optimizer, train_loader, val_loader, input_train_transform,
+                 input_val_transform, mid_transform, output_transform, losses, scheduler=None):
 
         multiprocessing.set_start_method(method='spawn')
 
         self.logger = get_logger(name=__name__, save_file=args.log_path / args.run_name)
 
         # Checking whether inputs are correct.
-        assert isinstance(model, nn.Module), '`model` must be a Pytorch Module.'
+        assert isinstance(modelK, nn.Module), '`model` must be a Pytorch Module.'
         assert isinstance(optimizer, optim.Optimizer), '`optimizer` must be a Pytorch Optimizer.'
         assert isinstance(train_loader, DataLoader) and isinstance(val_loader, DataLoader), \
             '`train_loader` and `val_loader` must be Pytorch DataLoader objects.'
@@ -60,20 +62,23 @@ class ModelTrainerIMG:
         else:
             self.display_interval = int(len(val_loader.dataset) // (args.display_images * args.batch_size))
 
-        self.checkpointer = CheckpointManager(model, optimizer, mode='min', save_best_only=args.save_best_only,
-                                              ckpt_dir=args.ckpt_path, max_to_keep=args.max_to_keep)
+        self.checkpointer = IKCheckpointManager(modelI, modelK, optimizer, mode='min',
+                                                 save_best_only=args.save_best_only,
+                                                 ckpt_dir=args.ckpt_path, max_to_keep=args.max_to_keep)
 
         # loading from checkpoint if specified.
         if vars(args).get('prev_model_ckpt'):
             self.checkpointer.load(load_dir=args.prev_model_ckpt, load_optimizer=False)
 
         self.name = args.name
-        self.model = model
+        self.modelI = modelI
+        self.modelK = modelK
         self.optimizer = optimizer
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.input_train_transform = input_train_transform
         self.input_val_transform = input_val_transform
+        self.mid_transform = mid_transform
         self.output_transform = output_transform
         self.losses = losses
         self.scheduler = scheduler
@@ -120,7 +125,8 @@ class ModelTrainerIMG:
                          f'{toc_toc // 3600} hr {(toc_toc // 60) % 60} min {toc_toc % 60} sec.')
 
     def _train_epoch(self, epoch):
-        self.model.train()
+        self.modelI.train()
+        self.modelK.train()
         torch.autograd.set_grad_enabled(True)
 
         epoch_loss = list()  # Appending values to list due to numerical underflow.
@@ -136,16 +142,15 @@ class ModelTrainerIMG:
                 inputs, targets, extra_params = self.input_train_transform(*data)
 
             # 'recons' is a dictionary containing k-space, complex image, and real image reconstructions.
-            recons, step_loss, step_metrics = self._train_step(inputs, targets, extra_params)
+            recons, step_loss, step_metrics = self._train_step_IK(inputs, targets, extra_params)
+            # Update discriminator 3 times
             epoch_loss.append(step_loss.detach())  # Perhaps not elegant, but underflow makes this necessary.
 
             # Gradients are not calculated so as to boost speed and remove weird errors.
             with torch.no_grad():  # Update epoch loss and metrics
                 if self.use_slice_metrics:
-                    img_recons_wc = width_crop(recons['img_recons'], 320)
-                    img_targets_wc = width_crop(targets['img_targets'], 320)
-                    rss_img_recons = (img_recons_wc ** 2).sum(dim=1).sqrt().squeeze()
-                    rss_img_targets = (img_targets_wc ** 2).sum(dim=1).sqrt().squeeze()
+                    rss_img_recons = (recons['img_recons'] ** 2).sum(dim=1).sqrt().squeeze()
+                    rss_img_targets = (targets['img_targets'] ** 2).sum(dim=1).sqrt().squeeze()
                     slice_metrics = self._get_slice_metrics(rss_img_recons, rss_img_targets)
                     step_metrics.update(slice_metrics)
                 [epoch_metrics[key].append(value.detach()) for key, value in step_metrics.items()]
@@ -153,26 +158,30 @@ class ModelTrainerIMG:
                 if self.verbose:
                     self._log_step_outputs(epoch, step, step_loss, step_metrics, training=True)
 
+
         # Converted to scalar and dict with scalar forms.
         return self._get_epoch_outputs(epoch, epoch_loss, epoch_metrics, training=True)
 
-    def _train_step(self, inputs, targets, extra_params):
+    def _train_step_IK(self, inputs, targets, extra_params):
         self.optimizer.zero_grad()
-        outputs = self.model(inputs)
-        recons = self.output_transform(outputs, targets, extra_params)
-        # import ipdb; ipdb.set_trace()
+        I_outputs = self.modelI(inputs)
+        mid_outputs = self.mid_transform(I_outputs, targets, extra_params)
+        K_outputs = self.modelK(mid_outputs['kspace_recons'])
+
+        recons = self.output_transform(K_outputs, targets, extra_params)
         # Expects a single loss. No loss decomposition within domain implemented yet.
         cmg_loss = self.losses['cmg_loss'](recons['cmg_recons'], targets['cmg_targets'])
         img_loss = self.losses['img_loss'](recons['img_recons'], targets['img_targets'])
         SSIM_loss = self.losses['ssim_loss'](recons['img_recons'], targets['img_targets'])
-        step_loss = cmg_loss + self.img_lambda * img_loss + self.ssim_lambda * SSIM_loss
+        step_loss = cmg_loss * 0 + self.img_lambda * img_loss + self.ssim_lambda * SSIM_loss
         step_loss.backward()
         self.optimizer.step()
         step_metrics = {'cmg_loss': cmg_loss, 'img_loss': img_loss, 'SSIM_loss': SSIM_loss}
         return recons, step_loss, step_metrics
 
     def _val_epoch(self, epoch):
-        self.model.eval()
+        self.modelI.eval()
+        self.modelK.eval()
         torch.autograd.set_grad_enabled(False)
 
         epoch_loss = list()
@@ -186,34 +195,30 @@ class ModelTrainerIMG:
         for step, data in data_loader:
             inputs, targets, extra_params = self.input_val_transform(*data)
             # 'recons' is a dictionary containing k-space, complex image, and real image reconstructions.
-            recons, step_loss, step_metrics = self._val_step(inputs, targets, extra_params)
+            recons, step_loss, step_metrics = self._val_step_IK(inputs, targets, extra_params)
             epoch_loss.append(step_loss.detach())
 
             if self.use_slice_metrics:
                 # RSS
-                img_recons_wc = width_crop(recons['img_recons'], 320)
-                img_targets_wc = width_crop(targets['img_targets'], 320)
-                rss_img_recons = (img_recons_wc ** 2).sum(dim=1).sqrt().squeeze()
-                rss_img_targets = (img_targets_wc ** 2).sum(dim=1).sqrt().squeeze()
+                rss_img_recons = (recons['img_recons'] ** 2).sum(dim=1).sqrt().squeeze()
+                rss_img_targets = (targets['img_targets'] ** 2).sum(dim=1).sqrt().squeeze()
                 slice_metrics = self._get_slice_metrics(rss_img_recons, rss_img_targets)
                 step_metrics.update(slice_metrics)
 
             [epoch_metrics[key].append(value.detach()) for key, value in step_metrics.items()]
 
             if self.verbose:
-                self._log_step_outputs(epoch, step, step_loss, step_metrics, training=False)
+                self._log_step_outputs_val(epoch, step, step_loss, step_metrics, training=False)
 
             # Save images to TensorBoard.
             # Condition ensures that self.display_interval != 0 and that the step is right for display.
             if self.display_interval and (step % self.display_interval == 0):
-                img_targets_wc = width_crop(targets['img_targets'], 320)
-                k_targets_wc = width_crop(targets['kspace_targets'], 320)
                 img_recon_grid, img_target_grid, img_delta_grid = \
-                    make_RSS(recons['img_wc'], img_targets_wc)
+                    make_RSS(recons['img_recons'], targets['img_targets'])
                 if epoch == 1:
                     img_input_grid = make_input_RSS(extra_params['img_inputs'])
                 kspace_recon_grid = make_k_grid(recons['kspace_recons'], self.smoothing_factor)
-                kspace_target_grid = make_k_grid(k_targets_wc, self.smoothing_factor)
+                kspace_target_grid = make_k_grid(targets['kspace_targets'], self.smoothing_factor)
 
                 self.writer.add_image(f'k-space_Recons/{step}', kspace_recon_grid, epoch, dataformats='HW')
                 self.writer.add_image(f'k-space_Targets/{step}', kspace_target_grid, epoch, dataformats='HW')
@@ -227,22 +232,23 @@ class ModelTrainerIMG:
         epoch_loss, epoch_metrics = self._get_epoch_outputs(epoch, epoch_loss, epoch_metrics, training=False)
         return epoch_loss, epoch_metrics
 
-    def _val_step(self, inputs, targets, extra_params):
-        outputs = self.model(inputs)
-        recons = self.output_transform(outputs, targets, extra_params)
+    def _val_step_IK(self, inputs, targets, extra_params):
+        I_outputs = self.modelI(inputs)
+        mid_outputs = self.mid_transform(I_outputs, targets, extra_params)
+        K_outputs = self.modelK(mid_outputs['kspace_recons'])
 
+        recons = self.output_transform(K_outputs, targets, extra_params)
         # Expects a single loss. No loss decomposition within domain implemented yet.
         cmg_loss = self.losses['cmg_loss'](recons['cmg_recons'], targets['cmg_targets'])
         img_loss = self.losses['img_loss'](recons['img_recons'], targets['img_targets'])
         SSIM_loss = self.losses['ssim_loss'](recons['img_recons'], targets['img_targets'])
-        step_loss = cmg_loss + self.img_lambda * img_loss + self.ssim_lambda * SSIM_loss
+        step_loss = cmg_loss * 0 + self.img_lambda * img_loss + self.ssim_lambda * SSIM_loss
 
         step_metrics = {'cmg_loss': cmg_loss, 'img_loss': img_loss, 'SSIM_loss': SSIM_loss}
         return recons, step_loss, step_metrics
 
     @staticmethod
     def _get_slice_metrics(img_recons, img_targets):
-
         img_recons = img_recons.detach()  # Just in case.
         img_targets = img_targets.detach()
 
@@ -282,7 +288,6 @@ class ModelTrainerIMG:
 
         return out_dict
 
-
     def _get_epoch_outputs(self, epoch, epoch_loss, epoch_metrics, training=True):
         mode = 'Training' if training else 'Validation'
         num_slices = len(self.train_loader.dataset) if training else len(self.val_loader.dataset)
@@ -291,7 +296,6 @@ class ModelTrainerIMG:
         epoch_loss = torch.stack(epoch_loss)
         is_finite = torch.isfinite(epoch_loss)
         num_nans = (is_finite.size(0) - is_finite.sum()).item()
-
         if num_nans > 0:
             self.logger.warning(f'Epoch {epoch} {mode}: {num_nans} NaN values present in {num_slices} slices')
             epoch_loss = torch.mean(epoch_loss[is_finite]).item()

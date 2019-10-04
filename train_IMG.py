@@ -8,11 +8,11 @@ from utils.run_utils import initialize, save_dict_as_json, get_logger, create_ar
 from utils.train_utils import create_custom_data_loaders, load_model_from_checkpoint
 
 from train.subsample import MaskFunc, UniformMaskFunc, RandomMaskFunc
-from data.input_transforms import Prefetch2Device, TrainPreProcessIMG
+from data.input_transforms import Prefetch2Device, TrainPreProcessIMG, TrainPreProcessHC
 from data.output_transforms import OutputTransformCC
 
 from models.fc_unet import FCUnet, Unet
-from models.networks_unet import UnetBlock1
+from models.edsr_unet import UNet
 from train.model_trainers.IMG_trainer import ModelTrainerIMG
 
 from metrics.custom_losses import logSSIMLoss, CSSIM
@@ -71,10 +71,10 @@ def train_img(args):
 
     data_prefetch = Prefetch2Device(device)
 
-    input_train_transform = TrainPreProcessIMG(mask_func, args.challenge, args.device,
-                                               use_seed=False, divisor=divisor)
-    input_val_transform = TrainPreProcessIMG(mask_func, args.challenge, args.device,
-                                             use_seed=True, divisor=divisor)
+    input_train_transform = TrainPreProcessHC(mask_func, args.challenge, args.device,
+                                              use_seed=False, divisor=divisor)
+    input_val_transform = TrainPreProcessHC(mask_func, args.challenge, args.device,
+                                            use_seed=True, divisor=divisor)
 
     # DataLoaders
     train_loader, val_loader = create_custom_data_loaders(args, transform=data_prefetch)
@@ -82,6 +82,7 @@ def train_img(args):
     losses = dict(
         cmg_loss=nn.MSELoss(reduction='mean'),
         img_loss=nn.MSELoss(reduction='mean'),
+        consistency_loss=nn.MSELoss(reduction='mean'),
         ssim_loss=logSSIMLoss(reduction='mean')
     )
     output_transform = OutputTransformCC()
@@ -90,10 +91,12 @@ def train_img(args):
 
     model = Unet(in_chans=data_chans, out_chans=data_chans, chans=args.chans,
                  num_pool_layers=args.num_pool_layers).to(device)
+    # model = UNet(in_chans=data_chans, out_chans=data_chans, chans=args.chans, num_pool_layers=args.num_pool_layers,
+    #              num_depth_blocks=2).to(device)
 
-    # If you have to load, uncomment
-    # load_dir = './checkpoints/IMG/FC_2_4/ckpt_012.tar'
-    # load_model_from_checkpoint(model, load_dir, strict=False)
+    # Load pretrained model parameters
+    load_dir = './checkpoints/IMG/[IMG]GRUP2_SSIM2/ckpt_012.tar'
+    load_model_from_checkpoint(model, load_dir, strict=True)
 
     optimizer = optim.Adam(model.parameters(), lr=args.init_lr)
 
@@ -109,7 +112,7 @@ def train_img(args):
 if __name__ == '__main__':
     settings = dict(
         # Variables that almost never change.
-        name = 'vanilla_image',  # Please do change this every time Harry
+        name = 'HC_image',  # Please do change this every time Harry
         challenge='multicoil',
         data_root='/media/harry/fastmri/fastMRI_data',
         log_root='./logs',
@@ -125,22 +128,23 @@ if __name__ == '__main__':
         # Variables that occasionally change.
         display_images=10,  # Maximum number of images to save.
         num_workers=4,
-        init_lr=3e-4,
+        init_lr=1e-4,
         gpu=0,  # Set to None for CPU mode.
         max_to_keep=1,
-        img_lambda=10,
-        ssim_lambda=3,
+        img_lambda=5,
+        consistency_lambda=5,
+        ssim_lambda=10,
 
-        start_slice=10,
+        start_slice=0,
         start_val_slice=0,
 
         # Variables that change frequently.
         sample_rate=1,
-        num_epochs=200,
+        num_epochs=150,
         verbose=False,
         use_slice_metrics=True,  # Using slice metrics causes a 30% increase in training time.
-        lr_red_epoch=50,
-        lr_red_rate=0.5,
+        lr_red_epoch=30,
+        lr_red_rate=0.2,
     )
     options = create_arg_parser(**settings).parse_args()
     train_img(options)

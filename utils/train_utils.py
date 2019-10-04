@@ -5,9 +5,9 @@ import torch.nn.functional as F
 
 from pathlib import Path
 
-from data.mri_data import SliceData, CustomSliceData
+from data.mri_data import SliceData, CustomSliceData, CycleUnpairedData
 from data.data_transforms import complex_abs, ifft2
-from data.input_transforms import Prefetch2Device
+from data.input_transforms import Prefetch2Device, CyclePrefetch2Device
 
 
 class CheckpointManager:
@@ -176,25 +176,30 @@ def single_batch_collate_fn(batch):
     return batch[0]
 
 
-def multi_collate_fn(batch):
-    tensors = list()
-    targets = list()
-    scales = list()
+def multi_collate_fn(data):
 
-    with torch.no_grad():
-        for (tensor, target, scaling) in batch:
-            tensors.append(tensor)
-            targets.append(target)  # Note that targets are 3D Tensors in a list, not 4D.
-            scales.append(scaling)
+    kspace_target, target, attrs, file_name, slice_num = zip(*data)
 
-        max_width = max(tensor.size(-1) for tensor in tensors)
+    max_width = 0
+    for tensor in kspace_target:
+        if max_width <= tensor.size(-2):
+            max_width = tensor.size(-2)
 
-        # Assumes that padding for UNET divisor has already been performed for each slice.
-        for idx in range(len(tensors)):
-            pad = (max_width - tensors[idx].size(-1)) // 2
-            tensors[idx] = F.pad(tensors[idx], pad=[pad, pad], value=0)
+    for idx, tensor in enumerate(kspace_target):
+        # If width within batch does not match
+        if max_width > tensor.size(-2):
+            pad = [0, 0, (max_width - tensor.size(-2)) // 2, (max_width - tensor.size(-2)) // 2]
+        else:
+            pad = [0, 0]
+        # print(f'before pad tensor shape: {tensor.shape}')
+        tensor = F.pad(tensor, pad=pad, value=0)
+        if idx == 0:
+            k_target = tensor.unsqueeze(dim=0)
+        else:
+            k_target = torch.cat((k_target, tensor.unsqueeze(dim=0)), dim=0)
+        # print(f'k_target shape: {k_target.shape}')
 
-    return torch.stack(tensors, dim=0), targets, scales
+    return k_target, target, attrs, file_name, slice_num
 
 
 def create_data_loaders(args, train_transform, val_transform):
@@ -261,6 +266,34 @@ def create_custom_datasets(args, transform=None):
         start_slice=args.start_val_slice,
         use_gt=True,
     )
+
+    return train_dataset, val_dataset
+
+
+def create_cycle_datasets(args, transform=None):
+
+    train_transform = CyclePrefetch2Device(device=args.device)
+    val_transform = Prefetch2Device(device=args.device)
+
+    # Generating Datasets.
+    train_dataset = CycleUnpairedData(
+        root=Path(args.data_root) / f'{args.challenge}_train',
+        transform=train_transform,
+        challenge=args.challenge,
+        sample_rate=args.sample_rate,
+        start_slice=args.start_slice,
+        use_gt=True,
+    )
+
+    val_dataset = CustomSliceData(
+        root=Path(args.data_root) / f'{args.challenge}_val',
+        transform=val_transform,
+        challenge=args.challenge,
+        sample_rate=args.sample_rate,
+        start_slice=args.start_val_slice,
+        use_gt=True,
+    )
+
     return train_dataset, val_dataset
 
 
@@ -287,6 +320,33 @@ def create_custom_data_loaders(args, transform=None):
         pin_memory=False,
         collate_fn=collate_fn
     )
+    return train_loader, val_loader
+
+
+def create_cycle_data_loaders(args, transform=None):
+    train_dataset, val_dataset = create_cycle_datasets(args, transform)
+
+    collate_fn = single_batch_collate_fn
+
+    # Generating Data Loaders
+    train_loader = DataLoader(
+        dataset=train_dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=args.num_workers,
+        pin_memory=False,
+        collate_fn=collate_fn
+    )
+
+    val_loader = DataLoader(
+        dataset=val_dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        pin_memory=False,
+        collate_fn=collate_fn
+    )
+
     return train_loader, val_loader
 
 
@@ -335,9 +395,10 @@ def make_RSS(image_recons, image_targets):
         image_recons = image_recons[0].unsqueeze(dim=0)
         image_targets = image_targets[0].unsqueeze(dim=0)
 
-    if image_recons.size(0) > 1:
-        raise NotImplementedError('Mini-batch size greater than 1 has not been implemented yet.')
-
+    # if image_recons.size(0) > 1:
+    #     raise NotImplementedError('Mini-batch size greater than 1 has not been implemented yet.')
+    image_recons = image_recons[0].squeeze()
+    image_targets = image_targets[0].squeeze()
     assert image_recons.size() == image_targets.size()
 
     # Send to CPU if necessary. Assumes batch size of 1.
@@ -380,6 +441,7 @@ def make_normalize(image_recons, image_targets):
 
 def make_input_RSS(image_inputs):
 
+    image_inputs = image_inputs[0]
     image_inputs = image_inputs.detach().squeeze(dim=0)
 
     # RSS
@@ -418,10 +480,11 @@ def make_k_grid(kspace_recons, smoothing_factor=8):
     if isinstance(kspace_recons, list):
         kspace_recons = kspace_recons[0].unsqueeze(dim=0)
 
-    if kspace_recons.size(0) > 1:
-        raise NotImplementedError('Mini-batch size greater than 1 has not been implemented yet.')
+    # if kspace_recons.size(0) > 1:
+    #     raise NotImplementedError('Mini-batch size greater than 1 has not been implemented yet.')
 
     # Assumes that the smallest values will be close enough to 0 as to not matter much.
+    kspace_recons = kspace_recons[0]
     kspace_view = complex_abs(kspace_recons.detach()).squeeze(dim=0)
     # Scaling & smoothing.
     # smoothing_factor converted to float32 tensor. expm1 and log1p require float32 tensors.

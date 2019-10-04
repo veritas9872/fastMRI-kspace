@@ -41,7 +41,6 @@ class ModelEvaluator:
         reconstructions = defaultdict(list)
 
         for data in tqdm(self.data_loader, total=len(self.data_loader.dataset)):
-
             kspace_target, target, attrs, file_name, slice_num = data
             inputs, targets, extra_params = self.pre_processing(kspace_target, target, attrs, file_name, slice_num)
             outputs = self.model(inputs)  # Use inputs.to(device) if necessary for different transforms.
@@ -84,10 +83,10 @@ class ModelEvaluator:
 
 def main(args):
     from models.fc_unet import Unet  # Moving import line here to reduce confusion.
-    from data.input_transforms import TestPreProcessCCInfo, Prefetch2Device
+    from data.input_transforms import TrainPreProcessHC, Prefetch2Device
     from data.test_data_transforms import TestPreProcessCC
-    from data.output_transforms import OutputTransformCCTest
     from train.subsample import RandomMaskFunc
+    from data.output_transforms import OutputTransformWCTest
 
     # Selecting device
     if (args.gpu is not None) and torch.cuda.is_available():
@@ -110,12 +109,12 @@ def main(args):
 
     # This is for the validation set, not the test set. The test set requires a different pre-processing function.
     if Path(args.data_root).name.endswith('val'):
-        pre_processing = TestPreProcessCCInfo(mask_func, args.challenge, args.gpu,
-                                              use_seed=False, divisor=divisor)
+        pre_processing = TrainPreProcessHC(mask_func, args.challenge, args.gpu,
+                                           use_seed=False, divisor=divisor)
     else:
         pre_processing = TestPreProcessCC(challenge='multicoil', device=0)
 
-    post_processing = OutputTransformCCTest()
+    post_processing = OutputTransformWCTest()
 
     evaluator = ModelEvaluator(model, args.checkpoint_path, args.challenge, data_loader,
                                pre_processing, post_processing, args.data_root, args.out_dir, device)
@@ -143,11 +142,11 @@ if __name__ == '__main__':
         num_pool_layers=5,
 
         # Parameters for reconstruction.
-        data_root='/media/harry/fastmri/fastMRI_data/multicoil_test_v2',
+        data_root='/media/harry/fastmri/fastMRI_data/multicoil_val',
         checkpoint_path='/home/harry/PycharmProjects/fastMRI-kspace/checkpoints/'
-                        'IMG/[IMG]GRU_P2/ckpt_G027.tar',
+                        'IMG/[IMG]GRUP2_SSIM/ckpt_004.tar',
 
-        out_dir='./GRU_P2_val'  # Change this every time! Attempted overrides will throw errors by design.
+        out_dir='./GRU_P2_SSIM_scale_val_test'  # Change this every time! Attempted overrides will throw errors by design.
     )
 
     parser = create_arg_parser(**defaults).parse_args()

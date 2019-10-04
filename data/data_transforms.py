@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-
+import torch.nn.functional as F
 
 def to_tensor(data):
     """
@@ -47,6 +47,10 @@ def apply_info_mask(data, mask_func, seed=None):
     mask = mask.to(data.device)
     # Checked that this version also removes negative 0 values as well.
     return torch.where(mask == 0, torch.tensor(0, dtype=data.dtype, device=data.device), data), mask, info
+
+
+def apply_retro_mask(data, mask):
+    return torch.where(mask==0, torch.tensor(0, dtype=data.dtype, device=data.device), data)
 
 
 def apply_PCmask(data, mask_func, seed=None):
@@ -192,6 +196,39 @@ def complex_abs(data):
     return (data ** 2).sum(dim=-1).sqrt()
 
 
+def fake_input_gen(data, mask):
+    """
+    From reconstructed image, mask k-space again for k-space fidelity term
+    :param
+        data: reconstructed k-space data
+        mask: mask to undersample k-space data
+    :return:
+        under_im
+    """
+    under_k = apply_retro_mask(data, mask)
+    under_im = kspace_to_nchw(ifft2(under_k))
+
+    return under_im
+
+
+def fake_input_gen_hc(data, mask):
+    """
+    From reconstructed image, mask k-space again for k-space fidelity term
+    :param
+        data: reconstructed k-space data
+        mask: mask to undersample k-space data
+    :return:
+        under_im
+    """
+    under_k = apply_retro_mask(data, mask)
+    full_under_im = ifft2(under_k)
+    hc_under_im = complex_height_crop(full_under_im, 320)
+    under_im = kspace_to_nchw(hc_under_im)
+
+    return under_im
+
+
+
 def root_sum_of_squares(data, dim=0):
     """
     Compute the Root Sum of Squares (RSS) transform along a given dimension of a tensor.
@@ -253,6 +290,28 @@ def complex_center_crop(data, shape):
     w_to = w_from + shape[0]
     h_to = h_from + shape[1]
     return data[..., w_from:w_to, h_from:h_to, :]
+
+
+def complex_height_crop(data, height_shape):
+
+    assert 0 < height_shape <= data.shape[-3]
+    h_from = (data.shape[-3] - height_shape) // 2
+    h_to = h_from + height_shape
+    return data[..., h_from:h_to, :, :]
+
+
+def complex_width_crop(data, width_shape):
+
+    assert 0 < width_shape <= data.shape[-2]
+    w_from = (data.shape[-2] - width_shape) // 2
+    w_to = w_from + width_shape
+    return data[..., w_from:w_to, :]
+
+
+def width_crop(data, width_shape):
+    w_from = (data.shape[-1] - width_shape) // 2
+    w_to = w_from + width_shape
+    return data[..., w_from:w_to]
 
 
 def normalize(data, mean, stddev, eps=0.):
@@ -484,3 +543,18 @@ def log_weighting(tensor, scale=1):
 def exp_weighting(tensor, scale=1):
     assert scale > 0, '`scale` must be a positive value.'
     return torch.sign(tensor) * torch.expm1(torch.abs(tensor) * (1 / scale))
+
+
+def pad_FCF(tensor, divisor=32):
+
+    margin = tensor.size(-2) % divisor
+    if margin > 0:
+        pad = [(divisor - margin) // 2, (1 + divisor - margin) // 2]
+        pad2 = [0, 0, (divisor - margin) // 2, (1 + divisor - margin) // 2]
+    else:  # This is a temporary fix to prevent padding by half the divisor when margin=0.
+        pad = [0, 0]
+        pad2 = [0, 0, 0, 0]
+
+    outputs = F.pad(tensor, pad=pad2, value=0)
+
+    return outputs

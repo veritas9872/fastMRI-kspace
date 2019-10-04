@@ -8,11 +8,12 @@ from utils.run_utils import initialize, save_dict_as_json, get_logger, create_ar
 from utils.train_utils import create_custom_data_loaders, load_model_from_checkpoint
 
 from train.subsample import MaskFunc, UniformMaskFunc, RandomMaskFunc
-from data.input_transforms import Prefetch2Device, TrainPreProcessCC, TrainPreProcessHCCC
-from data.output_transforms import OutputTransformIK, MidTransformK, OutputTransformIKCrop
+from data.input_transforms import Prefetch2Device, TrainPreProcessIMG, TrainPreProcessHC, TrainPreProcessHCRSS
+from data.output_transforms import OutputTransformCC, OutputTransformCCRSS, OutputReplaceCCRSS
 
 from models.fc_unet import FCUnet, Unet
-from train.model_trainers.IMG_IK_pretrained import ModelTrainerIMGIK
+from models.edsr_unet import UNet
+from train.model_trainers.IMG_trainer_RSS import ModelTrainerIMG
 
 from metrics.custom_losses import logSSIMLoss, CSSIM
 
@@ -64,16 +65,16 @@ def train_img(args):
 
     # Input transforms. These are on a per-slice basis.
     # UNET architecture requires that all inputs be dividable by some power of 2.
-    divisor = 2 ** args.i_num_pool_layers
+    divisor = 2 ** args.num_pool_layers
 
     mask_func = MaskFunc(args.center_fractions, args.accelerations)
 
     data_prefetch = Prefetch2Device(device)
 
-    input_train_transform = TrainPreProcessHCCC(mask_func, args.challenge, args.device,
-                                                use_seed=False, divisor=divisor)
-    input_val_transform = TrainPreProcessHCCC(mask_func, args.challenge, args.device,
-                                              use_seed=True, divisor=divisor)
+    input_train_transform = TrainPreProcessHCRSS(mask_func, args.challenge, args.device,
+                                                 use_seed=False, divisor=divisor)
+    input_val_transform = TrainPreProcessHCRSS(mask_func, args.challenge, args.device,
+                                               use_seed=True, divisor=divisor)
 
     # DataLoaders
     train_loader, val_loader = create_custom_data_loaders(args, transform=data_prefetch)
@@ -84,30 +85,26 @@ def train_img(args):
         ssim_loss=logSSIMLoss(reduction='mean')
     )
 
-    mid_transform = MidTransformK()
-    output_transform = OutputTransformIKCrop()
+    if args.replace:
+        output_transform = OutputReplaceCCRSS()
+    else:
+        output_transform = OutputTransformCCRSS()
 
     data_chans = 2 if args.challenge == 'singlecoil' else 30  # Multicoil has 15 coils with 2 for real/imag
 
-    modelI = Unet(in_chans=data_chans, out_chans=data_chans, chans=args.i_chans,
-                  num_pool_layers=args.i_num_pool_layers).to(device)
-    modelK = Unet(in_chans=data_chans, out_chans=data_chans, chans=args.k_chans,
-                  num_pool_layers=args.k_num_pool_layers).to(device)
+    model = Unet(in_chans=data_chans, out_chans=data_chans, chans=args.chans,
+                 num_pool_layers=args.num_pool_layers).to(device)
 
-    # Load pretrained model I parameters
+    # Load pretrained model parameters
     load_dir = './checkpoints/IMG/RSS_SSIM/ckpt_019.tar'
-    load_model_from_checkpoint(modelI, load_dir, strict=True)
+    load_model_from_checkpoint(model, load_dir, strict=True)
 
-    # K_load_dir = './checkpoints/IMG/Trial 10  2019-08-15 21-01-57/ckpt_K014.tar'
-    # load_model_from_checkpoint(modelK, K_load_dir, strict=True)
-
-    # optimizer = optim.Adam(list(modelI.parameters()) + list(modelK.parameters()), lr=args.init_lr)
-    optimizer = optim.Adam(modelK.parameters(), lr=args.init_lr)
+    optimizer = optim.Adam(model.parameters(), lr=args.init_lr)
 
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=args.lr_red_epoch, gamma=args.lr_red_rate)
 
-    trainer = ModelTrainerIMGIK(args, modelI, modelK, optimizer, train_loader, val_loader, input_train_transform,
-                                input_val_transform, mid_transform, output_transform, losses, scheduler)
+    trainer = ModelTrainerIMG(args, model, optimizer, train_loader, val_loader,
+                              input_train_transform, input_val_transform, output_transform, losses, scheduler)
 
     # TODO: Implement logging of model, losses, transforms, etc.
     trainer.train_model()
@@ -116,17 +113,15 @@ def train_img(args):
 if __name__ == '__main__':
     settings = dict(
         # Variables that almost never change.
-        name='IK_ssim_holdI',  # Please do change this every time Harry
+        name='HC_image',  # Please do change this every time Harry
         challenge='multicoil',
         data_root='/media/harry/fastmri/fastMRI_data',
         log_root='./logs',
         ckpt_root='./checkpoints',
         batch_size=1,  # This MUST be 1 for now.
-        i_chans=64,
-        k_chans=32,
-        i_num_pool_layers=5,
-        k_num_pool_layers=5,
-        save_best_only=False,
+        chans=64,
+        num_pool_layers=5,
+        save_best_only=True,
         center_fractions=[0.08, 0.04],
         accelerations=[4, 8],
         smoothing_factor=8,
@@ -138,18 +133,20 @@ if __name__ == '__main__':
         gpu=0,  # Set to None for CPU mode.
         max_to_keep=1,
         img_lambda=0,
+        consistency_lambda=0,
         ssim_lambda=10,
+        replace=True,
 
         start_slice=0,
         start_val_slice=0,
 
         # Variables that change frequently.
         sample_rate=1,
-        num_epochs=100,
+        num_epochs=150,
         verbose=False,
         use_slice_metrics=True,  # Using slice metrics causes a 30% increase in training time.
-        lr_red_epoch=30,
-        lr_red_rate=0.2,
+        lr_red_epoch=20,
+        lr_red_rate=0.3,
     )
     options = create_arg_parser(**settings).parse_args()
     train_img(options)
