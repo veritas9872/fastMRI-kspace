@@ -209,7 +209,7 @@ class ModelTrainerCMG:
                 self._log_step_outputs(epoch, step, step_loss, step_metrics, training=False)
 
             # Visualize images on TensorBoard.
-            self._visualize_images(recons, targets, epoch, step, training=False)
+            self._visualize_images(recons, targets, extra_params, epoch, step, training=False)
 
         # Converted to scalar and dict with scalar values respectively.
         return self._get_epoch_outputs(epoch, epoch_loss, epoch_metrics, training=False)
@@ -226,7 +226,7 @@ class ModelTrainerCMG:
 
         return recons, step_loss, step_metrics
 
-    def _visualize_images(self, recons, targets, epoch, step, training=False):
+    def _visualize_images(self, recons, targets, extra_params, epoch, step, training=False):
         mode = 'Training' if training else 'Validation'
 
         # This numbering scheme seems to have issues for certain numbers.
@@ -237,26 +237,26 @@ class ModelTrainerCMG:
             # The delta image is obtained by subtracting at the complex image, not the real valued image.
             delta_image = complex_abs(targets['cmg_targets'] - recons['cmg_recons'])
             delta_img_grid = make_img_grid(delta_image, self.shrink_scale)
-
             kspace_recon_grid = make_k_grid(recons['kspace_recons'], self.smoothing_factor, self.shrink_scale)
 
-            self.writer.add_image(f'{mode} k-space Recons/{step}', kspace_recon_grid, epoch, dataformats='HW')
-            self.writer.add_image(f'{mode} Image Recons/{step}', img_recon_grid, epoch, dataformats='HW')
-            self.writer.add_image(f'{mode} Delta Image/{step}', delta_img_grid, epoch, dataformats='HW')
+            acc = extra_params['acceleration']
+            kwargs = dict(global_step=epoch, dataformats='HW')
+            self.writer.add_image(f'{mode} k-space Recons/{acc}/{step}', kspace_recon_grid, **kwargs)
+            self.writer.add_image(f'{mode} Image Recons/{acc}/{step}', img_recon_grid, **kwargs)
+            self.writer.add_image(f'{mode} Delta Image/{acc}/{step}', delta_img_grid, **kwargs)
 
             # Adding RSS images of reconstructions and targets.
             if 'rss_recons' in recons:
                 recon_rss = standardize_image(recons['rss_recons'])
                 delta_rss = standardize_image(make_rss_slice(delta_image))
-                self.writer.add_image(f'{mode} RSS Recons/{step}', recon_rss, epoch, dataformats='HW')
-                self.writer.add_image(f'{mode} RSS Delta/{step}', delta_rss, epoch, dataformats='HW')
+                self.writer.add_image(f'{mode} RSS Recons/{acc}/{step}', recon_rss, **kwargs)
+                self.writer.add_image(f'{mode} RSS Delta/{acc}/{step}', delta_rss, **kwargs)
 
             if 'semi_kspace_recons' in recons:
                 semi_kspace_recon_grid = make_k_grid(
                     recons['semi_kspace_recons'], self.smoothing_factor, self.shrink_scale)
 
-                self.writer.add_image(
-                    f'{mode} semi-k-space Recons/{step}', semi_kspace_recon_grid, epoch, dataformats='HW')
+                self.writer.add_image(f'{mode} semi-k-space Recons/{acc}/{step}', semi_kspace_recon_grid, **kwargs)
 
             if epoch == 1:  # Maybe add input images too later on.
                 img_target_grid = make_img_grid(targets['img_targets'], self.shrink_scale)
@@ -265,20 +265,20 @@ class ModelTrainerCMG:
                 # Not actually the input but what the input looks like as an image.
                 img_grid = make_img_grid(targets['img_inputs'], self.shrink_scale)
 
-                self.writer.add_image(f'{mode} k-space Targets/{step}', kspace_target_grid, epoch, dataformats='HW')
-                self.writer.add_image(f'{mode} Image Targets/{step}', img_target_grid, epoch, dataformats='HW')
-                self.writer.add_image(f'{mode} Inputs as Images/{step}', img_grid, epoch, dataformats='HW')
+                self.writer.add_image(f'{mode} k-space Targets/{acc}/{step}', kspace_target_grid, **kwargs)
+                self.writer.add_image(f'{mode} Image Targets/{acc}/{step}', img_target_grid, **kwargs)
+                self.writer.add_image(f'{mode} Inputs as Images/{acc}/{step}', img_grid, **kwargs)
 
                 if 'rss_targets' in targets:
                     target_rss = standardize_image(targets['rss_targets'])
-                    self.writer.add_image(f'{mode} RSS Targets/{step}', target_rss, epoch, dataformats='HW')
+                    self.writer.add_image(f'{mode} RSS Targets/{acc}/{step}', target_rss, **kwargs)
 
                 if 'semi_kspace_targets' in targets:
-                    semi_kspace_target_grid = make_k_grid(targets['semi_kspace_targets'],
-                                                          self.smoothing_factor, self.shrink_scale)
+                    semi_kspace_target_grid = make_k_grid(
+                        targets['semi_kspace_targets'], self.smoothing_factor, self.shrink_scale)
 
-                    self.writer.add_image(f'{mode} semi-k-space Targets/{step}',
-                                          semi_kspace_target_grid, epoch, dataformats='HW')
+                    self.writer.add_image(
+                        f'{mode} semi-k-space Targets/{acc}/{step}', semi_kspace_target_grid, **kwargs)
 
     def _get_slice_metrics(self, recons, targets, extra_params):
         img_recons = recons['img_recons'].detach()  # Just in case.

@@ -90,9 +90,8 @@ def train_img_to_img(args):
 
     data_chans = 1 if args.challenge == 'singlecoil' else 15
     model = UNet(in_chans=data_chans, out_chans=data_chans, chans=args.chans, num_pool_layers=args.num_pool_layers,
-                 num_depth_blocks=args.num_depth_blocks, res_scale=args.res_scale, drop_rate=args.drop_rate,
-                 use_residual=args.use_residual, use_ca=args.use_ca, reduction=args.reduction,
-                 use_gap=args.use_gap, use_gmp=args.use_gmp).to(device)
+                 num_depth_blocks=args.num_depth_blocks, res_scale=args.res_scale, use_residual=args.use_residual,
+                 use_ca=args.use_ca, reduction=args.reduction, use_gap=args.use_gap, use_gmp=args.use_gmp).to(device)
 
     optimizer = optim.Adam(model.parameters(), lr=args.init_lr)
     scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.lr_red_epochs, gamma=args.lr_red_rate)
@@ -134,15 +133,11 @@ if __name__ == '__main__':
 
         # Model specific parameters.
         train_method='I2I',  # Weighted semi-k-space to complex-valued image.
-        # num_groups=16,  # Maybe try 16 now since chans is 64.
         chans=64,
-        # negative_slope=0.1,
-        # interp_mode='nearest',
         use_residual=True,
         # l1_ratio=0.5,
         num_depth_blocks=32,
         res_scale=0.1,
-        drop_rate=0.,  # Dropout rate for spatial dropout.
         augment_data=True,
         crop_center=True,
 

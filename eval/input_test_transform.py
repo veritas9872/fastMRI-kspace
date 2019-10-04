@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 
-from data.data_transforms import complex_abs, ifft2, center_crop, apply_info_mask
+from data.data_transforms import complex_abs, ifft2, center_crop, apply_info_mask, root_sum_of_squares
 
 
 class PreProcessValIMG:
@@ -114,3 +114,44 @@ class PreProcessTestIMG:
             # inputs = F.pad(image, pad=pad, value=0)
 
         return image, targets, extra_params
+
+
+class PreProcessTestRSS:
+    """
+    Rather hack-filled implementation of input transform for RSS inputs.
+    """
+    def __init__(self, challenge, device, resolution=320):
+        assert challenge == 'multicoil', 'Challenge must be multicoil for this.'
+
+        self.challenge = challenge
+        self.device = device
+        self.resolution = resolution  # Only has effect when center_crop is True.
+
+    def __call__(self, masked_kspace, target, attrs, file_name, slice_num):
+        assert isinstance(masked_kspace, torch.Tensor), 'k-space target was expected to be a Pytorch Tensor.'
+        if masked_kspace.dim() == 3:  # If the collate function does not expand dimensions for single-coil.
+            masked_kspace = masked_kspace.expand(1, 1, -1, -1, -1)
+        elif masked_kspace.dim() == 4:  # If the collate function does not expand dimensions for multi-coil.
+            masked_kspace = masked_kspace.expand(1, -1, -1, -1, -1)
+        elif masked_kspace.dim() != 5:  # Expanded k-space should have 5 dimensions.
+            raise RuntimeError('k-space target has invalid shape!')
+
+        if masked_kspace.size(0) != 1:
+            raise NotImplementedError('Batch size should be 1 for now.')
+
+        with torch.no_grad():
+            input_image = complex_abs(ifft2(masked_kspace))
+            # Cropping is mandatory if RSS means the 320 version. Not so if a larger image is used.
+            # However, I think that removing target processing is worth the loss of flexibility.
+            input_image = center_crop(input_image, shape=(self.resolution, self.resolution))
+            img_scale = torch.std(input_image)
+            input_image /= img_scale
+
+            extra_params = {'img_scales': img_scale}
+            extra_params.update(attrs)
+
+            # Use plurals as keys to reduce confusion.
+            input_rss = root_sum_of_squares(input_image, dim=1).squeeze()
+            targets = {'img_inputs': input_image, 'rss_inputs': input_rss}
+
+        return input_image, targets, extra_params

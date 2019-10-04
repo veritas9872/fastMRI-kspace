@@ -30,6 +30,7 @@ def gaussian_filter(input: torch.Tensor, kernel: torch.Tensor) -> torch.Tensor:
     """
 
     ch = input.size(1)  # The kernel is expected to have been expanded by the number of channels already.
+    # No padding is used, thus removing the edges from consideration.
     out = F.conv2d(input, kernel, stride=1, padding=0, groups=ch)
     out = F.conv2d(out, kernel.transpose(-2, -1), stride=1, padding=0, groups=ch)
     return out
@@ -241,7 +242,7 @@ class MSSSIM(nn.Module):
 
 class SSIMLoss(nn.Module):
     def __init__(self, filter_size=11, sigma=1.5, max_val=None, reduction='mean'):
-        r""" class for ssim
+        """ class for ssim
         Args:
             filter_size: (int, optional): the size of gauss kernel
             sigma: (float, optional): sigma of normal distribution
@@ -254,7 +255,9 @@ class SSIMLoss(nn.Module):
         self.max_val = max_val
         self.reduction = reduction
 
-    def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    def forward(self, input: torch.Tensor, target: torch.Tensor, max_val=None) -> torch.Tensor:
+        if max_val is not None:
+            self.max_val = max_val
         return self.one - ssim(input, target, max_val=self.max_val, kernel=self.kernel, reduction=self.reduction)
 
 

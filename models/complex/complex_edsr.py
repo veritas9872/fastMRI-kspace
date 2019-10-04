@@ -1,7 +1,7 @@
 import torch
 from torch import nn, Tensor
 
-from ..complex.complex_conv import ComplexConv2d
+from ..complex.complex_layers import ComplexConv2d
 
 
 class ComplexConvLayer(nn.Module):

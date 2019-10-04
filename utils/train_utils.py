@@ -107,7 +107,7 @@ class CheckpointManager:
     def load(self, load_dir, load_optimizer=True):
         save_dict = torch.load(load_dir)
 
-        self.model.load_state_dict(save_dict['model_state_dict'])
+        self.model.load_state_dict(save_dict['model_state_dict'], strict=False)
         print(f'Loaded model parameters from {load_dir}')
 
         if load_optimizer:

@@ -178,7 +178,7 @@ class ModelTrainerI2I:
             step_loss, img_metrics = step_loss
 
         if 'acceleration' in extra_params:  # Different metrics for different accelerations.
-            acc = extra_params["acceleration"]
+            acc = extra_params['acceleration']
             if img_metrics:  # This has to be checked before anything is added to step_metrics.
                 for key, value in img_metrics.items():
                     step_metrics[f'acc_{acc}_{key}'] = value

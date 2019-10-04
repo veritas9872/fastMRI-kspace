@@ -1,5 +1,5 @@
 import torch
-from torch import nn
+from torch import nn, Tensor
 
 
 # class GlobalMaxPooling2D(nn.Module):  # This tried to find why GMP was so much slower than GAP.
@@ -28,6 +28,11 @@ class GlobalMaxPooling2d(nn.Module):
 
 
 class ChannelAttention(nn.Module):
+    """
+    Detaching gradients when performing channel attention.
+    I do not think this causes any problems in learning.
+    After all, it is hard to get the global average to learn anything as attention (I think).
+    """
     def __init__(self, num_chans, reduction=16, use_gap=True, use_gmp=True):
         super().__init__()
         self.gap = nn.AdaptiveAvgPool2d(1)  # Global Average Pooling.
@@ -45,7 +50,7 @@ class ChannelAttention(nn.Module):
 
         self.sigmoid = nn.Sigmoid()
 
-    def forward(self, tensor):
+    def forward(self, tensor: Tensor):
         if not (self.use_gap or self.use_gmp):
             return tensor
 
@@ -104,8 +109,8 @@ class SpatialAttention(nn.Module):
         self.use_cmp = use_cmp
 
         padding = dilation * (kernel_size - 1) // 2
-        self.conv = \
-            nn.Conv2d(in_channels=2, out_channels=1, kernel_size=kernel_size, padding=padding, dilation=dilation)
+        self.conv = nn.Conv2d(in_channels=2, out_channels=1, kernel_size=kernel_size,
+                              padding=padding, dilation=dilation)
 
         self.sigmoid = nn.Sigmoid()
 
