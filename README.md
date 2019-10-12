@@ -1,5 +1,5 @@
 # fastMRI-kspace
-###Code for cracking the fastMRI challenge using k-space learning.
+###Code for cracking the fastMRI challenge.
 
 
 
@@ -8,3 +8,5 @@
 There is no Python 2.7 or 3.5 compatibility. 
 
 Pytorch 1.0 and below is also not supported.
+
+Also, Pytorch 1.2 may cause minor issues with boolean masking.
