@@ -11,7 +11,7 @@ Pytorch 1.0 and below is also not supported.
 
 
 # UPDATE #
-We won 5th place on the fastMRI Challenge. See https://fastmri.org/leaderboards/challenge for our results.
+We won 6th place on the fastMRI Challenge. See https://fastmri.org/leaderboards/challenge for our results.
 
 Despite being heavily outgunned by our GPU rich competitors, 
 our submission is highly competitive with the top performers on SSIM, the main metric of the challenge.
@@ -21,3 +21,5 @@ All of our models were trained on a *single* GTX1080Ti or RTX2080Ti device.
 Training took approximately 1 week for 100 epochs.
 
 Our work has been accepted for publication at ISBI 2020.
+
+Title: "Deep Learning Fast MRI using Channel Attention in Magnitude Domain".
