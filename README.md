@@ -23,3 +23,15 @@ Training took approximately 1 week for 100 epochs.
 Our work has been accepted for publication at ISBI 2020.
 
 Title: "Deep Learning Fast MRI using Channel Attention in Magnitude Domain".
+
+---
+
+Sorry if the project appears a bit messy. 
+
+This project contains all the code that we used during the entire challenge. 
+
+Each branch has different ideas from each of the members.
+
+Please contact the authors if you have any questions.
+
+
